@@ -1,6 +1,8 @@
 ﻿# 🛡 VibeCop
 
-**Static analysis CLI for AI-generated Node.js/TypeScript code.**  
+**Your AI wrote bugs. VibeCop finds them.
+npx vibecop scan .**  
+
 Catch security vulnerabilities, AI code smells, and tech debt — before you ship to production.
 
 ```bash
