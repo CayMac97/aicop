@@ -1,0 +1,104 @@
+name: 'VibeCop Scan'
+description: 'Scan your JS/TS code for AI-generated vulnerabilities, security issues, and tech debt'
+author: 'VibeCop'
+branding:
+  icon: 'shield'
+  color: 'purple'
+
+inputs:
+  path:
+    description: 'Path to scan (default: repository root)'
+    required: false
+    default: '.'
+  severity:
+    description: 'Minimum severity level to report: info | warn | error'
+    required: false
+    default: 'warn'
+  format:
+    description: 'Output format: terminal | json'
+    required: false
+    default: 'terminal'
+  fail-on-error:
+    description: 'Fail the action if errors are found'
+    required: false
+    default: 'true'
+
+outputs:
+  vibe-score:
+    description: 'The overall VibeScore™ of the scanned codebase (0–100)'
+    value: ${{ steps.scan.outputs.vibe-score }}
+  errors:
+    description: 'Number of error-severity findings'
+    value: ${{ steps.scan.outputs.errors }}
+  warnings:
+    description: 'Number of warning-severity findings'
+    value: ${{ steps.scan.outputs.warnings }}
+  badge-url:
+    description: 'shields.io badge URL for the VibeScore'
+    value: ${{ steps.scan.outputs.badge-url }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install VibeCop
+      shell: bash
+      run: npm install -g vibecop
+
+    - name: Run VibeCop Scan
+      shell: bash
+      id: scan
+      run: |
+        # Run scan in JSON mode so we can extract structured metrics.
+        # `|| true` prevents the shell from aborting on non-zero exit while we
+        # capture output; we apply fail-on-error ourselves below.
+        OUTPUT=$(vibecop scan "${{ inputs.path }}" \
+          --severity "${{ inputs.severity }}" \
+          --format json \
+          --ci 2>&1) || true
+
+        echo "$OUTPUT"
+
+        # Extract summary fields with jq; default to 0 if key is missing.
+        SCORE=$(echo "$OUTPUT"    | jq -r '.summary.vibeScore // 0' 2>/dev/null || echo 0)
+        ERRORS=$(echo "$OUTPUT"   | jq -r '.summary.errors    // 0' 2>/dev/null || echo 0)
+        WARNINGS=$(echo "$OUTPUT" | jq -r '.summary.warnings  // 0' 2>/dev/null || echo 0)
+
+        echo "vibe-score=$SCORE"    >> "$GITHUB_OUTPUT"
+        echo "errors=$ERRORS"       >> "$GITHUB_OUTPUT"
+        echo "warnings=$WARNINGS"   >> "$GITHUB_OUTPUT"
+
+        # Compute badge color
+        BADGE_COLOR="red"
+        if [ "$SCORE" -ge 90 ]; then BADGE_COLOR="brightgreen"
+        elif [ "$SCORE" -ge 70 ]; then BADGE_COLOR="green"
+        elif [ "$SCORE" -ge 50 ]; then BADGE_COLOR="yellow"
+        elif [ "$SCORE" -ge 30 ]; then BADGE_COLOR="orange"
+        fi
+        BADGE_URL="https://img.shields.io/badge/VibeScore-${SCORE}%2F100-${BADGE_COLOR}"
+        echo "badge-url=$BADGE_URL" >> "$GITHUB_OUTPUT"
+
+        # Step summary
+        echo "## VibeCop Results" >> "$GITHUB_STEP_SUMMARY"
+        echo "![VibeScore]($BADGE_URL)" >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        echo "| Metric | Value |" >> "$GITHUB_STEP_SUMMARY"
+        echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
+        echo "| VibeScore™ | **$SCORE/100** |" >> "$GITHUB_STEP_SUMMARY"
+        echo "| Errors | $ERRORS |" >> "$GITHUB_STEP_SUMMARY"
+        echo "| Warnings | $WARNINGS |" >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  VibeScore™: $SCORE/100  |  Errors: $ERRORS  |  Warnings: $WARNINGS"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+        if [[ "${{ inputs.fail-on-error }}" == "true" && "$ERRORS" -gt 0 ]]; then
+          echo "::error::VibeCop found $ERRORS error(s). Fix them or set fail-on-error: false."
+          exit 1
+        fi

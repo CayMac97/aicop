@@ -1,0 +1,20 @@
+{
+  "name": "vibecop-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/cli",
+    "packages/website"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=packages/cli",
+    "build:extension": "cd packages/vscode-extension && npm run compile",
+    "package:extension": "cd packages/vscode-extension && npm run package",
+    "test": "npm run test --workspace=packages/cli",
+    "typecheck": "npm run typecheck --workspace=packages/cli",
+    "dev": "npm run dev --workspace=packages/cli"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,84 @@
+{
+  "name": "vibecop",
+  "displayName": "VibeCop — AI Code Scanner",
+  "description": "Detects security holes, AI-generated anti-patterns, and tech debt in your JS/TS code",
+  "version": "1.0.0",
+  "publisher": "vibecop",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Linters", "Other"],
+  "keywords": ["ai", "security", "linter", "vibe-coding", "code-quality"],
+  "activationEvents": [
+    "onLanguage:typescript",
+    "onLanguage:javascript",
+    "onLanguage:typescriptreact",
+    "onLanguage:javascriptreact"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vibecop.scanFile",
+        "title": "VibeCop: Scan Current File"
+      },
+      {
+        "command": "vibecop.scanWorkspace",
+        "title": "VibeCop: Scan Entire Workspace"
+      },
+      {
+        "command": "vibecop.clearDiagnostics",
+        "title": "VibeCop: Clear All Diagnostics"
+      },
+      {
+        "command": "vibecop.generateFixPrompt",
+        "title": "VibeCop: Generate AI Fix Prompt"
+      }
+    ],
+    "configuration": {
+      "title": "VibeCop",
+      "properties": {
+        "vibecop.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable VibeCop diagnostics"
+        },
+        "vibecop.scanOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically scan files on save"
+        },
+        "vibecop.scanOnOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically scan files when opened"
+        },
+        "vibecop.minSeverity": {
+          "type": "string",
+          "enum": ["info", "warn", "error"],
+          "default": "warn",
+          "description": "Minimum severity level to show"
+        },
+        "vibecop.showVibeScore": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show VibeScore\u2122 in the status bar"
+        },
+        "vibecop.excludePatterns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["node_modules/**", "dist/**", "build/**"],
+          "description": "Glob patterns to exclude from scanning"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json --watch",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.5.0"
+  }
+}

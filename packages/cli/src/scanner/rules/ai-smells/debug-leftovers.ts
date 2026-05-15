@@ -1,0 +1,118 @@
+import { TSESTree } from '@typescript-eslint/typescript-estree';
+import { Rule, Finding, ParsedAST } from '../types.js';
+import { walk } from '../../ast-walker.js';
+import { extractSnippet } from '../../../utils/file-utils.js';
+import { getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
+import { isTestFile } from '../../../utils/file-utils.js';
+
+const CONSOLE_METHODS = new Set(['log', 'debug', 'warn', 'error', 'info', 'trace', 'dir', 'dirxml', 'table']);
+
+function checkConsoleCall(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+  if (!isMemberExpression(node.callee)) return null;
+  const me = node.callee as TSESTree.MemberExpression;
+  if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
+  if ((me.object as TSESTree.Identifier).name !== 'console') return null;
+  const method = (me.property as TSESTree.Identifier).name;
+  if (!CONSOLE_METHODS.has(method)) return null;
+  return {
+    ruleId: 'ai-smell/debug-leftovers',
+    severity: 'info',
+    message: `console.${method}() found — remove before production`,
+    file: filePath,
+    line: getLine(node),
+    column: getColumn(node),
+    snippet: extractSnippet(source, getLine(node)),
+    fix: 'Replace with a structured logger (pino, winston) or remove if debugging only: import { logger } from "./utils/logger"',
+  };
+}
+
+function checkDebuggerStatement(node: TSESTree.DebuggerStatement, source: string, filePath: string): Finding {
+  return {
+    ruleId: 'ai-smell/debug-leftovers',
+    severity: 'info',
+    message: 'debugger; statement found in source code',
+    file: filePath,
+    line: getLine(node),
+    column: getColumn(node),
+    snippet: extractSnippet(source, getLine(node)),
+    fix: 'Remove the debugger statement before committing',
+  };
+}
+
+function checkProcessExit(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+  if (!isMemberExpression(node.callee)) return null;
+  const me = node.callee as TSESTree.MemberExpression;
+  if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
+  if ((me.object as TSESTree.Identifier).name !== 'process') return null;
+  if ((me.property as TSESTree.Identifier).name !== 'exit') return null;
+  return {
+    ruleId: 'ai-smell/debug-leftovers',
+    severity: 'info',
+    message: 'process.exit() found — ensure this is intentional and only in CLI/entry point files',
+    file: filePath,
+    line: getLine(node),
+    column: getColumn(node),
+    snippet: extractSnippet(source, getLine(node)),
+    fix: 'Use process.exit() only in the main entry point of CLI tools. In libraries, throw errors instead.',
+  };
+}
+
+function checkHardcodedTestData(source: string, filePath: string): Finding[] {
+  const findings: Finding[] = [];
+  const patterns: Array<{ re: RegExp; label: string }> = [
+    { re: /["']test@example\.com["']/gi, label: 'hardcoded test email' },
+    { re: /["']password123["']/gi, label: 'hardcoded test password' },
+    { re: /["']admin["']\s*[,)]/gi, label: 'hardcoded "admin" value' },
+  ];
+  const lines = source.split('\n');
+  lines.forEach((line, idx) => {
+    for (const { re, label } of patterns) {
+      if (re.test(line)) {
+        findings.push({
+          ruleId: 'ai-smell/debug-leftovers',
+          severity: 'info',
+          message: `Hardcoded test data detected: ${label}`,
+          file: filePath,
+          line: idx + 1,
+          column: 0,
+          snippet: line.trim(),
+          fix: 'Move test data to test fixtures or environment variables',
+        });
+      }
+    }
+  });
+  return findings;
+}
+
+const rule: Rule = {
+  id: 'ai-smell/debug-leftovers',
+  name: 'Debug Leftovers',
+  category: 'ai-smell',
+  severity: 'info',
+  description: 'Detects console.* calls, debugger statements, and hardcoded test data left in production code',
+  why: 'Debug artifacts left in production expose internal implementation details, pollute logs, and indicate the code was not reviewed before shipping.',
+  fix: 'Use a structured logger. Remove debugger statements. Move test data to fixture files.',
+
+  check(ast: ParsedAST, source: string, filePath: string): Finding[] {
+    if (isTestFile(filePath)) return [];
+    const findings: Finding[] = [];
+
+    walk(ast, {
+      CallExpression(rawNode) {
+        const node = rawNode as TSESTree.CallExpression;
+        const consoleF = checkConsoleCall(node, source, filePath);
+        if (consoleF) { findings.push(consoleF); return; }
+        const exitF = checkProcessExit(node, source, filePath);
+        if (exitF) findings.push(exitF);
+      },
+      DebuggerStatement(rawNode) {
+        findings.push(checkDebuggerStatement(rawNode as TSESTree.DebuggerStatement, source, filePath));
+      },
+    });
+
+    findings.push(...checkHardcodedTestData(source, filePath));
+    return findings;
+  },
+};
+
+export default rule;

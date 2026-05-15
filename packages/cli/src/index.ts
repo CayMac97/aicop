@@ -1,0 +1,485 @@
+import { Command } from 'commander';
+import chalk from 'chalk';
+import ora from 'ora';
+import path from 'path';
+import { existsSync } from 'fs';
+import { scan } from './scanner/index.js';
+import { scanDiff } from './diff/index.js';
+import { report, printHeader } from './reporter/index.js';
+import { renderSummary, renderFixPromptHint, writeBaseline, readBaseline } from './reporter/summary.js';
+import { loadConfig } from './config/loader.js';
+import { DEFAULT_CONFIG } from './config/defaults.js';
+import { setLogLevel, setCiMode } from './utils/logger.js';
+import { getAllRules, getRuleCount } from './scanner/rules/index.js';
+import { ScanOptions, ScanResult, Severity, VibescanConfig } from './scanner/rules/types.js';
+import type { OutputFormat } from './reporter/index.js';
+import { writeFile } from './utils/file-utils.js';
+import { generateFixPrompt } from './fix-prompt/index.js';
+import { copyToClipboard, showInteractiveGroups, runWatch } from './cli-helpers.js';
+
+declare const __VIBESCAN_VERSION__: string | undefined;
+const VERSION: string = (typeof __VIBESCAN_VERSION__ !== 'undefined' ? __VIBESCAN_VERSION__ : null)
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  ?? (require('../package.json') as { version: string }).version;
+
+const program = new Command();
+
+function addScanOptions(cmd: Command): Command {
+  return cmd
+    .argument('[path]', 'Path to scan (file or directory)', '.')
+    .option('--fix', 'Auto-fix simple issues where possible (future)')
+    .option('--watch', 'Watch for file changes and re-scan')
+    .option('--ci', 'CI mode — no colors, no spinners, exit code reflects threshold status')
+    .option('--format <format>', 'Output format: terminal | html | json', 'terminal')
+    .option('--output <path>', 'Write report to file instead of stdout')
+    .option('--severity <level>', 'Minimum severity to report: error | warn | info', 'warn')
+    .option('--config <path>', 'Path to config file')
+    .option('--debug', 'Enable debug logging')
+    .action(async (targetPath: string, opts: CliOptions) => {
+      await runScan(targetPath, opts);
+    });
+}
+
+addScanOptions(
+  program
+    .name('vibescan')
+    .description('🛡️ VibeCop — AI code quality & security scanner')
+    .version(VERSION, '-v, --version', 'Output the current version'),
+);
+
+program
+  .command('init')
+  .description('Generate a .vibescanrc.json config file in the current directory')
+  .action(async () => {
+    const configPath = path.join(process.cwd(), '.vibescanrc.json');
+    const { writeFile: wf } = await import('./utils/file-utils.js');
+    await wf(configPath, JSON.stringify(DEFAULT_CONFIG, null, 2));
+    process.stdout.write(chalk.green('✓') + ` .vibescanrc.json created at ${configPath}\n`);
+    process.stdout.write(chalk.dim('Edit this file to customize rules, thresholds, and output settings.\n'));
+  });
+
+program
+  .command('baseline')
+  .description('Save the current VibeScore as a baseline for future comparison')
+  .option('--path <path>', 'Path to scan for baseline', '.')
+  .option('--config <path>', 'Config file path')
+  .action(async (opts: { path: string; config?: string }) => {
+    const config = await loadConfig(process.cwd(), opts.config);
+    const spinner = ora(chalk.dim('Scanning for baseline...')).start();
+    try {
+      const result = await scan({
+        path: path.resolve(opts.path),
+        config,
+        severity: 'info',
+        format: 'terminal',
+        ci: false,
+        fix: false,
+        noAiScore: false,
+        watch: false,
+      });
+      spinner.stop();
+      writeBaseline(process.cwd(), result);
+      process.stdout.write(
+        chalk.green('✓') + ` Baseline saved: VibeScore™ ${chalk.bold(String(result.vibeScore))}/100 ` +
+        chalk.dim(`(${result.errorCount} errors, ${result.warnCount} warnings, ${result.filesScanned} files)\n`) +
+        chalk.dim('  Every future scan will show the delta against this baseline.\n')
+      );
+      const existing = readBaseline(process.cwd());
+      void existing;
+    } catch (err) {
+      spinner.fail('Baseline scan failed');
+      process.stderr.write(String(err) + '\n');
+      process.exit(1);
+    }
+  });
+
+program
+  .command('diff [ref]')
+  .description('Scan only files changed since <ref> (default: main)')
+  .option('--ci', 'CI mode')
+  .option('--format <format>', 'Output format', 'terminal')
+  .option('--output <path>', 'Write report to file')
+  .option('--severity <level>', 'Minimum severity', 'info')
+  .option('--config <path>', 'Config file path')
+  .action(async (ref: string | undefined, opts: Partial<CliOptions>) => {
+    const gitRef = ref ?? 'main';
+    const config = await loadConfig(process.cwd(), opts.config);
+    const ci = Boolean(opts.ci);
+    if (ci) setCiMode(true);
+
+    const scanOptions: ScanOptions = {
+      path: '.',
+      config,
+      severity: (opts.severity as Severity) ?? 'info',
+      format: (opts.format as ScanOptions['format']) ?? 'terminal',
+      ci,
+      fix: false,
+      noAiScore: false,
+      watch: false,
+    };
+
+    const spinner = ci ? null : ora(`Comparing with ${gitRef}...`).start();
+    try {
+      const { result, diffHeader } = await scanDiff(gitRef, scanOptions);
+      spinner?.succeed('Diff scan complete');
+      process.stdout.write(chalk.bold.cyan(diffHeader) + '\n\n');
+      await report(result, {
+        format: (opts.format as OutputFormat) ?? 'terminal',
+        ci,
+        outputPath: opts.output,
+        version: VERSION,
+      });
+      process.exit(exitCode(result));
+    } catch (err) {
+      spinner?.fail('Diff scan failed');
+      process.stderr.write(String(err) + '\n');
+      process.exit(1);
+    }
+  });
+
+program
+  .command('rules')
+  .description('List all available rules')
+  .option('--category <cat>', 'Filter by category: security | ai-smell | tech-debt')
+  .action((opts: { category?: string }) => {
+    const rules = getAllRules().filter((r) => !opts.category || r.category === opts.category);
+    process.stdout.write(chalk.bold.white(`\n Available Rules (${rules.length})\n\n`));
+    let currentCategory = '';
+    for (const rule of rules) {
+      if (rule.category !== currentCategory) {
+        currentCategory = rule.category;
+        process.stdout.write(chalk.bold.cyan(`  ${currentCategory}\n`));
+      }
+      const sev = rule.defaultSeverity === 'error' ? chalk.red(rule.defaultSeverity) : rule.defaultSeverity === 'warn' ? chalk.yellow(rule.defaultSeverity) : chalk.blue(rule.defaultSeverity);
+      process.stdout.write(`    ${chalk.white(rule.id.padEnd(44))} ${sev}\n`);
+      process.stdout.write(chalk.dim(`      ${rule.description}\n`));
+    }
+    process.stdout.write('\n');
+  });
+
+program
+  .command('report')
+  .description('Convert an existing JSON scan result to HTML or terminal format')
+  .requiredOption('--input <path>', 'Path to JSON scan result')
+  .option('--format <format>', 'Output format: terminal | html', 'html')
+  .option('--output <path>', 'Output file path')
+  .action(async (opts: { input: string; format: string; output?: string }) => {
+    const { readFileContent } = await import('./utils/file-utils.js');
+    const raw = await readFileContent(opts.input);
+    const parsed = JSON.parse(raw);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    await report(parsed.files ? parsed : { ...parsed, files: parsed.files ?? [] }, {
+      format: opts.format as OutputFormat,
+      ci: false,
+      outputPath: opts.output,
+      version: VERSION,
+    });
+  });
+
+program
+  .command('fix-prompt [path]')
+  .description('Generate an AI fix prompt for all issues found in the target path')
+  .option('--severity <level>', 'Minimum severity to include: error | warn | info', 'warn')
+  .option('--output <file>', 'Write prompt to a file instead of printing to terminal')
+  .option('--clipboard', 'Copy the generated prompt to the system clipboard')
+  .option('--no-snippets', 'Omit code snippets from the prompt')
+  .option('--config <path>', 'Path to config file')
+  .action(async (targetPath: string | undefined, opts: {
+    severity: string;
+    output?: string;
+    clipboard?: boolean;
+    snippets?: boolean;
+    config?: string;
+  }) => {
+    const target = targetPath ?? '.';
+    const resolvedTarget = path.resolve(process.cwd(), target);
+
+    if (!existsSync(resolvedTarget)) {
+      process.stderr.write(chalk.red(`\nPath not found: ${resolvedTarget}\n`));
+      process.exit(2);
+    }
+
+    const config = await loadConfig(process.cwd(), opts.config);
+    const spinner = ora(chalk.dim('Scanning for issues...')).start();
+
+    try {
+      const result = await scan({
+        path: resolvedTarget,
+        config,
+        severity: 'info', // always scan all, filter in generator
+        format: 'terminal',
+        ci: true,
+        fix: false,
+        noAiScore: true,
+        watch: false,
+      });
+      spinner.succeed(chalk.green(`Scanned ${result.filesScanned} files`));
+
+      const prompt = generateFixPrompt(result, {
+        minSeverity: (opts.severity as Severity) ?? 'warn',
+        includeSnippets: opts.snippets !== false,
+        targetPath: resolvedTarget,
+      });
+
+      if (opts.clipboard) {
+        await copyToClipboard(prompt);
+        process.stdout.write(chalk.green('\n✅ Fix prompt copied to clipboard!\n'));
+        process.stdout.write(chalk.dim('   Paste it into Claude, Cursor, ChatGPT, or any AI assistant.\n\n'));
+        return;
+      }
+
+      if (opts.output) {
+        await writeFile(opts.output, prompt);
+        process.stdout.write(chalk.green(`\n✅ Fix prompt saved to: ${opts.output}\n\n`));
+        return;
+      }
+
+      process.stdout.write('\n');
+      process.stdout.write(chalk.bold.cyan('━'.repeat(72)) + '\n');
+      process.stdout.write(chalk.bold.white('  🤖 VibeCop AI Fix Prompt\n'));
+      process.stdout.write(chalk.dim('  Copy this prompt and paste it into Claude, Cursor, or ChatGPT\n'));
+      process.stdout.write(chalk.bold.cyan('━'.repeat(72)) + '\n\n');
+      process.stdout.write(prompt + '\n\n');
+      process.stdout.write(chalk.dim('  Tip: Run with ') + chalk.cyan('--clipboard') + chalk.dim(' to copy automatically, or ') + chalk.cyan('--output prompt.txt') + chalk.dim(' to save to file.\n\n'));
+    } catch (err) {
+      spinner.fail('Scan failed');
+      process.stderr.write(String(err) + '\n');
+      process.exit(1);
+    }
+  });
+
+function badgeColor(score: number): string {
+  if (score >= 90) return 'brightgreen';
+  if (score >= 70) return 'green';
+  if (score >= 50) return 'yellow';
+  if (score >= 30) return 'orange';
+  return 'red';
+}
+
+program
+  .command('badge [path]')
+  .description('Generate a VibeScore badge URL for your README')
+  .option('--style <style>', 'Badge style: flat | flat-square | for-the-badge', 'flat')
+  .option('--output <format>', 'Output format: markdown | url', 'markdown')
+  .option('--config <path>', 'Config file path')
+  .action(async (targetPath: string | undefined, opts: { style: string; output: string; config?: string }) => {
+    const target = targetPath ?? '.';
+    const resolvedTarget = path.resolve(process.cwd(), target);
+    if (!existsSync(resolvedTarget)) {
+      process.stderr.write(chalk.red(`\nPath not found: ${resolvedTarget}\n`));
+      process.exit(2);
+    }
+    const config = await loadConfig(process.cwd(), opts.config);
+    const spinner = ora(chalk.dim('Scanning for VibeScore…')).start();
+    try {
+      const result = await scan({
+        path: resolvedTarget,
+        config,
+        severity: 'info',
+        format: 'terminal',
+        ci: true,
+        fix: false,
+        noAiScore: false,
+        watch: false,
+      });
+      spinner.succeed(chalk.green(`Scanned ${result.filesScanned} files`));
+      const score = result.vibeScore;
+      const color = badgeColor(score);
+      const badgeUrl = `https://img.shields.io/badge/VibeScore-${score}%2F100-${color}?style=${opts.style}`;
+      const markdown = `![VibeScore](${badgeUrl})`;
+      const scoreEmoji = score >= 90 ? '🟢' : score >= 70 ? '🟡' : score >= 50 ? '🟠' : '🔴';
+      const W = 63;
+      const line = (inner: string): string => `│${inner.padEnd(W - 2)}│`;
+      process.stdout.write('\n');
+      process.stdout.write('┌' + '─'.repeat(W - 2) + '┐\n');
+      process.stdout.write(line('  VibeCop Badge generated!') + '\n');
+      process.stdout.write(line('') + '\n');
+      process.stdout.write(line(`  VibeScore: ${score}/100 ${scoreEmoji}`) + '\n');
+      process.stdout.write(line('') + '\n');
+      process.stdout.write(line('  Add this to your README.md:') + '\n');
+      process.stdout.write(line('') + '\n');
+      process.stdout.write(line(`  ${markdown}`) + '\n');
+      process.stdout.write(line('') + '\n');
+      let clipLine = '  (Could not copy to clipboard automatically)';
+      try {
+        await copyToClipboard(markdown);
+        clipLine = '  Copied to clipboard! ✅';
+      } catch { /* clipboard unavailable */ }
+      process.stdout.write(line(clipLine) + '\n');
+      process.stdout.write('└' + '─'.repeat(W - 2) + '┘\n\n');
+      if (opts.output === 'url') {
+        process.stdout.write(badgeUrl + '\n');
+      } else {
+        process.stdout.write(markdown + '\n');
+      }
+      process.exit(0);
+    } catch (err) {
+      spinner.fail('Scan failed');
+      process.stderr.write(String(err) + '\n');
+      process.exit(1);
+    }
+  });
+
+program
+  .command('scan [path]')
+  .description('Scan a directory or file for security, AI-smell and tech-debt issues')
+  .option('--ci', 'CI mode — no colors, no spinners, exit code reflects threshold status')
+  .option('--format <format>', 'Output format: terminal | html | json', 'terminal')
+  .option('--output <path>', 'Write report to file instead of stdout')
+  .option('--severity <level>', 'Minimum severity to report: error | warn | info', 'warn')
+  .option('--ignore <patterns...>', 'Additional glob patterns to exclude')
+  .option('--no-ai-score', 'Omit per-file AI smell scores')
+  .option('--rule <rules...>', 'Only run specific rules')
+  .option('--config <path>', 'Path to config file')
+  .option('--watch', 'Watch for file changes and re-scan')
+  .option('--debug', 'Enable debug logging')
+  .action(async (targetPath: string | undefined, opts: CliOptions) => {
+    await runScan(targetPath ?? '.', opts);
+  });
+
+interface CliOptions {
+  fix?: boolean;
+  watch?: boolean;
+  ci?: boolean;
+  format: string;
+  output?: string;
+  severity: string;
+  ignore?: string[];
+  aiScore?: boolean;
+  rule?: string[];
+  config?: string;
+  debug?: boolean;
+}
+
+function buildScanOptions(targetPath: string, config: VibescanConfig, opts: CliOptions, minSeverity: Severity): ScanOptions {
+  return {
+    path: targetPath, // already resolved by the caller (runScan)
+    config,
+    severity: minSeverity,
+    format: (opts.format as ScanOptions['format']) ?? 'terminal',
+    output: opts.output,
+    ci: Boolean(opts.ci),
+    fix: Boolean(opts.fix),
+    noAiScore: opts.aiScore === false,
+    watch: Boolean(opts.watch),
+    ruleId: opts.rule?.[0],
+    ignore: opts.ignore,
+  };
+}
+
+function shouldShowFixPromptHint(result: ScanResult, opts: CliOptions, ci: boolean): boolean {
+  return !ci
+    && !opts.output
+    && (result.errorCount > 0 || result.warnCount > 0)
+    && (opts.format ?? 'terminal') === 'terminal';
+}
+
+async function handleScanResult(result: ScanResult, opts: CliOptions, ci: boolean, targetPath: string, displaySeverity: Severity = 'warn'): Promise<void> {
+  const sevOrder: Record<Severity, number> = { error: 0, warn: 1, info: 2 };
+  const hiddenInfoCount = sevOrder[displaySeverity] < sevOrder['info'] ? result.infoCount : 0;
+  const displayResult: ScanResult = hiddenInfoCount > 0 ? {
+    ...result,
+    files: result.files.map((f) => ({
+      ...f,
+      findings: f.findings.filter((x) => sevOrder[x.severity] <= sevOrder[displaySeverity]),
+    })),
+    infoCount: 0,
+    totalFindings: result.totalFindings - hiddenInfoCount,
+  } : result;
+  const isInteractive = (opts.format ?? 'terminal') === 'terminal' && !ci && process.stdout.isTTY && process.stdin.isTTY;
+  try {
+    if (isInteractive) {
+      process.stdout.write(renderSummary(displayResult, false) + '\n');
+      await showInteractiveGroups(displayResult, targetPath);
+    } else {
+      await report(displayResult, {
+        format: opts.format as OutputFormat,
+        ci,
+        outputPath: opts.output,
+        version: VERSION,
+      });
+    }
+    if (shouldShowFixPromptHint(displayResult, opts, ci)) {
+      process.stdout.write(renderFixPromptHint(targetPath) + '\n');
+    }
+    if (hiddenInfoCount > 0 && !ci && !opts.output) {
+      process.stdout.write(chalk.blue(`\nℹ  ${hiddenInfoCount} info findings hidden  —  run with --severity info to see all\n`));
+    }
+    const code = exitCode(displayResult);
+    if (ci && code !== 0) {
+      process.stderr.write(`\nThreshold exceeded — exit code ${code}\n`);
+    }
+    process.exit(code);
+  } catch (err) {
+    throw new Error(`Report failed: ${String(err)}`);
+  }
+}
+
+async function runScan(targetPath: string, opts: CliOptions): Promise<void> {
+  const ci = Boolean(opts.ci);
+  if (ci) setCiMode(true);
+  if (opts.debug) setLogLevel('debug');
+
+  const resolvedTarget = path.resolve(process.cwd(), targetPath);
+  if (!existsSync(resolvedTarget)) {
+    process.stderr.write(chalk.red(`\nPath not found: ${resolvedTarget}\n`) + chalk.dim('  Make sure the path exists and is accessible.\n\n'));
+    process.exit(2);
+  }
+
+  const config = await loadConfig(resolvedTarget, opts.config);
+  if (opts.ignore && opts.ignore.length > 0) {
+    config.exclude.push(...opts.ignore);
+  }
+
+  const displaySeverity: Severity = (opts.severity as Severity) ?? 'warn';
+  const scanOptions = buildScanOptions(resolvedTarget, config, opts, displaySeverity);
+
+  const spinner = ci ? null : ora(chalk.dim('Collecting files...')).start();
+  const ruleCount = getRuleCount();
+
+  const onProgress = (file: string): void => {
+    if (spinner) spinner.text = chalk.dim(`Scanning… ${path.basename(file)}`);
+  };
+
+  if (!ci) {
+    spinner?.stop();
+    printHeader(0, ruleCount, VERSION, ci);
+    spinner?.start(chalk.dim('Collecting files...'));
+  }
+
+  try {
+    const result = await scan(scanOptions, onProgress);
+    if (result.filesScanned === 0) {
+      spinner?.fail(chalk.yellow('No scannable files found'));
+      const target = path.resolve(targetPath);
+      process.stdout.write(
+        chalk.yellow('\n  ⚠  No JS/TS files found in ') + chalk.bold(target) + '\n' +
+        chalk.dim('     VibeCop scans: .ts .tsx .js .jsx .mjs .cjs .mts .cts\n\n')
+      );
+      process.exit(0);
+    }
+    spinner?.succeed(chalk.green(`Scanned ${result.filesScanned} files in ${result.scanDurationMs}ms`));
+    await handleScanResult(result, opts, ci, resolvedTarget, displaySeverity);
+  } catch (err) {
+    spinner?.fail('Scan failed');
+    process.stderr.write(String(err) + '\n');
+    process.exit(1);
+  }
+}
+
+function exitCode(result: { errorCount: number; warnCount: number; vibeScore: number }): number {
+  if (result.errorCount > 0) return 1;
+  return 0;
+}
+
+program.hook('preAction', (_thisCommand, actionCommand) => {
+  const opts = actionCommand.opts<CliOptions & { watch?: boolean }>();
+  if (opts.watch) {
+    const args = actionCommand.args;
+    const targetPath = args[0] ?? '.';
+    void runWatch(targetPath, runScan as (t: string, o: unknown) => Promise<void>, opts);
+    process.exitCode = 0;
+  }
+});
+
+program.parse(process.argv);

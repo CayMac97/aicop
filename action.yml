@@ -1,0 +1,68 @@
+name: 'VibeCop'
+description: 'AI code quality & security scanner for Node.js. Catch what your LLM forgets.'
+author: 'vibecop'
+
+branding:
+  icon: 'shield'
+  color: 'purple'
+
+inputs:
+  path:
+    description: 'Path to scan (relative to repo root)'
+    required: false
+    default: '.'
+  severity:
+    description: 'Minimum severity to report: error | warn | info'
+    required: false
+    default: 'warn'
+  format:
+    description: 'Output format: terminal | json | html'
+    required: false
+    default: 'terminal'
+  output:
+    description: 'Write report to this file path (optional)'
+    required: false
+    default: ''
+  fail-on-error:
+    description: 'Exit with code 1 if any errors are found'
+    required: false
+    default: 'true'
+  node-version:
+    description: 'Node.js version to use'
+    required: false
+    default: '20'
+
+outputs:
+  vibe-score:
+    description: 'The overall VibeScore (0-100) from the scan'
+  error-count:
+    description: 'Number of error-severity findings'
+  warn-count:
+    description: 'Number of warning-severity findings'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install VibeCop
+      shell: bash
+      run: npm install -g vibecop
+
+    - name: Run VibeCop scan
+      shell: bash
+      run: |
+        ARGS="$INPUT_PATH --severity $INPUT_SEVERITY --format $INPUT_FORMAT --ci"
+        if [ -n "$INPUT_OUTPUT" ]; then
+          ARGS="$ARGS --output $INPUT_OUTPUT"
+        fi
+        vibecop scan $ARGS
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_SEVERITY: ${{ inputs.severity }}
+        INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_OUTPUT: ${{ inputs.output }}
+        FORCE_COLOR: '0'

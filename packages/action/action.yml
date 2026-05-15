@@ -1,0 +1,147 @@
+name: 'VibeCop'
+description: 'Scan TypeScript/JavaScript for security issues, AI code smells, and tech debt'
+author: 'VibeCop'
+
+branding:
+  icon: 'shield'
+  color: 'purple'
+
+inputs:
+  path:
+    description: 'Path to scan (relative to repo root)'
+    required: false
+    default: '.'
+  severity:
+    description: 'Minimum severity to report: error | warn | info'
+    required: false
+    default: 'error'
+  format:
+    description: 'Output format: terminal | json | html'
+    required: false
+    default: 'terminal'
+  output:
+    description: 'Write report to this file path (optional)'
+    required: false
+    default: ''
+  fail-on-error:
+    description: 'Fail the workflow if errors are found (default: true)'
+    required: false
+    default: 'true'
+  comment-on-pr:
+    description: 'Post a summary comment on the PR (requires write permissions)'
+    required: false
+    default: 'true'
+
+outputs:
+  vibe-score:
+    description: 'Overall VibeScore (0-100)'
+    value: ${{ steps.scan.outputs.vibe-score }}
+  error-count:
+    description: 'Number of error-severity findings'
+    value: ${{ steps.scan.outputs.error-count }}
+  warn-count:
+    description: 'Number of warning-severity findings'
+    value: ${{ steps.scan.outputs.warn-count }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Run VibeCop scan
+      id: scan
+      shell: bash
+      run: |
+        REPORT_FILE=$(mktemp --suffix=.json)
+        npx --yes vibecop@latest scan "${{ inputs.path }}" \
+          --ci \
+          --severity "${{ inputs.severity }}" \
+          --format json \
+          --output "$REPORT_FILE" || true
+
+        # Extract values from JSON report
+        VIBE_SCORE=$(node -e "const r=require('$REPORT_FILE'); console.log(r.vibeScore ?? 0)")
+        ERROR_COUNT=$(node -e "const r=require('$REPORT_FILE'); console.log(r.errorCount ?? 0)")
+        WARN_COUNT=$(node -e "const r=require('$REPORT_FILE'); console.log(r.warnCount ?? 0)")
+        INFO_COUNT=$(node -e "const r=require('$REPORT_FILE'); console.log(r.infoCount ?? 0)")
+
+        echo "vibe-score=$VIBE_SCORE" >> "$GITHUB_OUTPUT"
+        echo "error-count=$ERROR_COUNT" >> "$GITHUB_OUTPUT"
+        echo "warn-count=$WARN_COUNT" >> "$GITHUB_OUTPUT"
+        echo "REPORT_FILE=$REPORT_FILE" >> "$GITHUB_ENV"
+        echo "VIBE_SCORE=$VIBE_SCORE" >> "$GITHUB_ENV"
+        echo "ERROR_COUNT=$ERROR_COUNT" >> "$GITHUB_ENV"
+        echo "WARN_COUNT=$WARN_COUNT" >> "$GITHUB_ENV"
+        echo "INFO_COUNT=$INFO_COUNT" >> "$GITHUB_ENV"
+
+    - name: Print terminal summary
+      shell: bash
+      run: |
+        npx --yes vibecop@latest scan "${{ inputs.path }}" --ci --severity "${{ inputs.severity }}" || true
+
+    - name: Post PR comment
+      if: inputs.comment-on-pr == 'true' && github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const vibeScore = parseInt(process.env.VIBE_SCORE);
+          const errors    = parseInt(process.env.ERROR_COUNT);
+          const warnings  = parseInt(process.env.WARN_COUNT);
+          const info      = parseInt(process.env.INFO_COUNT);
+
+          const scoreEmoji = vibeScore <= 20 ? '🟢' : vibeScore <= 50 ? '🟡' : vibeScore <= 80 ? '🟠' : '🔴';
+          const scoreLabel = vibeScore <= 20 ? 'Clean'
+            : vibeScore <= 40 ? 'AI-assisted'
+            : vibeScore <= 60 ? 'AI-touched'
+            : vibeScore <= 80 ? 'Heavy AI smell'
+            : 'Needs rewrite';
+
+          const statusLine = errors > 0
+            ? '> ⛔ **Errors found** — this PR introduces security or quality issues that must be fixed.'
+            : '> ✅ **No errors** — no blocking issues found.';
+
+          const body = [
+            '## 🛡 VibeCop Scan Results',
+            '',
+            statusLine,
+            '',
+            `| | |`,
+            `|---|---|`,
+            `| VibeScore™ | ${scoreEmoji} **${vibeScore}/100** — ${scoreLabel} |`,
+            `| 🔴 Errors | ${errors} |`,
+            `| 🟡 Warnings | ${warnings} |`,
+            `| 🔵 Info | ${info} |`,
+            '',
+            `<sub>Powered by [VibeCop](https://vibecop.net) — AI code quality scanner</sub>`,
+          ].join('\n');
+
+          // Find existing VibeCop comment and update, or create new
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.payload.pull_request.number,
+          });
+
+          const existing = comments.find(c => c.body.startsWith('## 🛡 VibeCop'));
+          if (existing) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existing.id,
+              body,
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body,
+            });
+          }
+
+    - name: Fail on errors
+      if: inputs.fail-on-error == 'true'
+      shell: bash
+      run: |
+        if [ "$ERROR_COUNT" -gt "0" ]; then
+          echo "::error::VibeCop found $ERROR_COUNT error(s). Fix them before merging."
+          exit 1
+        fi
