@@ -15,7 +15,7 @@ import { logger } from '../utils/logger.js';
 export async function scanDiff(
   ref: string,
   options: ScanOptions,
-  onProgress?: (current: number, total: number, file: string) => void,
+  onProgress?: (file: string) => void,
 ): Promise<{ result: ScanResult; diffHeader: string }> {
   const git = simpleGit(process.cwd());
 
@@ -44,7 +44,11 @@ export async function scanDiff(
 
   const diffOptions: ScanOptions = {
     ...options,
-    target: filteredFiles.length > 0 ? filteredFiles : [options.target as string],
+    path: process.cwd(),
+    config: {
+      ...options.config,
+      include: filteredFiles.length > 0 ? filteredFiles : options.config.include,
+    },
   };
 
   const result = await scan(diffOptions, onProgress);

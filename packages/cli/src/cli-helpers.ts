@@ -6,8 +6,30 @@ import chalk from 'chalk';
 import path from 'path';
 import { createInterface } from 'readline';
 import { formatBySeverity } from './reporter/terminal.js';
-import { Severity, ScanResult } from './scanner/rules/types.js';
+import { report } from './reporter/index.js';
+import { Severity, ScanResult, ScanOptions, VibescanConfig } from './scanner/rules/types.js';
 import { generateFixPrompt } from './fix-prompt/index.js';
+
+function openHtmlReport(result: ScanResult, version: string, onDone: () => void): void {
+  const htmlPath = path.resolve('.vibescan/report.html');
+  process.stdout.write(chalk.dim('\n  Generating HTML report\u2026\n'));
+  report(result, { format: 'html', ci: false, outputPath: htmlPath, version })
+    .then(() => {
+      const { exec } = require('child_process') as typeof import('child_process');
+      const openCmd = process.platform === 'win32'
+        ? `start "" "${htmlPath}"`
+        : process.platform === 'darwin'
+          ? `open "${htmlPath}"`
+          : `xdg-open "${htmlPath}"`;
+      exec(openCmd);
+      process.stdout.write(chalk.green('  \u2713 Ge\u00f6ffnet im Browser\n\n'));
+      onDone();
+    })
+    .catch(() => {
+      process.stdout.write(chalk.red('  \u2717 HTML-Report konnte nicht erstellt werden\n\n'));
+      onDone();
+    });
+}
 
 /**
  * Copy text to the system clipboard using platform-native commands.
@@ -41,7 +63,7 @@ interface GroupEntry {
   colorFn: (s: string) => string;
 }
 
-export function showInteractiveGroups(result: ScanResult, targetPath?: string): Promise<void> {
+export function showInteractiveGroups(result: ScanResult, targetPath?: string, version?: string): Promise<void> {
   const groups: GroupEntry[] = [
     { key: 'e', label: 'Errors',   sev: 'error', count: result.errorCount, colorFn: chalk.red },
     { key: 'w', label: 'Warnings', sev: 'warn',  count: result.warnCount,  colorFn: chalk.yellow },
@@ -61,17 +83,20 @@ export function showInteractiveGroups(result: ScanResult, targetPath?: string): 
   if (hasAny) {
     process.stdout.write(`  ${chalk.magenta('✦')} ${'Fix Prompt'.padEnd(10)} ${chalk.dim('— press P to generate AI prompt')}\n`);
   }
-
-  if (!hasAny) { process.stdout.write('\n'); return Promise.resolve(); }
+  process.stdout.write(`  ${chalk.cyan('◉')} ${'HTML Report'.padEnd(10)} ${chalk.dim('— press H to open in browser')}\n`);
 
   process.stdout.write('\n');
+
+  const prompt = hasAny
+    ? chalk.dim('  [E]rrors  [W]arnings  [I]nfo  [P]rompt  [H]tml  [Q]uit  › ')
+    : chalk.dim('  [H]tml  [Q]uit  › ');
 
   return new Promise<void>((resolve) => {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     rl.on('SIGINT', () => { process.stdout.write('\n'); rl.close(); });
 
     const ask = (): void => {
-      rl.question(chalk.dim('  [E]rrors  [W]arnings  [I]nfo  [P]rompt  [Q]uit  › '), (raw) => {
+      rl.question(prompt, (raw) => {
         const key = raw.trim().toLowerCase();
         const group = groups.find((g) => g.key === key);
         if (group) {
@@ -85,6 +110,8 @@ export function showInteractiveGroups(result: ScanResult, targetPath?: string): 
           });
           process.stdout.write('\n' + prompt + '\n');
           ask();
+        } else if (key === 'h') {
+          openHtmlReport(result, version ?? '1.0.0', ask);
         } else {
           rl.close();
         }
@@ -115,4 +142,63 @@ export async function runWatch(
     process.stderr.write(`Watch mode error: ${String(err)}\n`);
     process.exit(1);
   }
+}
+
+export interface CliOptions {
+  fix?: boolean;
+  watch?: boolean;
+  ci?: boolean;
+  format: string;
+  output?: string;
+  severity: string;
+  ignore?: string[];
+  aiScore?: boolean;
+  rule?: string[];
+  config?: string;
+  debug?: boolean;
+  includeVendor?: boolean;
+}
+
+export function buildScanOptions(targetPath: string, config: VibescanConfig, opts: CliOptions, minSeverity: Severity): ScanOptions {
+  return {
+    path: targetPath,
+    config,
+    severity: minSeverity,
+    format: (opts.format as ScanOptions['format']) ?? 'terminal',
+    output: opts.output,
+    ci: Boolean(opts.ci),
+    fix: Boolean(opts.fix),
+    noAiScore: opts.aiScore === false,
+    watch: Boolean(opts.watch),
+    ruleId: opts.rule?.[0],
+    ignore: opts.ignore,
+    includeVendor: Boolean(opts.includeVendor),
+  };
+}
+
+export function buildDisplayResult(result: ScanResult, displaySeverity: Severity): { displayResult: ScanResult; hiddenInfoCount: number } {
+  const sevOrder: Record<Severity, number> = { error: 0, warn: 1, info: 2 };
+  const hiddenInfoCount = sevOrder[displaySeverity] < sevOrder['info'] ? result.infoCount : 0;
+  if (hiddenInfoCount === 0) return { displayResult: result, hiddenInfoCount: 0 };
+  const displayResult: ScanResult = {
+    ...result,
+    files: result.files.map((f) => ({
+      ...f,
+      findings: f.findings.filter((x) => sevOrder[x.severity] <= sevOrder[displaySeverity]),
+    })),
+    infoCount: 0,
+    totalFindings: result.totalFindings - hiddenInfoCount,
+  };
+  return { displayResult, hiddenInfoCount };
+}
+
+export function isInteractiveSession(opts: CliOptions, ci: boolean): boolean {
+  return (opts.format ?? 'terminal') === 'terminal' && !ci && process.stdout.isTTY && process.stdin.isTTY;
+}
+
+export function shouldShowFixPromptHint(result: ScanResult, opts: CliOptions, ci: boolean): boolean {
+  return !ci
+    && !opts.output
+    && (result.errorCount > 0 || result.warnCount > 0)
+    && (opts.format ?? 'terminal') === 'terminal';
 }

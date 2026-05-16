@@ -1,4 +1,5 @@
 import * as path from 'path';
+import * as fs from 'fs';
 
 export interface Finding {
   ruleId: string;
@@ -31,6 +32,12 @@ export interface ScanResult {
   filesWithIssues: number;
 }
 
+interface FixPromptOptions {
+  minSeverity: 'error' | 'warn' | 'info';
+  includeSnippets: boolean;
+  targetPath?: string;
+}
+
 interface VibeCopLib {
   scan: (options: {
     path: string;
@@ -44,33 +51,60 @@ interface VibeCopLib {
   }) => Promise<ScanResult>;
   loadConfig: (searchFrom?: string) => Promise<unknown>;
   DEFAULT_CONFIG: unknown;
-  generateFixPrompt: (scanResult: ScanResult, options: {
-    minSeverity: 'error' | 'warn' | 'info';
-    includeSnippets: boolean;
-    targetPath?: string;
-  }) => string;
+  generateFixPrompt: (scanResult: ScanResult, options: FixPromptOptions) => string;
+}
+
+let cachedLib: VibeCopLib | null = null;
+
+export function computeFileVibeScore(findings: Finding[]): number {
+  const secErrCount = findings.filter((f) => f.ruleId.startsWith('security/') && f.severity === 'error').length;
+  const secErrPenalty = Math.min(
+    Math.min(secErrCount, 3) * 8 +
+    Math.max(0, Math.min(secErrCount - 3, 3)) * 5 +
+    Math.max(0, secErrCount - 6) * 3,
+    50,
+  );
+  const secWarnPenalty = Math.min(findings.filter((f) => f.ruleId.startsWith('security/') && f.severity === 'warn').length * 3, 15);
+  const aiErrPenalty   = Math.min(findings.filter((f) => f.ruleId.startsWith('ai-smell/') && f.severity === 'error').length * 5, 10);
+  const aiWarnPenalty  = Math.min(findings.filter((f) => f.ruleId.startsWith('ai-smell/') && f.severity === 'warn').length, 10);
+  const techPenalty    = Math.min(findings.filter((f) => f.ruleId.startsWith('tech-debt/') && f.severity === 'warn').length * 0.5, 5);
+  return Math.max(0, Math.round(100 - (secErrPenalty + secWarnPenalty + aiErrPenalty + aiWarnPenalty + techPenalty)));
 }
 
 function loadLib(): VibeCopLib {
+  if (cachedLib) return cachedLib;
   const libPath = path.join(__dirname, '..', '..', 'cli', 'dist', 'lib.js');
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    return require(libPath) as VibeCopLib;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    cachedLib = require(libPath) as VibeCopLib;
+    return cachedLib;
   } catch (err) {
     throw new Error(
-      `VibeCop: could not load scanner library from ${libPath}.\n` +
-      `Run 'npm run build' in packages/cli first.\n` +
-      String(err),
+      `VibeCop: could not load scanner from ${libPath} — run 'npm run build' in packages/cli first.\n${String(err)}`,
     );
   }
+}
+
+function mergeRuleOverrides(
+  config: unknown,
+  overrides: Record<string, string>,
+): unknown {
+  if (!overrides || Object.keys(overrides).length === 0) return config;
+  const base = config as Record<string, unknown>;
+  return {
+    ...base,
+    rules: { ...(base['rules'] as Record<string, unknown> ?? {}), ...overrides },
+  };
 }
 
 export async function scanFile(
   filePath: string,
   minSeverity: 'info' | 'warn' | 'error' = 'warn',
+  ruleOverrides: Record<string, string> = {},
 ): Promise<{ findings: Finding[]; vibeScore: number }> {
   const lib = loadLib();
-  const config = await lib.loadConfig(path.dirname(filePath));
+  const rawConfig = await lib.loadConfig(path.dirname(filePath));
+  const config = mergeRuleOverrides(rawConfig, ruleOverrides);
   const result = await lib.scan({
     path: filePath,
     config,
@@ -81,13 +115,64 @@ export async function scanFile(
     noAiScore: false,
     watch: false,
   });
-  const findings = result.files.flatMap((f) => f.findings);
-  return { findings, vibeScore: result.vibeScore };
+  return { findings: result.files.flatMap((f) => f.findings), vibeScore: result.vibeScore };
 }
 
-export async function generateFixPromptForFile(
-  filePath: string,
-): Promise<string> {
+export async function scanDirectory(
+  dirPath: string,
+  minSeverity: 'info' | 'warn' | 'error' = 'warn',
+  ruleOverrides: Record<string, string> = {},
+): Promise<ScanResult> {
+  const lib = loadLib();
+  const rawConfig = await lib.loadConfig(dirPath);
+  const config = mergeRuleOverrides(rawConfig, ruleOverrides);
+  return lib.scan({
+    path: dirPath,
+    config,
+    severity: minSeverity,
+    format: 'terminal',
+    ci: true,
+    fix: false,
+    noAiScore: false,
+    watch: false,
+  });
+}
+
+export interface BaselineData {
+  vibeScore: number;
+  errorCount: number;
+  warnCount: number;
+  filesScanned: number;
+  date?: string;
+  savedAt?: string;
+}
+
+export function loadBaseline(workspaceRoot: string): BaselineData | null {
+  const p = path.join(workspaceRoot, '.vibecop-baseline.json');
+  try {
+    const raw = fs.readFileSync(p, 'utf8');
+    return JSON.parse(raw) as BaselineData;
+  } catch {
+    return null;
+  }
+}
+
+export function saveBaseline(workspaceRoot: string, result: ScanResult): void {
+  const data: BaselineData = {
+    vibeScore: result.vibeScore,
+    errorCount: result.errorCount,
+    warnCount: result.warnCount,
+    filesScanned: result.filesScanned,
+    date: new Date().toISOString().slice(0, 10),
+  };
+  fs.writeFileSync(
+    path.join(workspaceRoot, '.vibecop-baseline.json'),
+    JSON.stringify(data, null, 2),
+    'utf8',
+  );
+}
+
+export async function generateFixPromptForFile(filePath: string): Promise<string> {
   const lib = loadLib();
   const config = await lib.loadConfig(path.dirname(filePath));
   const result = await lib.scan({
@@ -104,23 +189,5 @@ export async function generateFixPromptForFile(
     minSeverity: 'warn',
     includeSnippets: true,
     targetPath: path.dirname(filePath),
-  });
-}
-
-export async function scanDirectory(
-  dirPath: string,
-  minSeverity: 'info' | 'warn' | 'error' = 'warn',
-): Promise<ScanResult> {
-  const lib = loadLib();
-  const config = await lib.loadConfig(dirPath);
-  return lib.scan({
-    path: dirPath,
-    config,
-    severity: minSeverity,
-    format: 'terminal',
-    ci: true,
-    fix: false,
-    noAiScore: false,
-    watch: false,
   });
 }

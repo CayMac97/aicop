@@ -1,12 +1,21 @@
 {
   "name": "vibecop",
   "displayName": "VibeCop — AI Code Scanner",
-  "description": "Detects security holes, AI-generated anti-patterns, and tech debt in your JS/TS code",
+  "description": "Detects security holes, AI-generated anti-patterns, and tech debt in JS/TS code",
   "version": "1.0.0",
   "publisher": "vibecop",
+  "license": "MIT",
+  "icon": "icon.png",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Linters", "Other"],
-  "keywords": ["ai", "security", "linter", "vibe-coding", "code-quality"],
+  "keywords": ["security", "ai", "linter", "vibe-coding", "typescript"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/deinusername/vibecop"
+  },
+  "bugs": { "url": "https://github.com/deinusername/vibecop/issues" },
+  "homepage": "https://vibecop.net",
+  "galleryBanner": { "color": "#0a0a0a", "theme": "dark" },
   "activationEvents": [
     "onLanguage:typescript",
     "onLanguage:javascript",
@@ -31,6 +40,10 @@
       {
         "command": "vibecop.generateFixPrompt",
         "title": "VibeCop: Generate AI Fix Prompt"
+      },
+      {
+        "command": "vibecop.saveBaseline",
+        "title": "VibeCop: Save Current Score as Baseline"
       }
     ],
     "configuration": {
@@ -60,13 +73,22 @@
         "vibecop.showVibeScore": {
           "type": "boolean",
           "default": true,
-          "description": "Show VibeScore\u2122 in the status bar"
+          "description": "Show VibeScore™ in the status bar"
         },
         "vibecop.excludePatterns": {
           "type": "array",
           "items": { "type": "string" },
           "default": ["node_modules/**", "dist/**", "build/**"],
           "description": "Glob patterns to exclude from scanning"
+        },
+        "vibecop.ruleOverrides": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "enum": ["off", "info", "warn", "error"]
+          },
+          "default": {},
+          "description": "Override severity for individual rules. Key = rule ID (e.g. \"security/missing-rate-limit\"), value = \"off\" | \"info\" | \"warn\" | \"error\"."
         }
       }
     }
@@ -79,6 +101,7 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
     "typescript": "^5.5.0"
   }
 }

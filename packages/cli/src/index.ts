@@ -9,13 +9,13 @@ import { report, printHeader } from './reporter/index.js';
 import { renderSummary, renderFixPromptHint, writeBaseline, readBaseline } from './reporter/summary.js';
 import { loadConfig } from './config/loader.js';
 import { DEFAULT_CONFIG } from './config/defaults.js';
-import { setLogLevel, setCiMode } from './utils/logger.js';
+import { LogLevel, setLogLevel, setCiMode } from './utils/logger.js';
 import { getAllRules, getRuleCount } from './scanner/rules/index.js';
-import { ScanOptions, ScanResult, Severity, VibescanConfig } from './scanner/rules/types.js';
+import { ScanOptions, ScanResult, Severity } from './scanner/rules/types.js';
 import type { OutputFormat } from './reporter/index.js';
 import { writeFile } from './utils/file-utils.js';
 import { generateFixPrompt } from './fix-prompt/index.js';
-import { copyToClipboard, showInteractiveGroups, runWatch } from './cli-helpers.js';
+import { copyToClipboard, showInteractiveGroups, runWatch, CliOptions, buildScanOptions, buildDisplayResult, isInteractiveSession, shouldShowFixPromptHint } from './cli-helpers.js';
 
 declare const __VIBESCAN_VERSION__: string | undefined;
 const VERSION: string = (typeof __VIBESCAN_VERSION__ !== 'undefined' ? __VIBESCAN_VERSION__ : null)
@@ -35,6 +35,7 @@ function addScanOptions(cmd: Command): Command {
     .option('--severity <level>', 'Minimum severity to report: error | warn | info', 'warn')
     .option('--config <path>', 'Path to config file')
     .option('--debug', 'Enable debug logging')
+    .option('--include-vendor', 'Include vendor/library files in scan')
     .action(async (targetPath: string, opts: CliOptions) => {
       await runScan(targetPath, opts);
     });
@@ -44,18 +45,20 @@ addScanOptions(
   program
     .name('vibescan')
     .description('🛡️ VibeCop — AI code quality & security scanner')
-    .version(VERSION, '-v, --version', 'Output the current version'),
+    .version(VERSION, '-v, --version', 'Output the current version')
+    .enablePositionalOptions(),
 );
 
 program
   .command('init')
   .description('Generate a .vibescanrc.json config file in the current directory')
   .action(async () => {
-    const configPath = path.join(process.cwd(), '.vibescanrc.json');
+    const configPath = path.join(process.cwd(), '.vibecoprc.json');
     const { writeFile: wf } = await import('./utils/file-utils.js');
     await wf(configPath, JSON.stringify(DEFAULT_CONFIG, null, 2));
-    process.stdout.write(chalk.green('✓') + ` .vibescanrc.json created at ${configPath}\n`);
+    process.stdout.write(chalk.green('✓') + ` .vibecoprc.json created at ${configPath}\n`);
     process.stdout.write(chalk.dim('Edit this file to customize rules, thresholds, and output settings.\n'));
+    process.stdout.write(chalk.dim('Tip: .vibescanrc.json is also supported for backwards compatibility.\n'));
   });
 
 program
@@ -150,7 +153,7 @@ program
         currentCategory = rule.category;
         process.stdout.write(chalk.bold.cyan(`  ${currentCategory}\n`));
       }
-      const sev = rule.defaultSeverity === 'error' ? chalk.red(rule.defaultSeverity) : rule.defaultSeverity === 'warn' ? chalk.yellow(rule.defaultSeverity) : chalk.blue(rule.defaultSeverity);
+      const sev = rule.severity === 'error' ? chalk.red(rule.severity) : rule.severity === 'warn' ? chalk.yellow(rule.severity) : chalk.blue(rule.severity);
       process.stdout.write(`    ${chalk.white(rule.id.padEnd(44))} ${sev}\n`);
       process.stdout.write(chalk.dim(`      ${rule.description}\n`));
     }
@@ -248,12 +251,19 @@ program
     }
   });
 
-function badgeColor(score: number): string {
+function getBadgeColor(score: number): string {
   if (score >= 90) return 'brightgreen';
   if (score >= 70) return 'green';
   if (score >= 50) return 'yellow';
   if (score >= 30) return 'orange';
   return 'red';
+}
+
+function getScoreEmoji(score: number): string {
+  if (score >= 90) return '🟢';
+  if (score >= 70) return '🟡';
+  if (score >= 50) return '🟠';
+  return '🔴';
 }
 
 program
@@ -284,10 +294,10 @@ program
       });
       spinner.succeed(chalk.green(`Scanned ${result.filesScanned} files`));
       const score = result.vibeScore;
-      const color = badgeColor(score);
+      const color = getBadgeColor(score);
       const badgeUrl = `https://img.shields.io/badge/VibeScore-${score}%2F100-${color}?style=${opts.style}`;
       const markdown = `![VibeScore](${badgeUrl})`;
-      const scoreEmoji = score >= 90 ? '🟢' : score >= 70 ? '🟡' : score >= 50 ? '🟠' : '🔴';
+      const scoreEmoji = getScoreEmoji(score);
       const W = 63;
       const line = (inner: string): string => `│${inner.padEnd(W - 2)}│`;
       process.stdout.write('\n');
@@ -333,72 +343,30 @@ program
   .option('--config <path>', 'Path to config file')
   .option('--watch', 'Watch for file changes and re-scan')
   .option('--debug', 'Enable debug logging')
+  .option('--include-vendor', 'Include vendor/library files in scan')
   .action(async (targetPath: string | undefined, opts: CliOptions) => {
     await runScan(targetPath ?? '.', opts);
   });
 
-interface CliOptions {
-  fix?: boolean;
-  watch?: boolean;
-  ci?: boolean;
-  format: string;
-  output?: string;
-  severity: string;
-  ignore?: string[];
-  aiScore?: boolean;
-  rule?: string[];
-  config?: string;
-  debug?: boolean;
-}
-
-function buildScanOptions(targetPath: string, config: VibescanConfig, opts: CliOptions, minSeverity: Severity): ScanOptions {
-  return {
-    path: targetPath, // already resolved by the caller (runScan)
-    config,
-    severity: minSeverity,
-    format: (opts.format as ScanOptions['format']) ?? 'terminal',
-    output: opts.output,
-    ci: Boolean(opts.ci),
-    fix: Boolean(opts.fix),
-    noAiScore: opts.aiScore === false,
-    watch: Boolean(opts.watch),
-    ruleId: opts.rule?.[0],
-    ignore: opts.ignore,
-  };
-}
-
-function shouldShowFixPromptHint(result: ScanResult, opts: CliOptions, ci: boolean): boolean {
-  return !ci
-    && !opts.output
-    && (result.errorCount > 0 || result.warnCount > 0)
-    && (opts.format ?? 'terminal') === 'terminal';
+async function writeOutput(displayResult: ScanResult, opts: CliOptions, ci: boolean, targetPath: string, isInteractive: boolean): Promise<void> {
+  const format = opts.format as OutputFormat;
+  const isFileOutput = format !== 'terminal' || Boolean(opts.output);
+  if (isInteractive && !isFileOutput) {
+    process.stdout.write(renderSummary(displayResult, false) + '\n');
+    await showInteractiveGroups(displayResult, targetPath, VERSION);
+  } else {
+    await report(displayResult, { format, ci, outputPath: opts.output, version: VERSION });
+    if (isInteractive) {
+      process.stdout.write(renderSummary(displayResult, false) + '\n');
+    }
+  }
 }
 
 async function handleScanResult(result: ScanResult, opts: CliOptions, ci: boolean, targetPath: string, displaySeverity: Severity = 'warn'): Promise<void> {
-  const sevOrder: Record<Severity, number> = { error: 0, warn: 1, info: 2 };
-  const hiddenInfoCount = sevOrder[displaySeverity] < sevOrder['info'] ? result.infoCount : 0;
-  const displayResult: ScanResult = hiddenInfoCount > 0 ? {
-    ...result,
-    files: result.files.map((f) => ({
-      ...f,
-      findings: f.findings.filter((x) => sevOrder[x.severity] <= sevOrder[displaySeverity]),
-    })),
-    infoCount: 0,
-    totalFindings: result.totalFindings - hiddenInfoCount,
-  } : result;
-  const isInteractive = (opts.format ?? 'terminal') === 'terminal' && !ci && process.stdout.isTTY && process.stdin.isTTY;
+  const { displayResult, hiddenInfoCount } = buildDisplayResult(result, displaySeverity);
+  const isInteractive = isInteractiveSession(opts, ci);
   try {
-    if (isInteractive) {
-      process.stdout.write(renderSummary(displayResult, false) + '\n');
-      await showInteractiveGroups(displayResult, targetPath);
-    } else {
-      await report(displayResult, {
-        format: opts.format as OutputFormat,
-        ci,
-        outputPath: opts.output,
-        version: VERSION,
-      });
-    }
+    await writeOutput(displayResult, opts, ci, targetPath, isInteractive);
     if (shouldShowFixPromptHint(displayResult, opts, ci)) {
       process.stdout.write(renderFixPromptHint(targetPath) + '\n');
     }
@@ -418,7 +386,7 @@ async function handleScanResult(result: ScanResult, opts: CliOptions, ci: boolea
 async function runScan(targetPath: string, opts: CliOptions): Promise<void> {
   const ci = Boolean(opts.ci);
   if (ci) setCiMode(true);
-  if (opts.debug) setLogLevel('debug');
+  if (opts.debug) setLogLevel(LogLevel.DEBUG);
 
   const resolvedTarget = path.resolve(process.cwd(), targetPath);
   if (!existsSync(resolvedTarget)) {

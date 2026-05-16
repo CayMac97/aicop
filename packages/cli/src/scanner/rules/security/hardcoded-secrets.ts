@@ -4,6 +4,19 @@ import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { isStringLiteral, isLiteral, getLine, getColumn, isIdentifier } from '../../../utils/ast-helpers.js';
 
+function isDocumentationString(value: string): boolean {
+  const up = value.toUpperCase();
+  if (up.includes('DO NOT USE')) return true;
+  if (up.includes('INSTEAD,') || up.includes('INSTEAD ')) return true;
+  if (up.includes('REPLACE')) return true;
+  if (up.includes('CHANGE THIS')) return true;
+  if (up.includes('KEEP IT SAFE')) return true;
+  if (value.includes('YOUR_') || value.includes('your_') || value.includes('<YOUR')) return true;
+  // All-caps instruction text (>60 chars, no lowercase letters)
+  if (value.length > 60 && !/[a-z]/.test(value)) return true;
+  return false;
+}
+
 const SECRET_VALUE_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /AKIA[0-9A-Z]{16}/, label: 'AWS Access Key ID' },
   { pattern: /sk-[a-zA-Z0-9]{20,}/, label: 'OpenAI API Key' },
@@ -13,7 +26,7 @@ const SECRET_VALUE_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /xoxb-[0-9]+-[a-zA-Z0-9]+/, label: 'Slack Bot Token' },
 ];
 
-const SECRET_NAME_PATTERNS = /(?:api[_-]?key|apikey|jwt[_-]?secret|secret[_-]?key|password|passwd|pwd|auth[_-]?token|access[_-]?token|private[_-]?key)/i;
+const SECRET_NAME_PATTERNS = /(?:api[_-]?key|apikey|jwt[_-]?secret|secret[_-]?key|[a-z_-]+secret|secret[a-z_-]+|password|passwd|pwd|auth[_-]?token|access[_-]?token|private[_-]?key)/i;
 const SECRET_OBJ_KEYS = /^(?:secret|password|passwd|pwd|token|apikey|api[_-]?key|authtoken|auth[_-]?token|privatekey|private[_-]?key|accesskey|access[_-]?key|clientsecret|client[_-]?secret|jwtsecret|jwt[_-]?secret|encryptionkey|encryption[_-]?key)$/i;
 const SAFE_PLACEHOLDER_PATTERN = /(?:example|placeholder|test|fake|dummy|sample|mock|todo|changeme|your[_-\s]?)/i;
 const PLACEHOLDER_VALUES = /(?:example|placeholder|test|fake|dummy|your[_\-\s]?|<.*?>|xxx)/i;
@@ -49,12 +62,22 @@ function checkLiteralForSecrets(node: TSESTree.Literal, source: string, filePath
   return null;
 }
 
+const ERROR_MESSAGE_WORDS = /\b(invalid|incorrect|wrong|failed|error|denied|unauthorized|forbidden|not found|missing|required|expired|bad|no |please|must|cannot|can't|don't|doesn't|enter|provide)\b/i;
+
+function looksLikeNaturalLanguage(value: string): boolean {
+  if (value.split(' ').length > 3) return true;
+  if (value.split(' ').length >= 2 && ERROR_MESSAGE_WORDS.test(value)) return true;
+  return false;
+}
+
 function checkVariableNamePattern(name: string, value: string): boolean {
   return (
     SECRET_NAME_PATTERNS.test(name) &&
     value.length >= MIN_SECRET_VALUE_LENGTH &&
+    !looksLikeNaturalLanguage(value) &&
     !SAFE_PLACEHOLDER_PATTERN.test(value) &&
-    !SAFE_PLACEHOLDER_PATTERN.test(name)
+    !SAFE_PLACEHOLDER_PATTERN.test(name) &&
+    !isDocumentationString(value)
   );
 }
 
@@ -64,6 +87,7 @@ function checkObjectProperty(node: TSESTree.Property, source: string, filePath: 
   const value = String((node.value as TSESTree.StringLiteral).value);
   if (value.length < MIN_SECRET_VALUE_LENGTH + 1) return null;
   if (PLACEHOLDER_VALUES.test(value)) return null;
+  if (isDocumentationString(value)) return null;
 
   let keyName: string | null = null;
   if (isIdentifier(node.key)) {

@@ -48,17 +48,17 @@ function formatDuration(ms: number): string {
 }
 
 function vibeScoreLabel(score: number): string {
-  if (score >= 90) return 'Production ready';
-  if (score >= 70) return 'Mostly clean';
-  if (score >= 50) return 'Needs attention';
-  if (score >= 30) return 'Heavy AI-smell';
+  if (score >= 85) return 'Production ready';
+  if (score >= 65) return 'Mostly clean';
+  if (score >= 40) return 'Needs attention';
+  if (score >= 15) return 'Heavy AI-smell';
   return 'Needs rewrite';
 }
 
 function vibeScoreEmoji(score: number): string {
-  if (score >= 90) return '🟢';
-  if (score >= 70) return '🟡';
-  if (score >= 50) return '🟠';
+  if (score >= 85) return '🟢';
+  if (score >= 65) return '🟡';
+  if (score >= 40) return '🟠';
   return '🔴';
 }
 
@@ -108,6 +108,9 @@ function buildSummaryContent(result: ScanResult): string {
     lines.push('');
   }
 
+  if (result.skippedVendorFiles > 0) {
+    lines.push(chalk.blue(`   ℹ  ${result.skippedVendorFiles} vendor/library ${result.skippedVendorFiles === 1 ? 'file' : 'files'} skipped  —  run with --include-vendor to scan them`));
+  }
   lines.push('   ' + chalk.dim('Run vibecop scan --format html for a visual report  ·  vibecop baseline to save this score'));
   return lines.join('\n');
 }
@@ -119,13 +122,16 @@ function buildCiSummary(result: ScanResult): string {
     `Files scanned: ${result.filesScanned}  Time: ${formatDuration(result.scanDurationMs)}`,
     `Files with issues: ${result.filesWithIssues}`,
     `Errors: ${result.errorCount}  Warnings: ${result.warnCount}  Info: ${result.infoCount}`,
-    `VibeScore: ${result.vibeScore}/100 (${getScoreLabel(result.vibeScore)})`,
+    `VibeScore: ${result.vibeScore}/100 (${vibeScoreLabel(result.vibeScore)})`,
   ];
   if (result.topIssues.length > 0) {
     lines.push('Top issues:');
     result.topIssues.forEach((issue, i) => {
       lines.push(`  ${i + 1}. ${issue.ruleId} (${issue.fileCount} files)`);
     });
+  }
+  if (result.skippedVendorFiles > 0) {
+    lines.push(`Vendor files skipped: ${result.skippedVendorFiles} (use --include-vendor to scan them)`);
   }
   return lines.join('\n');
 }

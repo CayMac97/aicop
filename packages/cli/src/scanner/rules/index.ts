@@ -6,6 +6,7 @@ import xssVulnerabilities from './security/xss-vulnerabilities.js';
 import evalUsage from './security/eval-usage.js';
 import weakCrypto from './security/weak-crypto.js';
 import jwtNoExpiry from './security/jwt-no-expiry.js';
+import jwtUnsafeVerify from './security/jwt-unsafe-verify.js';
 import missingRateLimit from './security/missing-rate-limit.js';
 import pathTraversal from './security/path-traversal.js';
 import ssrfRisk from './security/ssrf-risk.js';
@@ -17,6 +18,9 @@ import codeInjection from './security/code-injection.js';
 import openRedirect from './security/open-redirect.js';
 import insecureDeserialization from './security/insecure-deserialization.js';
 import xxeInjection from './security/xxe-injection.js';
+import nosqlInjection from './security/nosql-injection.js';
+import csrfMissing from './security/csrf-missing.js';
+import insecureSession from './security/insecure-session.js';
 
 import deadCodeBlocks from './ai-smells/dead-code-blocks.js';
 import inconsistentErrorHandling from './ai-smells/inconsistent-error-handling.js';
@@ -44,6 +48,7 @@ const ALL_RULES: Rule[] = [
   evalUsage,
   weakCrypto,
   jwtNoExpiry,
+  jwtUnsafeVerify,
   missingRateLimit,
   pathTraversal,
   ssrfRisk,
@@ -55,6 +60,9 @@ const ALL_RULES: Rule[] = [
   openRedirect,
   insecureDeserialization,
   xxeInjection,
+  nosqlInjection,
+  csrfMissing,
+  insecureSession,
   deadCodeBlocks,
   inconsistentErrorHandling,
   todoStubFunctions,

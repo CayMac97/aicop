@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { scan, loadConfig, DEFAULT_CONFIG } from '../src/lib.js';
 import type { ScanOptions } from '../src/lib.js';
+import { isVendorFile } from '../src/scanner/file-collector.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(__dirname, 'fixtures');
@@ -22,9 +23,6 @@ function makeScanOpts(fixturePath: string, overrides: Partial<ScanOptions> = {})
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Suite 1 — Clean fixture produces zero findings
-// ─────────────────────────────────────────────────────────────────────────────
 describe('clean fixture (should-not-flag/clean-express-api.ts)', () => {
   const CLEAN = join(FIXTURES, 'should-not-flag', 'clean-express-api.ts');
 
@@ -107,6 +105,123 @@ describe('auth fixture (should-flag/auth-fixture-buggy.ts)', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Suite 3 — Config loader
 // ─────────────────────────────────────────────────────────────────────────────
+describe('NoSQL injection fixtures', () => {
+  const VULNERABLE = join(FIXTURES, 'should-flag', 'nosql-injection.ts');
+  const SAFE = join(FIXTURES, 'should-not-flag', 'safe-mongo.ts');
+
+  it('flags at least 4 NoSQL injection errors', async () => {
+    const result = await scan(makeScanOpts(VULNERABLE, {
+      severity: 'info',
+      ruleId: 'security/nosql-injection',
+    }));
+    const findings = result.files.flatMap((f) => f.findings);
+    expect(result.errorCount).toBeGreaterThanOrEqual(4);
+    expect(findings.filter((f) => f.ruleId === 'security/nosql-injection')).toHaveLength(4);
+  });
+
+  it('does not flag sanitized Mongo queries', async () => {
+    const result = await scan(makeScanOpts(SAFE, {
+      severity: 'info',
+      ruleId: 'security/nosql-injection',
+    }));
+    const findings = result.files.flatMap((f) => f.findings);
+    expect(findings.filter((f) => f.ruleId === 'security/nosql-injection')).toHaveLength(0);
+  });
+});
+
+describe('isVendorFile', () => {
+  it('flags files in a vendor directory', () => {
+    expect(isVendorFile('/app/vendor/jquery.js', '', 1000)).toBe(true);
+    expect(isVendorFile('/app/vendors/bootstrap.js', '', 1000)).toBe(true);
+  });
+
+  it('flags minified files by filename', () => {
+    expect(isVendorFile('/app/public/app.min.js', '', 1000)).toBe(true);
+    expect(isVendorFile('/app/dist/bundle.bundle.js', '', 1000)).toBe(true);
+    expect(isVendorFile('/app/dist/chunk.chunk.js', '', 1000)).toBe(true);
+  });
+
+  it('flags jquery.js / bootstrap.js via exact stem match', () => {
+    expect(isVendorFile('/app/js/jquery.js', '', 1000)).toBe(true);
+    expect(isVendorFile('/app/js/bootstrap.js', '', 1000)).toBe(true);
+    expect(isVendorFile('/app/js/jquery.slim.js', '', 1000)).toBe(true);
+  });
+
+  it('flags known library filenames by token (versioned / suffixed)', () => {
+    expect(isVendorFile('/app/js/jquery-3.6.0.js', '', 1000)).toBe(true);
+    expect(isVendorFile('/app/js/jquery.min.js', '', 1000)).toBe(true);
+    expect(isVendorFile('/app/js/lodash.esm.js', '', 1000)).toBe(true);
+    expect(isVendorFile('/app/js/bootstrap.bundle.js', '', 1000)).toBe(true);
+  });
+
+  it('does not flag non-library files with lib-like tokens', () => {
+    expect(isVendorFile('/app/src/jquery-migration-helper.js', '', 1000)).toBe(false);
+    expect(isVendorFile('/app/src/react-query-adapter.ts', '', 1000)).toBe(false);
+  });
+
+  it('flags files with /*! or @license in first bytes', () => {
+    const vendorContent = '/*! jQuery v3.6.0 | (c) OpenJS Foundation and other contributors */\nvar jQuery = {};';
+    expect(isVendorFile('/app/src/some-file.js', vendorContent, 1000)).toBe(true);
+  });
+
+  it('flags Babel/Browserify bundles >50KB starting with !function(', () => {
+    const babelContent = '!function(e,t){"use strict";var r={}';
+    const over50kb = 51 * 1024;
+    expect(isVendorFile('/app/dist/app.js', babelContent, over50kb)).toBe(true);
+  });
+
+  it('flags Babel bundles starting with [function(', () => {
+    const babelContent = '[function(e,t,r){"use strict";module.exports=r(0)';
+    const over50kb = 51 * 1024;
+    expect(isVendorFile('/app/dist/app.js', babelContent, over50kb)).toBe(true);
+  });
+
+  it('does not flag small files with !function( (could be app code)', () => {
+    const content = '!function(e){window.myLib=e()}(function(){return{}})';
+    expect(isVendorFile('/app/src/tiny.js', content, 1000)).toBe(false);
+  });
+
+  it('flags non-TS files over 200KB regardless of content', () => {
+    const over200kb = 201 * 1024;
+    expect(isVendorFile('/app/public/legacy.js', '', over200kb)).toBe(true);
+    expect(isVendorFile('/app/public/legacy.jsx', '', over200kb)).toBe(true);
+  });
+
+  it('does not auto-flag .ts/.tsx files over 200KB', () => {
+    const over200kb = 201 * 1024;
+    expect(isVendorFile('/app/src/generated.ts', 'export {}', over200kb)).toBe(false);
+    expect(isVendorFile('/app/src/generated.tsx', 'export {}', over200kb)).toBe(false);
+  });
+
+  it('does not flag normal source files', () => {
+    expect(isVendorFile('/app/src/auth.ts', 'import express from "express";\n', 500)).toBe(false);
+    expect(isVendorFile('/app/src/utils/helper.js', 'export function helper() {}', 500)).toBe(false);
+  });
+});
+
+describe('vibecop-ignore inline suppression', () => {
+  const IGNORE_CLEAN = join(FIXTURES, 'should-not-flag', 'ignore-comments.ts');
+  const IGNORE_WRONG = join(FIXTURES, 'should-flag', 'ignore-wrong-rule.ts');
+
+  it('suppresses findings when // vibecop-ignore precedes the line', async () => {
+    const result = await scan(makeScanOpts(IGNORE_CLEAN, { severity: 'info', ruleId: 'security/hardcoded-secrets' }));
+    const findings = result.files.flatMap((f) => f.findings);
+    expect(findings.filter((f) => f.ruleId === 'security/hardcoded-secrets')).toHaveLength(0);
+  });
+
+  it('suppresses when // vibecop-ignore rule-id matches', async () => {
+    const result = await scan(makeScanOpts(IGNORE_CLEAN, { severity: 'info' }));
+    const findings = result.files.flatMap((f) => f.findings);
+    expect(findings.filter((f) => f.ruleId === 'security/hardcoded-secrets')).toHaveLength(0);
+  });
+
+  it('still flags when // vibecop-ignore uses a different rule id', async () => {
+    const result = await scan(makeScanOpts(IGNORE_WRONG, { severity: 'info', ruleId: 'security/hardcoded-secrets' }));
+    const findings = result.files.flatMap((f) => f.findings);
+    expect(findings.filter((f) => f.ruleId === 'security/hardcoded-secrets').length).toBeGreaterThan(0);
+  });
+});
+
 describe('loadConfig', () => {
   it('returns a valid config with rules when no config file is present', async () => {
     // Use a temp directory that has no vibescan config

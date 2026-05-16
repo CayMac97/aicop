@@ -11,11 +11,14 @@ export async function loadConfig(searchFrom?: string, configPath?: string): Prom
   const explorer = cosmiconfig(MODULE_NAME, {
     searchPlaces: [
       'package.json',
+      '.vibecoprc.json',
+      '.vibecoprc.js',
       `.${MODULE_NAME}rc.json`,
       `.${MODULE_NAME}rc.js`,
       `.${MODULE_NAME}rc.cjs`,
       `${MODULE_NAME}.config.js`,
       `${MODULE_NAME}.config.cjs`,
+      'vibecop.config.js',
     ],
     searchStrategy: 'project',
   } as Parameters<typeof cosmiconfig>[1]);

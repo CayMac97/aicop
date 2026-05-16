@@ -5,7 +5,7 @@ const WARN_LINES = 400;
 const ERROR_LINES = 800;
 const MAX_EXPORTS = 20;
 
-function countExportDeclaration(decl: TSESTree.Declaration): number {
+function countExportDeclaration(decl: NonNullable<TSESTree.ExportNamedDeclaration['declaration']>): number {
   if (decl.type === 'VariableDeclaration') {
     return (decl as TSESTree.VariableDeclaration).declarations.length;
   }

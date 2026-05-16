@@ -8,18 +8,14 @@ const TODO_PATTERN = /\/\/\s*(?:TODO|FIXME|HACK|XXX|PLACEHOLDER|STUB)\b/i;
 const NOT_IMPLEMENTED_PATTERN = /not\s+implemented/i;
 const STUB_RETURN_NAMES = /^(?:get|fetch|load|retrieve|find|list|create|update|delete|process|handle|validate)/i;
 
-function isEmptyBody(body: TSESTree.BlockStatement): boolean {
-  return body.body.length === 0 ||
-    (body.body.length === 1 && body.body[0]?.type === 'EmptyStatement');
-}
-
 function isNotImplementedThrow(body: TSESTree.BlockStatement): boolean {
   if (body.body.length !== 1) return false;
   const stmt = body.body[0];
   if (!stmt || stmt.type !== 'ThrowStatement') return false;
   const throwStmt = stmt as TSESTree.ThrowStatement;
-  if (throwStmt.argument?.type !== 'NewExpression') return false;
-  const newExpr = throwStmt.argument as TSESTree.NewExpression;
+  const argument = throwStmt.argument as TSESTree.Node | null;
+  if (!argument || argument.type !== 'NewExpression') return false;
+  const newExpr = argument as TSESTree.NewExpression;
   if (!isIdentifier(newExpr.callee)) return false;
   if ((newExpr.callee as TSESTree.Identifier).name !== 'Error') return false;
   const msgArg = newExpr.arguments[0];

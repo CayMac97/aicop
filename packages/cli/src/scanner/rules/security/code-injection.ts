@@ -53,7 +53,7 @@ function checkMathEval(node: TSESTree.CallExpression, source: string, filePath: 
     line: getLine(node),
     column: getColumn(node),
     snippet: extractSnippet(source, getLine(node)),
-    fix: `${obj}.${method}() can execute arbitrary code. Validate and sanitize all input first.`,
+    fix: obj + '.' + method + '() can execute arbitrary code. Validate and sanitize all input first.',
   };
 }
 

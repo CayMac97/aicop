@@ -19,6 +19,7 @@ export interface Finding {
   column: number;
   snippet: string;
   fix?: string;
+  fixCode?: string;
 }
 
 /** Interface every rule must implement */
@@ -56,6 +57,7 @@ export interface ScanResult {
   filesScanned: number;
   filesWithIssues: number;
   topIssues: Array<{ ruleId: string; fileCount: number }>;
+  skippedVendorFiles: number;
 }
 
 /** Threshold configuration */
@@ -94,4 +96,5 @@ export interface ScanOptions {
   watch: boolean;
   ruleId?: string;
   ignore?: string[];
+  includeVendor?: boolean;
 }

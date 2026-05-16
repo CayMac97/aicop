@@ -50,7 +50,7 @@ function renderFileSection(file: FileScanResult): string {
       <div class="file-header">
         <h3>${escapeHtml(file.relativePath)}</h3>
         <div class="file-meta">
-          <span class="ai-score">${scoreEmoji} AI Score: ${file.aiScore}/100 (${scoreLabel})</span>
+          <span class="ai-score">${scoreEmoji} AI Risk: ${file.aiScore}/100 (${scoreLabel})</span>
           <span class="counts">
             ${errorCount > 0 ? `<span style="color:#ef4444">${errorCount} errors</span>` : ''}
             ${warnCount > 0 ? `<span style="color:#f59e0b">${warnCount} warnings</span>` : ''}

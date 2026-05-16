@@ -25,7 +25,7 @@ function isAstNode(val: unknown): val is TSESTree.Node {
 function walkChildren(root: TSESTree.Node, ctx: NestingContext): void {
   for (const key of Object.keys(root)) {
     if (key === 'parent' || key === 'tokens' || key === 'comments') continue;
-    const val = (root as Record<string, unknown>)[key];
+    const val = (root as unknown as Record<string, unknown>)[key];
     if (Array.isArray(val)) {
       for (const child of val) {
         if (isAstNode(child)) walkWithDepth(child, ctx);

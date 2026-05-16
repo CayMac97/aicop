@@ -19,7 +19,7 @@ function handleCatchClause(clause: TSESTree.CatchClause, info: FunctionInfo, sou
   const isEmpty = body.length === 0 || (body.length === 1 && body[0]?.type === 'EmptyStatement');
   if (!isEmpty) return;
   const range = clause.body.range;
-  if (!range) { info.hasEmptyCatch = true; return; }
+  if (!range || range.length < 2) { info.hasEmptyCatch = true; return; }
   const catchBodyText = source.slice(range[0] + 1, range[1] - 1);
   if (!catchBodyText.includes('//') && !catchBodyText.includes('/*')) {
     info.hasEmptyCatch = true;

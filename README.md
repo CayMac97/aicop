@@ -89,6 +89,7 @@ vibecop init                            # create .vibecoprc.json config
 |---|---|---|
 | `security/hardcoded-secrets` | error | Passwords, tokens, API keys embedded in code |
 | `security/sql-injection` | error | String-concatenated SQL queries |
+| `security/nosql-injection` | error | MongoDB queries built from unsanitised `req.body`, `req.query`, or `req.params` |
 | `security/xss-vulnerabilities` | error | Unsanitised `innerHTML`, `document.write`, React `dangerouslySetInnerHTML` |
 | `security/eval-usage` | error | Direct `eval()` calls with non-literal arguments |
 | `security/code-injection` | error | `vm.runInNewContext`, `vm.runInThisContext`, `math.eval` / `mathjs.evaluate` with dynamic input |

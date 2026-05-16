@@ -21,7 +21,7 @@ function calculateComplexity(funcNode: TSESTree.FunctionDeclaration | TSESTree.F
   let complexity = 1;
   let nestedFuncDepth = 0;
 
-  walk(funcNode as TSESTree.Program, {
+  walk(funcNode, {
     enter(node) {
       if (node !== funcNode && isFunctionNode(node)) { nestedFuncDepth++; return; }
       if (nestedFuncDepth > 0) return;

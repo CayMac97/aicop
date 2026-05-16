@@ -46,3 +46,16 @@ coverage/
 *.tmp
 *.temp
 .cache/
+
+# Claude Code
+.claude/
+
+# Website (not open source)
+packages/website/
+
+# Local VibeCop scan artifacts
+.vibecop-baseline.json
+.vibescan/
+.vibescanrc.json
+report.html
+results.json

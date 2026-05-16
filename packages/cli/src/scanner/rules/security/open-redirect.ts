@@ -50,12 +50,7 @@ function checkResRedirect(node: TSESTree.CallExpression, source: string, filePat
   const args = node.arguments;
   if (args.length === 0) return null;
 
-  let urlArg: TSESTree.Node;
-  if (args.length >= 2 && isStatusCode(args[0])) {
-    urlArg = args[1];
-  } else {
-    urlArg = args[0];
-  }
+  const urlArg = args.length >= 2 && isStatusCode(args[0]) ? args[1] : args[0];
 
   if (isStaticUrl(urlArg)) return null;
   if (!isUserInput(urlArg)) return null;

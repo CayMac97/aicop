@@ -4,8 +4,6 @@ import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isStringLiteral, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
 
-const TEST_FILE_PATTERN = /[/\\](?:test|tests|spec|__tests__)[/\\]|\.(?:test|spec|cy)\.[jt]sx?$/i;
-
 const AUTH_ROUTE_PATTERNS = [
   /\/login/i, /\/signin/i, /\/register/i, /\/signup/i,
   /\/forgot[-_]?password/i, /\/reset[-_]?password/i, /\/auth/i,
@@ -77,6 +75,8 @@ app.post('/forgot-password', authLimiter, async (req, res) => { ... });`,
     if (/[/\\](?:test|tests|spec|__tests__)[/\\]|\.(?:test|spec|cy)\.[jt]sx?$/i.test(filePath)) return findings;
     if (sourceHasRateLimiting(source)) return findings;
 
+    const seenEndpoints = new Set<string>();
+
     walk(ast, {
       CallExpression(rawNode) {
         const node = rawNode as TSESTree.CallExpression;
@@ -84,6 +84,8 @@ app.post('/forgot-password', authLimiter, async (req, res) => { ... });`,
         if (!routePath) return;
         if (!isAuthRoute(routePath)) return;
         if (middlewareIncludesRateLimit(node.arguments)) return;
+        if (seenEndpoints.has(routePath)) return;
+        seenEndpoints.add(routePath);
         findings.push({
           ruleId: 'security/missing-rate-limit',
           severity: 'warn',

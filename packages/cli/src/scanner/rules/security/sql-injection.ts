@@ -2,12 +2,16 @@ import { TSESTree } from '@typescript-eslint/typescript-estree';
 import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
-import { isStringLiteral, isTemplateLiteral, getLine, getColumn, isMemberExpression, isIdentifier } from '../../../utils/ast-helpers.js';
+import { isStringLiteral, getLine, getColumn, isMemberExpression, isIdentifier } from '../../../utils/ast-helpers.js';
 
 const SQL_VERB_PATTERN = /\b(SELECT|INSERT\s+INTO|UPDATE\s+\w|DELETE\s+FROM|DROP\s+TABLE|CREATE\s+TABLE|ALTER\s+TABLE|EXEC(?:UTE)?)\b/i;
+const HTML_TAG_PATTERN = /<(?:select|table|input|form|option|textarea)\b/i;
 const USER_INPUT_SOURCES = new Set(['params', 'body', 'query', 'headers', 'cookies']);
-const SAFE_QUERY_METHODS = new Set(['query', 'execute', 'raw', 'knex', 'prepare']);
 const PARAMETERIZED_PATTERN = /\?\s*[,)]/;
+
+function isExpressionNode(node: TSESTree.Expression | TSESTree.PrivateIdentifier): node is TSESTree.Expression {
+  return node.type !== 'PrivateIdentifier';
+}
 
 function isUserInputExpression(node: TSESTree.Expression): boolean {
   if (!isMemberExpression(node)) return false;
@@ -31,12 +35,15 @@ function templateHasUserInput(node: TSESTree.TemplateLiteral): boolean {
 
 function concatHasUserInput(node: TSESTree.BinaryExpression): boolean {
   if (node.operator !== '+') return false;
+  if (!isExpressionNode(node.left) || !isExpressionNode(node.right)) return false;
   return isUserInputExpression(node.right) || isUserInputExpression(node.left) ||
     (isIdentifier(node.right) || isIdentifier(node.left));
 }
 
 function looksLikeSQL(text: string): boolean {
-  return SQL_VERB_PATTERN.test(text);
+  if (!SQL_VERB_PATTERN.test(text)) return false;
+  if (HTML_TAG_PATTERN.test(text)) return false;
+  return true;
 }
 
 function checkTemplate(node: TSESTree.TemplateLiteral, source: string, filePath: string): Finding | null {

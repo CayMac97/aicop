@@ -1,12 +1,13 @@
 import { parse } from '@typescript-eslint/typescript-estree';
 import path from 'node:path';
 import { collectFiles } from './file-collector.js';
-import { getAllRules, getRuleById } from './rules/index.js';
+import { getAllRules } from './rules/index.js';
 import { runContextAnalysis } from './context-analyzer.js';
 import { computeAiScore } from './rules/ai-smells/ai-confidence-scorer.js';
 import { readFileContent, getRelativePath } from '../utils/file-utils.js';
 import { logger } from '../utils/logger.js';
 import { Rule, Finding, FileScanResult, ScanResult, ScanOptions, VibescanConfig, Severity } from './rules/types.js';
+import { isVendorFile, getFileSizeBytes, MEDIUM_FILE_BYTES } from './file-collector.js';
 
 const PARSE_OPTIONS = {
   jsx: true,
@@ -28,7 +29,7 @@ function getEnabledRules(config: VibescanConfig, ruleId?: string): Rule[] {
   });
 }
 
-const TEST_FILE_RE = /[/\\](?:test|tests|spec|__tests__)[/\\](?!fixtures[/\\])|\.(?:test|spec)\.[jt]sx?$/i;
+const TEST_FILE_RE = /[/\\](?:test|tests|spec|__tests__|e2e|mocks?|__mocks__)[/\\](?!fixtures[/\\])|\.(?:test|spec|e2e-spec|fixture)\.[jt]sx?$/i;
 
 function applyConfigSeverity(finding: Finding, config: VibescanConfig): Finding {
   const configured = config.rules[finding.ruleId];
@@ -44,9 +45,49 @@ function downgradeInTestFile(finding: Finding, filePath: string): Finding {
   return finding;
 }
 
+function applyIgnoreComments(findings: Finding[], source: string): Finding[] {
+  const lines = source.split('\n');
+  return findings.filter((f) => {
+    const lineIdx = f.line - 1;
+    const sameLine = lines[lineIdx] ?? '';
+    if (/\/\/\s*vibecop-ignore\b/.test(sameLine)) return false;
+    const prevLine = lineIdx > 0 ? (lines[lineIdx - 1] ?? '').trim() : '';
+    if (prevLine === '// vibecop-ignore') return false;
+    if (prevLine === `// vibecop-ignore ${f.ruleId}`) return false;
+    return true;
+  });
+}
+
+function isSkippedInTestFile(finding: Finding, filePath: string): boolean {
+  if (!TEST_FILE_RE.test(filePath)) return false;
+  return finding.ruleId === 'security/missing-rate-limit' || finding.ruleId === 'security/csrf-missing';
+}
+
 function meetsMinSeverity(finding: Finding, minSeverity: Severity): boolean {
   const order: Record<Severity, number> = { error: 0, warn: 1, info: 2 };
   return order[finding.severity] <= order[minSeverity];
+}
+
+function isImportWarn(finding: Finding): boolean {
+  if (finding.severity !== 'warn') return false;
+  if (finding.ruleId === 'security/xxe-injection') {
+    return finding.message.includes('XML parser can be vulnerable');
+  }
+  if (finding.ruleId === 'security/insecure-deserialization') {
+    return finding.message.includes('can deserialize executable code');
+  }
+  return false;
+}
+
+function suppressImportWarnings(findings: Finding[]): Finding[] {
+  const concreteRules = new Set(
+    findings
+      .filter((finding) => finding.severity === 'error')
+      .filter((finding) => finding.ruleId === 'security/xxe-injection' || finding.ruleId === 'security/insecure-deserialization')
+      .map((finding) => finding.ruleId),
+  );
+  if (concreteRules.size === 0) return findings;
+  return findings.filter((finding) => !concreteRules.has(finding.ruleId) || !isImportWarn(finding));
 }
 
 function scanFile(
@@ -70,7 +111,11 @@ function scanFile(
   try {
     const ext = path.extname(filePath).toLowerCase();
     const useJsx = ext === '.jsx' || ext === '.tsx';
-    ast = parse(source, { ...PARSE_OPTIONS, jsx: useJsx });
+    try {
+      ast = parse(source, { ...PARSE_OPTIONS, jsx: useJsx });
+    } catch {
+      ast = parse(source, { ...PARSE_OPTIONS, jsx: true });
+    }
   } catch (err) {
     logger.debug(`Parse error in ${relativePath}: ${String(err)}`);
     return { filePath, relativePath, findings: [], aiScore: 0, parseError: `Parse error: ${String(err)}` };
@@ -90,9 +135,10 @@ function scanFile(
   const contextFindings = runContextAnalysis(source, filePath);
   rawFindings.push(...contextFindings);
 
-  const findings = rawFindings
+  const findings = applyIgnoreComments(suppressImportWarnings(rawFindings), source)
     .map((f) => applyConfigSeverity(f, config))
     .map((f) => downgradeInTestFile(f, filePath))
+    .filter((f) => !isSkippedInTestFile(f, filePath))
     .filter((f) => meetsMinSeverity(f, minSeverity))
     .sort((a, b) => {
       const order = { error: 0, warn: 1, info: 2 };
@@ -122,23 +168,38 @@ function computeTopIssues(files: FileScanResult[]): Array<{ ruleId: string; file
 
 function computeVibeScore(files: FileScanResult[]): number {
   if (files.length === 0) return 100;
-  const scoredFiles = files.filter((f) => !f.parseError);
-  if (scoredFiles.length === 0) return 100;
+  if (files.filter((f) => !f.parseError).length === 0) return 100;
+
   const allFindings = files.flatMap((f) => f.findings);
-  const avgAiScore = scoredFiles.reduce((sum, f) => sum + f.aiScore, 0) / scoredFiles.length;
-  const secErrCount = allFindings.filter(
-    (f) => f.ruleId.startsWith('security/') && f.severity === 'error',
-  ).length;
-  const secWarnCount = allFindings.filter(
-    (f) => f.ruleId.startsWith('security/') && f.severity === 'warn',
-  ).length;
-  const penalty = secErrCount * 12 + secWarnCount * 6 + Math.round(avgAiScore * 0.7);
-  return Math.max(0, 100 - penalty);
+
+  // Tiered security error penalty: first 3 = -8, 4-6 = -5, 7+ = -3, cap -50
+  const secErrCount = allFindings.filter((f) => f.ruleId.startsWith('security/') && f.severity === 'error').length;
+  const secErrPenalty = Math.min(
+    Math.min(secErrCount, 3) * 8 +
+    Math.max(0, Math.min(secErrCount - 3, 3)) * 5 +
+    Math.max(0, secErrCount - 6) * 3,
+    50,
+  );
+
+  const secWarnCount = allFindings.filter((f) => f.ruleId.startsWith('security/') && f.severity === 'warn').length;
+  const secWarnPenalty = Math.min(secWarnCount * 3, 15);
+
+  const aiErrCount = allFindings.filter((f) => f.ruleId.startsWith('ai-smell/') && f.severity === 'error').length;
+  const aiErrPenalty = Math.min(aiErrCount * 5, 10);
+
+  const aiWarnCount = allFindings.filter((f) => f.ruleId.startsWith('ai-smell/') && f.severity === 'warn').length;
+  const aiWarnPenalty = Math.min(aiWarnCount, 10);
+
+  const techWarnCount = allFindings.filter((f) => f.ruleId.startsWith('tech-debt/') && f.severity === 'warn').length;
+  const techDebtPenalty = Math.min(techWarnCount * 0.5, 5);
+
+  const total = secErrPenalty + secWarnPenalty + aiErrPenalty + aiWarnPenalty + techDebtPenalty;
+  return Math.max(0, Math.round(100 - total));
 }
 
 export async function scan(options: ScanOptions, onProgress?: (file: string) => void): Promise<ScanResult> {
   const startTime = Date.now();
-  const { config, severity, noAiScore, ruleId } = options;
+  const { config, severity, noAiScore, ruleId, includeVendor } = options;
   try {
     const files = await collectFiles({
       scanPath: options.path,
@@ -151,8 +212,21 @@ export async function scan(options: ScanOptions, onProgress?: (file: string) => 
 
     const basePath = process.cwd();
     const fileResults: FileScanResult[] = [];
+    let skippedVendorFiles = 0;
 
     for (const filePath of files) {
+      if (!includeVendor) {
+        const sizeBytes = getFileSizeBytes(filePath);
+        const source = sizeBytes < MEDIUM_FILE_BYTES
+          ? (() => { try { return readFileContent(filePath); } catch { return ''; } })()
+          : '';
+        if (isVendorFile(filePath, source, sizeBytes)) {
+          skippedVendorFiles++;
+          logger.debug(`Skipping vendor file: ${getRelativePath(filePath, basePath)}`);
+          continue;
+        }
+      }
+
       onProgress?.(getRelativePath(filePath, basePath));
       const result = scanFile(filePath, basePath, enabledRules, config, severity, noAiScore);
       fileResults.push(result);
@@ -169,9 +243,10 @@ export async function scan(options: ScanOptions, onProgress?: (file: string) => 
       infoCount: allFindings.filter((f) => f.severity === 'info').length,
       vibeScore: computeVibeScore(fileResults),
       scanDurationMs: Date.now() - startTime,
-      filesScanned: files.length,
+      filesScanned: fileResults.length,
       filesWithIssues,
       topIssues: computeTopIssues(fileResults),
+      skippedVendorFiles,
     };
   } catch (err) {
     throw new Error(`Scan failed: ${String(err)}`);

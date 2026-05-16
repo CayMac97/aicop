@@ -1,6 +1,9 @@
-out
-node_modules
-.vscode-test
-src
+src/
+node_modules/
+.vscode/
+*.ts
+!out/**
+*.map
+package-lock.json
 tsconfig.json
-*.vsix
+.gitignore

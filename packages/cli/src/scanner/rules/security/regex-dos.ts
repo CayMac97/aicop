@@ -7,6 +7,13 @@ import { getLine, getColumn, isStringLiteral, isIdentifier } from '../../../util
 const NESTED_QUANTIFIER = /(\([^)]*[+*][^)]*\)[+*]|\([^)]*\)[+*][+*])/;;
 const OVERLAPPING_ALTERNATION = /\(([^|)]+\|[^)]+)\)[+*]/;
 
+type RegexLiteral = TSESTree.Literal & {
+  regex?: {
+    pattern: string;
+    flags: string;
+  };
+};
+
 function analyzeRegexPattern(pattern: string): string | null {
   if (NESTED_QUANTIFIER.test(pattern)) {
     return 'Nested quantifiers detected — catastrophic backtracking possible (e.g., (a+)+)';
@@ -17,7 +24,7 @@ function analyzeRegexPattern(pattern: string): string | null {
   return null;
 }
 
-function checkRegexLiteral(node: TSESTree.Literal, source: string, filePath: string): Finding | null {
+function checkRegexLiteral(node: RegexLiteral, source: string, filePath: string): Finding | null {
   if (!node.regex) return null;
   const issue = analyzeRegexPattern(node.regex.pattern);
   if (!issue) return null;
@@ -33,16 +40,27 @@ function checkRegexLiteral(node: TSESTree.Literal, source: string, filePath: str
   };
 }
 
+const USER_INPUT_RE = /\breq\s*\.\s*(?:body|params|query|headers|cookies)\b/;
+
+function isUserControlledArg(arg: TSESTree.Node, source: string): boolean {
+  const line = (arg.loc?.start.line ?? 1) - 1;
+  const lineText = source.split('\n')[line] ?? '';
+  return USER_INPUT_RE.test(lineText);
+}
+
 function checkNewRegExp(node: TSESTree.NewExpression, source: string, filePath: string): Finding | null {
   if (!isIdentifier(node.callee)) return null;
   if ((node.callee as TSESTree.Identifier).name !== 'RegExp') return null;
   const patternArg = node.arguments[0];
   if (!patternArg) return null;
   if (!isStringLiteral(patternArg as TSESTree.Expression)) {
+    const severity = isUserControlledArg(patternArg, source) ? 'error' : 'warn';
     return {
       ruleId: 'security/regex-dos',
-      severity: 'error',
-      message: 'new RegExp() with non-static pattern — ReDoS risk',
+      severity,
+      message: severity === 'error'
+        ? 'new RegExp() with user-controlled input — direct ReDoS risk'
+        : 'new RegExp() with dynamic pattern — ensure pattern is not user-controlled',
       file: filePath,
       line: getLine(node),
       column: getColumn(node),
@@ -79,7 +97,7 @@ const rule: Rule = {
 
     walk(ast, {
       Literal(rawNode) {
-        const finding = checkRegexLiteral(rawNode as TSESTree.Literal, source, filePath);
+        const finding = checkRegexLiteral(rawNode as RegexLiteral, source, filePath);
         if (finding) findings.push(finding);
       },
       NewExpression(rawNode) {

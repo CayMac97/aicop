@@ -7,21 +7,26 @@ import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral }
 const EXEC_FUNCTIONS = new Set(['exec', 'execSync', 'spawn', 'spawnSync', 'execFile', 'execFileSync']);
 const USER_INPUT_PROPS = new Set(['body', 'query', 'params', 'headers']);
 
+function isReqPropUserInput(node: TSESTree.MemberExpression): boolean {
+  if (!isMemberExpression(node.object)) return false;
+  const parent = node.object as TSESTree.MemberExpression;
+  return isIdentifier(parent.object)
+    && (parent.object as TSESTree.Identifier).name === 'req'
+    && isIdentifier(parent.property)
+    && USER_INPUT_PROPS.has((parent.property as TSESTree.Identifier).name);
+}
+
+function isDirectPropUserInput(node: TSESTree.MemberExpression): boolean {
+  return isIdentifier(node.object)
+    && isIdentifier(node.property)
+    && USER_INPUT_PROPS.has((node.property as TSESTree.Identifier).name);
+}
+
 function isUserInput(node: TSESTree.Node): boolean {
   if (isMemberExpression(node)) {
     const me = node as TSESTree.MemberExpression;
-    if (isMemberExpression(me.object)) {
-      const parent = me.object as TSESTree.MemberExpression;
-      if (isIdentifier(parent.object) && (parent.object as TSESTree.Identifier).name === 'req') {
-        if (isIdentifier(parent.property) && USER_INPUT_PROPS.has((parent.property as TSESTree.Identifier).name)) {
-          return true;
-        }
-      }
-    }
-    if (isIdentifier(me.object) && isIdentifier(me.property)) {
-      const prop = (me.property as TSESTree.Identifier).name;
-      if (USER_INPUT_PROPS.has(prop)) return true;
-    }
+    if (isReqPropUserInput(me)) return true;
+    if (isDirectPropUserInput(me)) return true;
   }
   if (node.type === 'TemplateLiteral') {
     return (node as TSESTree.TemplateLiteral).expressions.some((e) => isUserInput(e));

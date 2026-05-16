@@ -28,7 +28,10 @@ function formatSeverityPrefix(severity: Severity): string {
 
 function formatFileHeader(file: FileScanResult, ci: boolean): string {
   const fileLine = `── ${file.relativePath} `;
-  const scoreLabel = `AI Score: ${file.aiScore}/100 ${getScoreEmoji(file.aiScore)}`;
+  const hasSecurityErrors = file.findings.some((f) => f.ruleId.startsWith('security/') && f.severity === 'error');
+  const scoreLabel = hasSecurityErrors
+    ? '🔴 Security issues — see errors above'
+    : `AI Risk: ${file.aiScore}/100 ${getScoreEmoji(file.aiScore)}`;
   if (ci) return `${fileLine}${scoreLabel}`;
   return chalk.bold.white(fileLine) + chalk.gray('─'.repeat(Math.max(0, 60 - fileLine.length))) + ' ' + scoreLabel;
 }

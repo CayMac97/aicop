@@ -4,8 +4,6 @@ import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral } from '../../../utils/ast-helpers.js';
 
-const CORS_OPTION_NAMES = new Set(['cors', 'corsOptions', 'corsConfig', 'corsSettings']);
-
 function isWildcardOrigin(node: TSESTree.Expression): boolean {
   return isStringLiteral(node) && String((node as TSESTree.StringLiteral).value) === '*';
 }

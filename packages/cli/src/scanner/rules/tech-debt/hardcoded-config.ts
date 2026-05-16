@@ -2,7 +2,7 @@ import { TSESTree } from '@typescript-eslint/typescript-estree';
 import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
-import { getLine, getColumn, isStringLiteral, isIdentifier } from '../../../utils/ast-helpers.js';
+import { getLine, getColumn, isStringLiteral } from '../../../utils/ast-helpers.js';
 import { isConfigFile, isTestFile } from '../../../utils/file-utils.js';
 
 const PORT_PATTERN = /^(?:PORT|port|Port)$/;
@@ -14,8 +14,16 @@ function isPortNumber(value: unknown): boolean {
   return value > 0 && value < 65536 && value !== 80 && value !== 443;
 }
 
+const KNOWN_PUBLIC_HOSTS = /\b(github\.com|gitlab\.com|npmjs\.com|cdnjs\.cloudflare\.com|unpkg\.com|cdn\.jsdelivr\.net|docs\.|api\.github\.com)\b/;
+
 function looksLikeBaseUrl(value: string): boolean {
-  return URL_PATTERN.test(value) && !value.includes('localhost') && !value.includes('example.com') && !value.includes('your-');
+  if (!URL_PATTERN.test(value)) return false;
+  if (value.includes('localhost')) return false;
+  if (value.includes('example.com')) return false;
+  if (value.includes('your-')) return false;
+  if (value.endsWith('.git')) return false;
+  if (KNOWN_PUBLIC_HOSTS.test(value)) return false;
+  return true;
 }
 
 function looksLikeDbName(value: string): boolean {

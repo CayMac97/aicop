@@ -3,11 +3,8 @@ import { ScanResult, Finding, Severity } from '../scanner/rules/types.js';
 import { getRuleById } from '../scanner/rules/index.js';
 
 export interface FixPromptOptions {
-  /** Minimum severity to include in the prompt */
   minSeverity: 'error' | 'warn' | 'info';
-  /** Whether to include code snippets from the scan results */
   includeSnippets: boolean;
-  /** Target path used in the scan (for relative path display) */
   targetPath?: string;
 }
 
@@ -15,30 +12,6 @@ const SEVERITY_ORDER: Record<Severity, number> = { error: 0, warn: 1, info: 2 };
 
 function severityAboveOrEqual(finding: Finding, min: Severity): boolean {
   return SEVERITY_ORDER[finding.severity] <= SEVERITY_ORDER[min];
-}
-
-function groupBySeverityThenFile(
-  findings: Finding[],
-  minSeverity: Severity,
-): Map<Severity, Map<string, Finding[]>> {
-  const bySev = new Map<Severity, Map<string, Finding[]>>();
-
-  for (const f of findings) {
-    if (!severityAboveOrEqual(f, minSeverity)) continue;
-    if (!bySev.has(f.severity)) bySev.set(f.severity, new Map());
-    const byFile = bySev.get(f.severity)!;
-    if (!byFile.has(f.file)) byFile.set(f.file, []);
-    byFile.get(f.file)!.push(f);
-  }
-
-  // Sort findings within each file by line number
-  for (const byFile of bySev.values()) {
-    for (const [filePath, fileFindigs] of byFile) {
-      byFile.set(filePath, fileFindigs.sort((a, b) => a.line - b.line));
-    }
-  }
-
-  return bySev;
 }
 
 function displayPath(filePath: string, targetPath?: string): string {
@@ -51,126 +24,109 @@ function displayPath(filePath: string, targetPath?: string): string {
   }
 }
 
-function renderFindingBlock(finding: Finding, includeSnippets: boolean): string {
-  const rule = getRuleById(finding.ruleId);
-  const lines: string[] = [];
+function groupBySeverityThenRule(findings: Finding[], minSeverity: Severity): Map<Severity, Map<string, Finding[]>> {
+  const bySeverity = new Map<Severity, Map<string, Finding[]>>();
 
-  lines.push(`Line ${finding.line} | [${finding.ruleId}]`);
-  lines.push(`Issue:   ${finding.message}`);
-
-  if (includeSnippets && finding.snippet?.trim()) {
-    lines.push(`Current code:`);
-    lines.push(`  ${finding.snippet.trim()}`);
+  for (const finding of findings) {
+    if (!severityAboveOrEqual(finding, minSeverity)) continue;
+    const ruleMap = bySeverity.get(finding.severity) ?? new Map<string, Finding[]>();
+    const ruleFindings = ruleMap.get(finding.ruleId) ?? [];
+    ruleFindings.push(finding);
+    ruleMap.set(finding.ruleId, ruleFindings);
+    bySeverity.set(finding.severity, ruleMap);
   }
 
-  // Prefer rule-level fixCode, fall back to finding-level fix, then rule fix
-  const fixCode = rule?.fixCode;
-  const fixDesc = finding.fix ?? rule?.fix;
-
-  if (fixCode) {
-    lines.push(`Fix:`);
-    fixCode.split('\n').forEach((l) => lines.push(`  ${l}`));
-  } else if (fixDesc) {
-    lines.push(`Fix:     ${fixDesc}`);
+  for (const ruleMap of bySeverity.values()) {
+    for (const [ruleId, ruleFindings] of ruleMap) {
+      ruleMap.set(ruleId, ruleFindings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line));
+    }
   }
 
-  if (rule?.why) {
-    lines.push(`Reason:  ${rule.why}`);
-  }
-
-  return lines.join('\n');
+  return bySeverity;
 }
 
 function renderSectionHeader(severity: Severity, count: number): string {
-  const divider = '='.repeat(60);
-  if (severity === 'error') {
-    return `\n${divider}\n=== CRITICAL ERRORS (fix these first) — ${count} issue${count !== 1 ? 's' : ''} ===\n${divider}`;
+  if (severity === 'error') return `CRITICAL ERRORS — ${count} issues`;
+  if (severity === 'warn') return `WARNINGS — ${count} issues`;
+  return `INFO — ${count} issues`;
+}
+
+function summarizeFinding(finding: Finding): string {
+  const compact = finding.message.replace(/\s+/g, ' ').trim();
+  return compact.length > 90 ? `${compact.slice(0, 87)}...` : compact;
+}
+
+function strategyForRule(ruleId: string, findings: Finding[]): string {
+  const rule = getRuleById(ruleId);
+  if (ruleId === 'security/weak-crypto') {
+    return 'Use bcrypt for passwords, crypto.randomBytes() for tokens.';
   }
-  if (severity === 'warn') {
-    return `\n${divider}\n=== WARNINGS (fix after errors) — ${count} issue${count !== 1 ? 's' : ''} ===\n${divider}`;
-  }
-  return `\n${divider}\n=== INFO (consider fixing) — ${count} issue${count !== 1 ? 's' : ''} ===\n${divider}`;
+  const findingFixCode = findings.find((finding) => finding.fixCode)?.fixCode;
+  if (findingFixCode) return findingFixCode;
+  if (rule?.fixCode) return rule.fixCode;
+  const findingFix = findings.find((finding) => finding.fix)?.fix;
+  return findingFix ?? rule?.fix ?? 'Apply the safest minimal fix for this rule.';
 }
 
 function estimateComplexity(total: number): string {
-  if (total <= 5) return 'Low (30–60 minutes)';
-  if (total <= 15) return 'Medium (1–2 hours)';
-  if (total <= 30) return 'High (2–4 hours)';
-  return 'Very High (may require refactoring)';
+  if (total <= 5) return 'Low';
+  if (total <= 15) return 'Medium';
+  if (total <= 30) return 'High';
+  return 'Very High';
 }
 
-/**
- * Generate an AI-ready fix prompt from a scan result.
- */
-export function generateFixPrompt(
-  scanResult: ScanResult,
-  options: FixPromptOptions,
-): string {
-  const { minSeverity = 'warn', includeSnippets = true, targetPath } = options;
-
-  // Flatten all findings from all files
-  const allFindings: Finding[] = scanResult.files.flatMap((f) => f.findings);
-  const filtered = allFindings.filter((f) => severityAboveOrEqual(f, minSeverity));
+export function generateFixPrompt(scanResult: ScanResult, options: FixPromptOptions): string {
+  const { minSeverity = 'warn', targetPath } = options;
+  const allFindings = scanResult.files.flatMap((file) => file.findings);
+  const filtered = allFindings.filter((finding) => severityAboveOrEqual(finding, minSeverity));
 
   if (filtered.length === 0) {
     return [
-      '✅ No issues found — your code is clean!',
+      'No issues found.',
       '',
-      `VibeCop scanned ${scanResult.filesScanned} file${scanResult.filesScanned !== 1 ? 's' : ''} and found no issues matching the requested severity.`,
+      `VibeCop scanned ${scanResult.filesScanned} file${scanResult.filesScanned !== 1 ? 's' : ''}.`,
       `VibeScore: ${scanResult.vibeScore}/100`,
     ].join('\n');
   }
 
-  const bySev = groupBySeverityThenFile(filtered, minSeverity);
-  const affectedFiles = new Set(filtered.map((f) => f.file)).size;
-  const errorCount = filtered.filter((f) => f.severity === 'error').length;
-  const warnCount = filtered.filter((f) => f.severity === 'warn').length;
-
-  const lines: string[] = [];
-
-  // Header
-  lines.push('Please fix the following issues found by VibeCop in my codebase.');
-  lines.push('Fix all issues in the exact files and lines mentioned.');
-  lines.push('Do not change anything that is not listed here.');
-  lines.push('Preserve all existing functionality.');
-  lines.push('');
-
+  const bySeverity = groupBySeverityThenRule(filtered, minSeverity);
+  const affectedFiles = new Set(filtered.map((finding) => finding.file)).size;
+  const errorCount = filtered.filter((finding) => finding.severity === 'error').length;
+  const warnCount = filtered.filter((finding) => finding.severity === 'warn').length;
+  const lines: string[] = [
+    'Please fix the following VibeCop findings.',
+    'Only change the listed files and preserve behavior.',
+    '',
+  ];
   const severityOrder: Severity[] = ['error', 'warn', 'info'];
 
-  for (const sev of severityOrder) {
-    const byFile = bySev.get(sev);
-    if (!byFile || byFile.size === 0) continue;
+  for (const severity of severityOrder) {
+    const ruleMap = bySeverity.get(severity);
+    if (!ruleMap || ruleMap.size === 0) continue;
+    const total = [...ruleMap.values()].reduce((sum, findings) => sum + findings.length, 0);
+    lines.push(renderSectionHeader(severity, total));
+    lines.push('');
 
-    const sevTotal = [...byFile.values()].reduce((acc, arr) => acc + arr.length, 0);
-    lines.push(renderSectionHeader(sev, sevTotal));
-
-    for (const [filePath, findings] of byFile) {
+    for (const [ruleId, findings] of ruleMap) {
+      lines.push(`[${ruleId}] — ${findings.length} occurrence${findings.length !== 1 ? 's' : ''}`);
+      lines.push(`Fix strategy: ${strategyForRule(ruleId, findings)}`);
       lines.push('');
-      lines.push(`FILE: ${displayPath(filePath, targetPath)}`);
-      lines.push('─'.repeat(50));
 
       for (const finding of findings) {
-        lines.push('');
-        lines.push(renderFindingBlock(finding, includeSnippets));
+        lines.push(`  → ${displayPath(finding.file, targetPath)} line ${finding.line} — ${summarizeFinding(finding)}`);
       }
+
+      lines.push('');
     }
   }
 
-  // Overview footer
-  lines.push('');
-  lines.push('='.repeat(60));
-  lines.push('=== OVERVIEW ===');
-  lines.push('='.repeat(60));
-  lines.push(`Total issues to fix: ${filtered.length}`);
-  lines.push(`Files affected:      ${affectedFiles}`);
-  if (errorCount > 0) lines.push(`Critical errors:     ${errorCount}`);
-  if (warnCount > 0) lines.push(`Warnings:            ${warnCount}`);
+  lines.push('OVERVIEW');
+  lines.push(`Total issues: ${filtered.length}`);
+  lines.push(`Files affected: ${affectedFiles}`);
+  if (errorCount > 0) lines.push(`Critical errors: ${errorCount}`);
+  if (warnCount > 0) lines.push(`Warnings: ${warnCount}`);
   lines.push(`Estimated complexity: ${estimateComplexity(filtered.length)}`);
-  lines.push('');
-  lines.push('After applying all fixes above, run "vibecop scan ." again to verify.');
-  const rawTarget = Math.min(100, scanResult.vibeScore + Math.round(filtered.length * 2.5));
-  const targetScoreStr = rawTarget >= 100 ? '100' : `${rawTarget}+`;
-  lines.push(`Expected result: 0 Errors, VibeScore ${targetScoreStr}/100`);
+  lines.push('Run "vibecop scan ." after applying fixes.');
 
   return lines.join('\n');
 }

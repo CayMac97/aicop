@@ -7,6 +7,13 @@ import { isStringLiteral, getLine, getColumn, isIdentifier, isMemberExpression, 
 const BROKEN_HASH_ALGORITHMS = new Set(['md5', 'sha1', 'sha-1', 'md4', 'rc4', 'des', '3des', 'rc2']);
 const SECURITY_CONTEXT_NAMES = /^(?:token|secret|otp|code|key|salt|nonce|reset|password|passwd|pwd|auth|session|csrf|hash)/i;
 const WEAK_HASH_PACKAGES = new Set(['md5', 'sha1', 'md5-node', 'md5.js', 'sha.js', 'sha1-node']);
+const PASSWORD_CONTEXT = /\b(password|passwd|pwd)\b/i;
+const BCRYPT_FIX_SNIPPET = 'Use bcrypt or argon2 for passwords — never SHA-256:\nconst hash = await bcrypt.hash(password, 12)';
+const HASH_FIX_CODE = 'Use crypto.createHash("sha256") or crypto.randomBytes() for tokens';
+
+function isPasswordContext(source: string, line: number): boolean {
+  return PASSWORD_CONTEXT.test(extractSnippet(source, line, 2));
+}
 
 function checkCreateHash(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
@@ -17,6 +24,7 @@ function checkCreateHash(node: TSESTree.CallExpression, source: string, filePath
   if (!algArg || !isStringLiteral(algArg as TSESTree.Expression)) return null;
   const alg = String((algArg as TSESTree.StringLiteral).value).toLowerCase();
   if (!BROKEN_HASH_ALGORITHMS.has(alg)) return null;
+  const passwordContext = isPasswordContext(source, getLine(node));
   return {
     ruleId: 'security/weak-crypto',
     severity: 'error',
@@ -25,7 +33,8 @@ function checkCreateHash(node: TSESTree.CallExpression, source: string, filePath
     line: getLine(node),
     column: getColumn(node),
     snippet: extractSnippet(source, getLine(node)),
-    fix: 'Use SHA-256 or SHA-512 for hashing, or bcrypt/argon2/scrypt for passwords: crypto.createHash("sha256")',
+    fix: passwordContext ? 'Use bcrypt or argon2 for passwords' : 'Use stronger crypto primitives',
+    fixCode: passwordContext ? BCRYPT_FIX_SNIPPET : HASH_FIX_CODE,
   };
 }
 
@@ -88,6 +97,7 @@ function mathRandomFinding(node: TSESTree.Node, varName: string, source: string,
 function checkMd5Call(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
   if (!isIdentifier(node.callee)) return null;
   if ((node.callee as TSESTree.Identifier).name !== 'md5') return null;
+  const passwordContext = isPasswordContext(source, getLine(node));
   return {
     ruleId: 'security/weak-crypto',
     severity: 'warn',
@@ -96,7 +106,8 @@ function checkMd5Call(node: TSESTree.CallExpression, source: string, filePath: s
     line: getLine(node),
     column: getColumn(node),
     snippet: extractSnippet(source, getLine(node)),
-    fix: 'Use crypto.createHash("sha256") or bcrypt for passwords',
+    fix: passwordContext ? 'Use bcrypt or argon2 for passwords' : 'Use stronger crypto primitives',
+    fixCode: passwordContext ? BCRYPT_FIX_SNIPPET : HASH_FIX_CODE,
   };
 }
 
@@ -115,7 +126,48 @@ function checkWeakRequire(node: TSESTree.CallExpression, source: string, filePat
     line: getLine(node),
     column: getColumn(node),
     snippet: extractSnippet(source, getLine(node)),
-    fix: 'Use crypto.createHash("sha256") from the built-in crypto module',
+    fix: 'Use stronger crypto primitives',
+    fixCode: HASH_FIX_CODE,
+  };
+}
+
+function checkLiteralSaltRounds(saltArg: TSESTree.Node, node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+  if (!isLiteral(saltArg) || typeof (saltArg as TSESTree.Literal).value !== 'number') return null;
+  const rounds = (saltArg as TSESTree.Literal).value as number;
+  if (rounds >= 10) return null;
+  return {
+    ruleId: 'security/weak-crypto',
+    severity: 'warn',
+    message: `bcrypt salt rounds ${rounds} below 10 — too weak`,
+    file: filePath,
+    line: getLine(node),
+    column: getColumn(node),
+    snippet: extractSnippet(source, getLine(node)),
+    fix: 'Use at least 10 salt rounds: bcrypt.hash(password, 12)',
+  };
+}
+
+function checkGenSaltRounds(saltArg: TSESTree.Node, node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+  if (saltArg.type !== 'CallExpression') return null;
+  const call = saltArg as TSESTree.CallExpression;
+  if (!isMemberExpression(call.callee)) return null;
+  const callMe = call.callee as TSESTree.MemberExpression;
+  if (!isIdentifier(callMe.property)) return null;
+  const genMethod = (callMe.property as TSESTree.Identifier).name;
+  if (genMethod !== 'genSaltSync' && genMethod !== 'genSalt') return null;
+  const roundArg = call.arguments[0];
+  if (!roundArg || !isLiteral(roundArg)) return null;
+  const rounds = (roundArg as TSESTree.Literal).value;
+  if (typeof rounds !== 'number' || rounds >= 10) return null;
+  return {
+    ruleId: 'security/weak-crypto',
+    severity: 'warn',
+    message: `bcrypt salt rounds ${rounds} below 10 — too weak`,
+    file: filePath,
+    line: getLine(node),
+    column: getColumn(node),
+    snippet: extractSnippet(source, getLine(node)),
+    fix: 'Use at least 10 salt rounds: bcrypt.genSaltSync(12)',
   };
 }
 
@@ -129,45 +181,8 @@ function checkBcryptSaltRounds(node: TSESTree.CallExpression, source: string, fi
   const saltArg = node.arguments[1];
   if (!saltArg) return null;
 
-  if (isLiteral(saltArg) && typeof (saltArg as TSESTree.Literal).value === 'number') {
-    const rounds = (saltArg as TSESTree.Literal).value as number;
-    if (rounds >= 10) return null;
-    return {
-      ruleId: 'security/weak-crypto',
-      severity: 'warn',
-      message: `bcrypt salt rounds ${rounds} below 10 — too weak`,
-      file: filePath,
-      line: getLine(node),
-      column: getColumn(node),
-      snippet: extractSnippet(source, getLine(node)),
-      fix: 'Use at least 10 salt rounds: bcrypt.hash(password, 12)',
-    };
-  }
-
-  if (saltArg.type === 'CallExpression') {
-    const call = saltArg as TSESTree.CallExpression;
-    if (!isMemberExpression(call.callee)) return null;
-    const callMe = call.callee as TSESTree.MemberExpression;
-    if (!isIdentifier(callMe.property)) return null;
-    const genMethod = (callMe.property as TSESTree.Identifier).name;
-    if (genMethod !== 'genSaltSync' && genMethod !== 'genSalt') return null;
-    const roundArg = call.arguments[0];
-    if (!roundArg || !isLiteral(roundArg)) return null;
-    const rounds = (roundArg as TSESTree.Literal).value;
-    if (typeof rounds !== 'number' || rounds >= 10) return null;
-    return {
-      ruleId: 'security/weak-crypto',
-      severity: 'warn',
-      message: `bcrypt salt rounds ${rounds} below 10 — too weak`,
-      file: filePath,
-      line: getLine(node),
-      column: getColumn(node),
-      snippet: extractSnippet(source, getLine(node)),
-      fix: 'Use at least 10 salt rounds: bcrypt.genSaltSync(12)',
-    };
-  }
-
-  return null;
+  return checkLiteralSaltRounds(saltArg, node, source, filePath)
+    ?? checkGenSaltRounds(saltArg, node, source, filePath);
 }
 
 const rule: Rule = {
@@ -177,24 +192,8 @@ const rule: Rule = {
   severity: 'error',
   description: 'Detects use of broken hash algorithms (MD5, SHA1), weak ciphers, and Math.random() in security contexts',
   why: 'MD5 and SHA1 are cryptographically broken and can be reversed. Math.random() is predictable and must never be used for security tokens.',
-  fix: 'Use SHA-256+ for hashing, AES-256-GCM for encryption, bcrypt/argon2 for passwords, and crypto.randomBytes() for tokens.',
-  fixCode: `// Instead of Math.random() for tokens (INSECURE):
-const token = Math.random().toString(36).substring(2);
-
-// Use crypto.randomBytes() (SECURE):
-const { randomBytes } = require('crypto');
-const resetToken = randomBytes(32).toString('hex'); // 64-char hex string
-
-// Instead of MD5/SHA1 for hashing (BROKEN):
-const hash = crypto.createHash('md5').update(data).digest('hex');
-
-// Use SHA-256 (SECURE):
-const hash = crypto.createHash('sha256').update(data).digest('hex');
-
-// For passwords: use bcrypt (install: npm install bcrypt)
-const bcrypt = require('bcrypt');
-const passwordHash = await bcrypt.hash(password, 12);
-const isValid = await bcrypt.compare(inputPassword, passwordHash);`,
+  fix: 'Use bcrypt/argon2 for passwords, AES-256-GCM for encryption, and crypto.randomBytes() for tokens.',
+  fixCode: 'Use bcrypt for passwords, crypto.randomBytes() for tokens.',
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];

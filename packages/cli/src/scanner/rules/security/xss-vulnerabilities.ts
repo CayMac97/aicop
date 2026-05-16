@@ -125,6 +125,32 @@ function checkDangerouslySetInnerHTML(node: TSESTree.JSXAttribute, source: strin
   };
 }
 
+function isHtmlContentTypeHeader(node: TSESTree.CallExpression): boolean {
+  if (!isMemberExpression(node.callee)) return false;
+  const me = node.callee as TSESTree.MemberExpression;
+  if (!isIdentifier(me.object) || !isIdentifier(me.property)) return false;
+  if ((me.object as TSESTree.Identifier).name !== 'res') return false;
+  if ((me.property as TSESTree.Identifier).name !== 'setHeader') return false;
+  const nameArg = node.arguments[0] as TSESTree.Expression | undefined;
+  const valueArg = node.arguments[1] as TSESTree.Expression | undefined;
+  if (!nameArg || !valueArg) return false;
+  if (!isStringLiteral(nameArg) || !isStringLiteral(valueArg)) return false;
+  return (nameArg as TSESTree.StringLiteral).value.toLowerCase() === 'content-type' &&
+    (valueArg as TSESTree.StringLiteral).value.toLowerCase().includes('text/html');
+}
+
+function isResSendDynamic(node: TSESTree.CallExpression): boolean {
+  if (!isMemberExpression(node.callee)) return false;
+  const me = node.callee as TSESTree.MemberExpression;
+  if (!isIdentifier(me.object) || !isIdentifier(me.property)) return false;
+  if ((me.object as TSESTree.Identifier).name !== 'res') return false;
+  const method = (me.property as TSESTree.Identifier).name;
+  if (method !== 'send' && method !== 'write') return false;
+  const arg = node.arguments[0] as TSESTree.Expression | undefined;
+  if (!arg) return false;
+  return !isStaticString(arg);
+}
+
 function checkResSend(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
@@ -188,6 +214,9 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
+    let hasHtmlContentType = false;
+    const dynamicSendNodes: TSESTree.CallExpression[] = [];
+    const flaggedLines = new Set<number>();
 
     walk(ast, {
       AssignmentExpression(rawNode) {
@@ -196,12 +225,26 @@ const rule: Rule = {
       },
       CallExpression(rawNode) {
         const node = rawNode as TSESTree.CallExpression;
+
+        if (isHtmlContentTypeHeader(node)) {
+          hasHtmlContentType = true;
+          return;
+        }
+
         const docWrite = checkDocumentWrite(node, source, filePath);
         if (docWrite) { findings.push(docWrite); return; }
+
         const adjHtml = checkInsertAdjacentHTML(node, source, filePath);
         if (adjHtml) { findings.push(adjHtml); return; }
+
         const resSend = checkResSend(node, source, filePath);
-        if (resSend) { findings.push(resSend); return; }
+        if (resSend) {
+          findings.push(resSend);
+          flaggedLines.add(getLine(node));
+        } else if (isResSendDynamic(node)) {
+          dynamicSendNodes.push(node);
+        }
+
         const resRender = checkResRender(node, source, filePath);
         if (resRender) findings.push(resRender);
       },
@@ -211,6 +254,23 @@ const rule: Rule = {
         if (finding) findings.push(finding);
       },
     });
+
+    if (hasHtmlContentType) {
+      for (const node of dynamicSendNodes) {
+        if (!flaggedLines.has(getLine(node))) {
+          findings.push({
+            ruleId: 'security/xss-vulnerabilities',
+            severity: 'error',
+            message: 'HTML response with dynamic content — XSS risk',
+            file: filePath,
+            line: getLine(node),
+            column: getColumn(node),
+            snippet: extractSnippet(source, getLine(node)),
+            fix: 'Sanitize dynamic content before sending as HTML, or use res.json() for data responses',
+          });
+        }
+      }
+    }
 
     return findings;
   },

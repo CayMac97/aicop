@@ -86,6 +86,17 @@ function checkPathJoin(node: TSESTree.CallExpression, source: string, filePath: 
   };
 }
 
+function isPathLikeString(node: TSESTree.Node): boolean {
+  if (!isStringLiteral(node)) return false;
+  const val = String((node as TSESTree.StringLiteral).value);
+  return val.startsWith('/') || val.startsWith('./') || val.startsWith('../');
+}
+
+function isDirnameOrRelPath(node: TSESTree.Node): boolean {
+  if (isIdentifier(node) && (node as TSESTree.Identifier).name === '__dirname') return true;
+  return isPathLikeString(node);
+}
+
 function checkPathConcatBinary(node: TSESTree.BinaryExpression, source: string, filePath: string): Finding | null {
   if (node.operator !== '+') return null;
 
@@ -96,19 +107,8 @@ function checkPathConcatBinary(node: TSESTree.BinaryExpression, source: string, 
 
   if (!leftHasUser && !rightHasUser) return null;
 
-  if (leftHasUser && isStringLiteral(right)) {
-    const val = String((right as TSESTree.StringLiteral).value);
-    if (!val.startsWith('/') && !val.startsWith('./') && !val.startsWith('../')) return null;
-  } else if (rightHasUser) {
-    const isDirname = isIdentifier(left) && (left as TSESTree.Identifier).name === '__dirname';
-    const isRelPath = isStringLiteral(left) &&
-      (String((left as TSESTree.StringLiteral).value).startsWith('./') ||
-       String((left as TSESTree.StringLiteral).value).startsWith('../') ||
-       String((left as TSESTree.StringLiteral).value).startsWith('/'));
-    if (!isDirname && !isRelPath) return null;
-  } else {
-    return null;
-  }
+  if (leftHasUser && !isPathLikeString(right)) return null;
+  if (!leftHasUser && !isDirnameOrRelPath(left)) return null;
 
   return {
     ruleId: 'security/path-traversal',
@@ -141,6 +141,10 @@ const rule: Rule = {
         if (fsF) { findings.push(fsF); return; }
         const pathF = checkPathJoin(node, source, filePath);
         if (pathF) findings.push(pathF);
+      },
+      BinaryExpression(rawNode) {
+        const finding = checkPathConcatBinary(rawNode as TSESTree.BinaryExpression, source, filePath);
+        if (finding) findings.push(finding);
       },
     });
 

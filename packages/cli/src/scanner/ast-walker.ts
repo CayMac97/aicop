@@ -15,7 +15,7 @@ export function walk(root: TSESTree.Node | TSESTree.Program, visitor: WalkVisito
   const typeHandler = visitor[root.type];
   typeHandler?.(root as TSESTree.Node, parent);
 
-  const nodeRecord = root as Record<string, unknown>;
+  const nodeRecord = root as unknown as Record<string, unknown>;
   for (const key of Object.keys(nodeRecord)) {
     if (SKIP_KEYS.has(key)) continue;
     const value = nodeRecord[key];

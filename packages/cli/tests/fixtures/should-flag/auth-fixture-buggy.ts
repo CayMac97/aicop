@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * @vibescan-fixture
  * INTENTIONALLY BROKEN CODE — VibeGuard Test Fixture
@@ -159,6 +160,8 @@ app.get("/profile", (req, res) => {
   }
 
   // ❌ [ai-smell/inconsistent-error-handling] — jwt.verify result not typed, error not re-thrown
+  jwt.verify(token, JWT_SECRET);
+
   jwt.verify(token, JWT_SECRET, (err, decoded) => {
     if (err) {
       return res.status(403).json({ message: "Invalid token" });
