@@ -3,7 +3,7 @@ import path from 'path';
 import chalk from 'chalk';
 import { ScanResult } from './scanner/rules/types.js';
 
-const BASELINE_FILE = '.vibecop-baseline.json';
+const BASELINE_FILE = '.aicop-baseline.json';
 
 export interface BaselineData {
   version: string;

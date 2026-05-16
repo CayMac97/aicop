@@ -1,5 +1,5 @@
 /**
- * VibeCop programmatic API — imported by the VSCode extension and other tools.
+ * AICop programmatic API — imported by the VSCode extension and other tools.
  * Does NOT include Commander / chalk / ora (no CLI boilerplate).
  */
 export { scan } from './scanner/index.js';

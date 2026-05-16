@@ -1,7 +1,7 @@
 // @ts-nocheck
 /**
- * @vibescan-fixture
- * INTENTIONALLY BROKEN CODE — VibeGuard Test Fixture
+ * @aicop-fixture
+ * INTENTIONALLY BROKEN CODE — AICop Test Fixture
  *
  * Expected findings:
  *   [security/hardcoded-secrets]       line 18, 19

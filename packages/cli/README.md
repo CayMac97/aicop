@@ -1,12 +1,12 @@
-# 🛡 VibeCop
+# 🛡 AICop
 
 **AI code quality & security scanner for TypeScript and JavaScript.**
 
-VibeCop scans your codebase for security vulnerabilities, AI-generated code smells, and tech debt — in one command, with no configuration required.
+AICop scans your codebase for security vulnerabilities, AI-generated code smells, and tech debt — in one command, with no configuration required.
 
 ```
-npm install -g vibecop
-vibecop scan ./src
+npm install -g aicop
+aicop scan ./src
 ```
 
 ---
@@ -14,7 +14,7 @@ vibecop scan ./src
 ## Features
 
 - **29 detection rules** across 3 categories: Security, AI Smells, Tech Debt
-- **VibeScore™** — per-file AI confidence score (0–100)
+- **AIScore™** — per-file AI confidence score (0–100)
 - **Interactive grouped output** — expand Errors / Warnings / Info on demand
 - **HTML reports** — beautiful visual reports with `--format html`
 - **CI-ready** — exits with code 1 on errors, structured JSON output
@@ -27,13 +27,13 @@ vibecop scan ./src
 
 ```bash
 # Global install (recommended)
-npm install -g vibecop
+npm install -g aicop
 
 # Or run without installing
-npx vibecop scan ./src
+npx aicop scan ./src
 
 # pnpm
-pnpm dlx vibecop scan ./src
+pnpm dlx aicop scan ./src
 ```
 
 ---
@@ -42,31 +42,31 @@ pnpm dlx vibecop scan ./src
 
 ```bash
 # Scan current directory
-vibecop scan
+aicop scan
 
 # Scan a specific path
-vibecop scan ./src
+aicop scan ./src
 
 # Only show errors (skip warnings and info)
-vibecop scan ./src --severity error
+aicop scan ./src --severity error
 
 # Generate an HTML report
-vibecop scan ./src --format html
+aicop scan ./src --format html
 
 # Output JSON for programmatic use
-vibecop scan ./src --format json --output report.json
+aicop scan ./src --format json --output report.json
 
 # Scan only files changed since main
-vibecop diff main
+aicop diff main
 
 # Save current score as baseline (for tracking over time)
-vibecop baseline
+aicop baseline
 
 # List all available rules
-vibecop rules
+aicop rules
 
 # Create a config file
-vibecop init
+aicop init
 ```
 
 ---
@@ -80,7 +80,7 @@ vibecop init
   │  🔴 Errors:      3  (must fix)         │
   │  🟡 Warnings:   11  (should fix)       │
   │  🔵 Info:        5  (consider fixing)  │
-  │  VibeScore™: 67/100  — "AI-touched"   │
+  │  AIScore™: 67/100  — "AI-touched"   │
   └────────────────────────────────────────┘
 
   ● Errors       (3)  — press E to expand
@@ -142,7 +142,7 @@ vibecop init
 
 ## Configuration
 
-Run `vibecop init` to create a `.vibecoprc.json` in your project root:
+Run `aicop init` to create a `.aicoprc.json` in your project root:
 
 ```json
 {
@@ -157,7 +157,7 @@ Run `vibecop init` to create a `.vibecoprc.json` in your project root:
   "thresholds": {
     "maxErrors": 0,
     "maxWarnings": 20,
-    "minVibeScore": 50
+    "minAIScore": 50
   }
 }
 ```
@@ -167,9 +167,9 @@ Run `vibecop init` to create a `.vibecoprc.json` in your project root:
 ## CI / CD
 
 ```yaml
-# .github/workflows/vibecop.yml
-- name: VibeCop scan
-  uses: vibecop/action@v1
+# .github/workflows/aicop.yml
+- name: AICop scan
+  uses: aicop/action@v1
   with:
     path: ./src
     severity: error
@@ -178,15 +178,15 @@ Run `vibecop init` to create a `.vibecoprc.json` in your project root:
 Or without the action:
 
 ```yaml
-- name: VibeCop scan
-  run: npx vibecop scan ./src --ci --format json --output vibecop-report.json
+- name: AICop scan
+  run: npx aicop scan ./src --ci --format json --output aicop-report.json
 ```
 
 Exit code is `1` if any `error`-severity findings are found — automatically fails the build.
 
 ---
 
-## VibeScore™
+## AIScore™
 
 Each file gets a score from 0–100 based on the weighted sum of AI smell signals:
 
@@ -202,4 +202,4 @@ Each file gets a score from 0–100 based on the weighted sum of AI smell signal
 
 ## License
 
-MIT © VibeCop
+MIT © AICop

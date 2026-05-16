@@ -1,11 +1,11 @@
 {
-  "name": "vibecop",
+  "name": "aicop",
   "version": "1.0.0",
   "description": "CLI security and quality scanner for AI-generated code",
-  "keywords": ["security", "linter", "ai", "vibe-coding", "code-quality", "static-analysis"],
+  "keywords": ["security", "linter", "ai", "ai-coding", "code-quality", "static-analysis"],
   "bin": {
-    "vibecop": "./dist/index.js",
-    "vibescan": "./dist/index.js"
+    "aicop": "./dist/index.js",
+    "aiscop": "./dist/index.js"
   },
   "files": [
     "dist/**/*",

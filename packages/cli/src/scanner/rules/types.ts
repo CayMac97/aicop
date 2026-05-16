@@ -64,7 +64,7 @@ export interface ScanResult {
 export interface Thresholds {
   maxErrors: number;
   maxWarnings: number;
-  minVibeScore: number;
+  minAIScore: number;
 }
 
 /** Output configuration */
@@ -73,7 +73,7 @@ export interface OutputConfig {
   htmlReportPath: string;
 }
 
-/** VibeCop configuration file structure */
+/** AICop configuration file structure */
 export interface VibescanConfig {
   version: string;
   include: string[];

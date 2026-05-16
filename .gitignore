@@ -53,7 +53,10 @@ coverage/
 # Website (not open source)
 packages/website/
 
-# Local VibeCop scan artifacts
+# Local scan artifacts
+.aicop-baseline.json
+.aicop/
+.aicoprc.json
 .vibecop-baseline.json
 .vibescan/
 .vibescanrc.json

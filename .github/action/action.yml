@@ -1,6 +1,6 @@
-name: 'VibeCop Scan'
+name: 'AICop Scan'
 description: 'Scan your JS/TS code for AI-generated vulnerabilities, security issues, and tech debt'
-author: 'VibeCop'
+author: 'AICop'
 branding:
   icon: 'shield'
   color: 'purple'
@@ -24,9 +24,9 @@ inputs:
     default: 'true'
 
 outputs:
-  vibe-score:
-    description: 'The overall VibeScore™ of the scanned codebase (0–100)'
-    value: ${{ steps.scan.outputs.vibe-score }}
+  ai-score:
+    description: 'The overall AIScore™ of the scanned codebase (0–100)'
+    value: ${{ steps.scan.outputs.ai-score }}
   errors:
     description: 'Number of error-severity findings'
     value: ${{ steps.scan.outputs.errors }}
@@ -34,7 +34,7 @@ outputs:
     description: 'Number of warning-severity findings'
     value: ${{ steps.scan.outputs.warnings }}
   badge-url:
-    description: 'shields.io badge URL for the VibeScore'
+    description: 'shields.io badge URL for the AIScore'
     value: ${{ steps.scan.outputs.badge-url }}
 
 runs:
@@ -45,18 +45,18 @@ runs:
       with:
         node-version: '20'
 
-    - name: Install VibeCop
+    - name: Install AICop
       shell: bash
-      run: npm install -g vibecop
+      run: npm install -g aicop
 
-    - name: Run VibeCop Scan
+    - name: Run AICop Scan
       shell: bash
       id: scan
       run: |
         # Run scan in JSON mode so we can extract structured metrics.
         # `|| true` prevents the shell from aborting on non-zero exit while we
         # capture output; we apply fail-on-error ourselves below.
-        OUTPUT=$(vibecop scan "${{ inputs.path }}" \
+        OUTPUT=$(aicop scan "${{ inputs.path }}" \
           --severity "${{ inputs.severity }}" \
           --format json \
           --ci 2>&1) || true
@@ -68,7 +68,7 @@ runs:
         ERRORS=$(echo "$OUTPUT"   | jq -r '.summary.errors    // 0' 2>/dev/null || echo 0)
         WARNINGS=$(echo "$OUTPUT" | jq -r '.summary.warnings  // 0' 2>/dev/null || echo 0)
 
-        echo "vibe-score=$SCORE"    >> "$GITHUB_OUTPUT"
+        echo "ai-score=$SCORE"    >> "$GITHUB_OUTPUT"
         echo "errors=$ERRORS"       >> "$GITHUB_OUTPUT"
         echo "warnings=$WARNINGS"   >> "$GITHUB_OUTPUT"
 
@@ -79,26 +79,26 @@ runs:
         elif [ "$SCORE" -ge 50 ]; then BADGE_COLOR="yellow"
         elif [ "$SCORE" -ge 30 ]; then BADGE_COLOR="orange"
         fi
-        BADGE_URL="https://img.shields.io/badge/VibeScore-${SCORE}%2F100-${BADGE_COLOR}"
+        BADGE_URL="https://img.shields.io/badge/AIScore-${SCORE}%2F100-${BADGE_COLOR}"
         echo "badge-url=$BADGE_URL" >> "$GITHUB_OUTPUT"
 
         # Step summary
-        echo "## VibeCop Results" >> "$GITHUB_STEP_SUMMARY"
-        echo "![VibeScore]($BADGE_URL)" >> "$GITHUB_STEP_SUMMARY"
+        echo "## AICop Results" >> "$GITHUB_STEP_SUMMARY"
+        echo "![AIScore]($BADGE_URL)" >> "$GITHUB_STEP_SUMMARY"
         echo "" >> "$GITHUB_STEP_SUMMARY"
         echo "| Metric | Value |" >> "$GITHUB_STEP_SUMMARY"
         echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
-        echo "| VibeScore™ | **$SCORE/100** |" >> "$GITHUB_STEP_SUMMARY"
+        echo "| AIScore™ | **$SCORE/100** |" >> "$GITHUB_STEP_SUMMARY"
         echo "| Errors | $ERRORS |" >> "$GITHUB_STEP_SUMMARY"
         echo "| Warnings | $WARNINGS |" >> "$GITHUB_STEP_SUMMARY"
         echo "" >> "$GITHUB_STEP_SUMMARY"
 
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "  VibeScore™: $SCORE/100  |  Errors: $ERRORS  |  Warnings: $WARNINGS"
+        echo "  AIScore™: $SCORE/100  |  Errors: $ERRORS  |  Warnings: $WARNINGS"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
         if [[ "${{ inputs.fail-on-error }}" == "true" && "$ERRORS" -gt 0 ]]; then
-          echo "::error::VibeCop found $ERRORS error(s). Fix them or set fail-on-error: false."
+          echo "::error::AICop found $ERRORS error(s). Fix them or set fail-on-error: false."
           exit 1
         fi

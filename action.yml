@@ -1,6 +1,6 @@
-name: 'VibeCop'
+name: 'AICop'
 description: 'AI code quality & security scanner for Node.js. Catch what your LLM forgets.'
-author: 'vibecop'
+author: 'aicop'
 
 branding:
   icon: 'shield'
@@ -33,8 +33,8 @@ inputs:
     default: '20'
 
 outputs:
-  vibe-score:
-    description: 'The overall VibeScore (0-100) from the scan'
+  ai-score:
+    description: 'The overall AIScore (0-100) from the scan'
   error-count:
     description: 'Number of error-severity findings'
   warn-count:
@@ -48,18 +48,18 @@ runs:
       with:
         node-version: ${{ inputs.node-version }}
 
-    - name: Install VibeCop
+    - name: Install AICop
       shell: bash
-      run: npm install -g vibecop
+      run: npm install -g aicop
 
-    - name: Run VibeCop scan
+    - name: Run AICop scan
       shell: bash
       run: |
         ARGS="$INPUT_PATH --severity $INPUT_SEVERITY --format $INPUT_FORMAT --ci"
         if [ -n "$INPUT_OUTPUT" ]; then
           ARGS="$ARGS --output $INPUT_OUTPUT"
         fi
-        vibecop scan $ARGS
+        aicop scan $ARGS
       env:
         INPUT_PATH: ${{ inputs.path }}
         INPUT_SEVERITY: ${{ inputs.severity }}

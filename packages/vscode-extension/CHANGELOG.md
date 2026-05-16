@@ -6,7 +6,7 @@
 - Initial release
 - Scan on save and on open
 - 38 rules across security, AI-smell, and tech-debt categories
-- VibeScore™ status bar item with color-coded severity
+- AIScore™ status bar item with color-coded severity
 - CodeLens annotations inline with findings
 - "Generate AI Fix Prompt" command for Claude / Cursor / ChatGPT
 - Workspace-wide scan command

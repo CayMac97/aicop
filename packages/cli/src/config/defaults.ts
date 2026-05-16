@@ -55,10 +55,10 @@ export const DEFAULT_CONFIG: VibescanConfig = {
   thresholds: {
     maxErrors: 0,
     maxWarnings: 20,
-    minVibeScore: 60,
+    minAIScore: 60,
   },
   output: {
     format: 'terminal',
-    htmlReportPath: '.vibescan/report.html',
+    htmlReportPath: '.aicop/report.html',
   },
 };

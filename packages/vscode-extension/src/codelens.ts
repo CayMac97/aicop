@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { DiagnosticWithFinding } from './diagnostics';
 
-export class VibeCopCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposable {
+export class AICopCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposable {
   private readonly collection: vscode.DiagnosticCollection;
   private readonly emitter = new vscode.EventEmitter<void>();
   readonly onDidChangeCodeLenses = this.emitter.event;
@@ -23,7 +23,7 @@ export class VibeCopCodeLensProvider implements vscode.CodeLensProvider, vscode.
 
     lenses.push(new vscode.CodeLens(new vscode.Range(0, 0, 0, 0), {
       title: '🤖 Generate fix prompt →',
-      command: 'vibecop.generateFixPrompt',
+      command: 'aicop.generateFixPrompt',
       arguments: [],
     }));
 
@@ -31,10 +31,10 @@ export class VibeCopCodeLensProvider implements vscode.CodeLensProvider, vscode.
       const finding = (diag as DiagnosticWithFinding)._finding;
       const ruleLabel = typeof diag.code === 'string'
         ? diag.code.replace(/^(security|ai-smell|tech-debt)\//, '')
-        : 'vibecop';
+        : 'aicop';
       lenses.push(new vscode.CodeLens(diag.range, {
         title: `⚠ ${ruleLabel}`,
-        command: 'vibecop._showFindingDetail',
+        command: 'aicop._showFindingDetail',
         arguments: [finding ?? { ruleId: diag.code, message: diag.message }],
       }));
     }
@@ -53,7 +53,7 @@ export async function showFindingDetail(finding: {
   fix?: string;
 }): Promise<void> {
   const ruleId  = String(finding.ruleId ?? '');
-  const docsUrl = `https://vibecop.net/rules/${ruleId.replace('/', '-')}`;
+  const docsUrl = `https://aicop.net/rules/${ruleId.replace('/', '-')}`;
   const items: vscode.QuickPickItem[] = [
     { label: `⚠  ${finding.message}`, description: ruleId, alwaysShow: true },
     ...(finding.fix ? [{ label: `FIX: ${finding.fix}`, description: '', alwaysShow: true }] : []),
@@ -61,7 +61,7 @@ export async function showFindingDetail(finding: {
   ];
 
   const picked = await vscode.window.showQuickPick(items, {
-    title: `VibeCop — ${ruleId}`,
+    title: `AICop — ${ruleId}`,
     placeHolder: 'Select an option',
   });
 

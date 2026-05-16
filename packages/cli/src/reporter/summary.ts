@@ -5,7 +5,7 @@ import path from 'path';
 import { ScanResult } from '../scanner/rules/types.js';
 
 
-const BASELINE_FILE = '.vibecop-baseline.json';
+const BASELINE_FILE = '.aicop-baseline.json';
 
 export interface BaselineData {
   vibeScore: number;
@@ -92,7 +92,7 @@ function buildSummaryContent(result: ScanResult): string {
   const label = vibeScoreLabel(score);
   const emoji = vibeScoreEmoji(score);
   const colorFn = scoreColor(score);
-  lines.push(`   Overall VibeScore™: ${colorFn(`${score}/100`)}  ${emoji}  "${label}"`);
+  lines.push(`   Overall AIScore™: ${colorFn(`${score}/100`)}  ${emoji}  "${label}"`);
 
   const baseline = readBaseline(process.cwd());
   if (baseline) {
@@ -111,7 +111,7 @@ function buildSummaryContent(result: ScanResult): string {
   if (result.skippedVendorFiles > 0) {
     lines.push(chalk.blue(`   ℹ  ${result.skippedVendorFiles} vendor/library ${result.skippedVendorFiles === 1 ? 'file' : 'files'} skipped  —  run with --include-vendor to scan them`));
   }
-  lines.push('   ' + chalk.dim('Run vibecop scan --format html for a visual report  ·  vibecop baseline to save this score'));
+  lines.push('   ' + chalk.dim('Run aicop scan --format html for a visual report  ·  aicop baseline to save this score'));
   return lines.join('\n');
 }
 
@@ -122,7 +122,7 @@ function buildCiSummary(result: ScanResult): string {
     `Files scanned: ${result.filesScanned}  Time: ${formatDuration(result.scanDurationMs)}`,
     `Files with issues: ${result.filesWithIssues}`,
     `Errors: ${result.errorCount}  Warnings: ${result.warnCount}  Info: ${result.infoCount}`,
-    `VibeScore: ${result.vibeScore}/100 (${vibeScoreLabel(result.vibeScore)})`,
+    `AIScore: ${result.vibeScore}/100 (${vibeScoreLabel(result.vibeScore)})`,
   ];
   if (result.topIssues.length > 0) {
     lines.push('Top issues:');
@@ -152,8 +152,8 @@ export function renderSummary(result: ScanResult, ci: boolean): string {
 }
 
 export function renderHeader(fileCount: number, ruleCount: number, version: string, ci: boolean): string {
-  if (ci) return `=== VibeCop v${version} | Files: ${fileCount} | Rules: ${ruleCount} ===`;
-  const content = ` VibeCop v${version}  •  ${ruleCount} rules active `;
+  if (ci) return `=== AICop v${version} | Files: ${fileCount} | Rules: ${ruleCount} ===`;
+  const content = ` AICop v${version}  •  ${ruleCount} rules active `;
   return boxen(content, {
     padding: 0,
     margin: { top: 1, bottom: 1, left: 0, right: 0 },
@@ -166,7 +166,7 @@ export function renderFixPromptHint(targetArg: string): string {
   const t = targetArg === '.' || targetArg === '' ? '.' : path.basename(targetArg);
   const content =
     chalk.bold('💡 Run ') +
-    chalk.cyan.bold(`vibecop fix-prompt ${t}`) +
+    chalk.cyan.bold(`aicop fix-prompt ${t}`) +
     chalk.bold(' to generate an AI') + '\n' +
     '   prompt that fixes all issues automatically';
   return boxen(content, {

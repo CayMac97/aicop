@@ -5,7 +5,7 @@ import { explainFindings, buildDiffHeader } from './explainer.js';
 import { logger } from '../utils/logger.js';
 
 /**
- * Run vibescan on only files changed since the given git ref.
+ * Run aicop on only files changed since the given git ref.
  *
  * @param ref - Git ref to compare against (e.g. "main", "HEAD~1", a commit SHA)
  * @param options - Scan options (config, severity, etc.)

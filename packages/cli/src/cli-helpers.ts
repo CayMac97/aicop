@@ -11,7 +11,7 @@ import { Severity, ScanResult, ScanOptions, VibescanConfig } from './scanner/rul
 import { generateFixPrompt } from './fix-prompt/index.js';
 
 function openHtmlReport(result: ScanResult, version: string, onDone: () => void): void {
-  const htmlPath = path.resolve('.vibescan/report.html');
+  const htmlPath = path.resolve('.aicop/report.html');
   process.stdout.write(chalk.dim('\n  Generating HTML report\u2026\n'));
   report(result, { format: 'html', ci: false, outputPath: htmlPath, version })
     .then(() => {

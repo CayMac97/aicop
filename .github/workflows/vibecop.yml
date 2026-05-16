@@ -1,4 +1,4 @@
-name: VibeCop
+name: AICop
 
 on:
   pull_request:
@@ -7,7 +7,7 @@ on:
     branches: [main, master]
 
 jobs:
-  vibecop:
+  aicop:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -23,8 +23,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build VibeCop CLI
+      - name: Build AICop CLI
         run: npm run build
 
-      - name: VibeCop scan
+      - name: AICop scan
         run: node packages/cli/dist/index.js . --severity error

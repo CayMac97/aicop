@@ -36,8 +36,8 @@ function validateThresholds(thresholds: unknown): string[] {
   if (t.maxWarnings !== undefined && typeof t.maxWarnings !== 'number') {
     errors.push('"thresholds.maxWarnings" must be a number');
   }
-  if (t.minVibeScore !== undefined && typeof t.minVibeScore !== 'number') {
-    errors.push('"thresholds.minVibeScore" must be a number');
+  if (t.minAIScore !== undefined && typeof t.minAIScore !== 'number') {
+    errors.push('"thresholds.minAIScore" must be a number');
   }
   return errors;
 }

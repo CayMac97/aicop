@@ -36,7 +36,7 @@ describe('clean fixture (should-not-flag/clean-express-api.ts)', () => {
     expect(result.warnCount).toBe(0);
   });
 
-  it('achieves VibeScore 100 when there are no warn/error findings', async () => {
+  it('achieves AIScore 100 when there are no warn/error findings', async () => {
     const result = await scan(makeScanOpts(CLEAN));
     expect(result.vibeScore).toBe(100);
   });
@@ -199,23 +199,23 @@ describe('isVendorFile', () => {
   });
 });
 
-describe('vibecop-ignore inline suppression', () => {
+describe('aicop-ignore inline suppression', () => {
   const IGNORE_CLEAN = join(FIXTURES, 'should-not-flag', 'ignore-comments.ts');
   const IGNORE_WRONG = join(FIXTURES, 'should-flag', 'ignore-wrong-rule.ts');
 
-  it('suppresses findings when // vibecop-ignore precedes the line', async () => {
+  it('suppresses findings when // aicop-ignore precedes the line', async () => {
     const result = await scan(makeScanOpts(IGNORE_CLEAN, { severity: 'info', ruleId: 'security/hardcoded-secrets' }));
     const findings = result.files.flatMap((f) => f.findings);
     expect(findings.filter((f) => f.ruleId === 'security/hardcoded-secrets')).toHaveLength(0);
   });
 
-  it('suppresses when // vibecop-ignore rule-id matches', async () => {
+  it('suppresses when // aicop-ignore rule-id matches', async () => {
     const result = await scan(makeScanOpts(IGNORE_CLEAN, { severity: 'info' }));
     const findings = result.files.flatMap((f) => f.findings);
     expect(findings.filter((f) => f.ruleId === 'security/hardcoded-secrets')).toHaveLength(0);
   });
 
-  it('still flags when // vibecop-ignore uses a different rule id', async () => {
+  it('still flags when // aicop-ignore uses a different rule id', async () => {
     const result = await scan(makeScanOpts(IGNORE_WRONG, { severity: 'info', ruleId: 'security/hardcoded-secrets' }));
     const findings = result.files.flatMap((f) => f.findings);
     expect(findings.filter((f) => f.ruleId === 'security/hardcoded-secrets').length).toBeGreaterThan(0);
@@ -224,7 +224,7 @@ describe('vibecop-ignore inline suppression', () => {
 
 describe('loadConfig', () => {
   it('returns a valid config with rules when no config file is present', async () => {
-    // Use a temp directory that has no vibescan config
+    // Use a temp directory that has no aicop config
     const config = await loadConfig(join(__dirname, '..', 'dist'));
     expect(config).toBeDefined();
     expect(typeof config.rules).toBe('object');

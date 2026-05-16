@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   publish:
-    name: Publish vibescan
+    name: Publish aicop
     runs-on: ubuntu-latest
 
     steps:

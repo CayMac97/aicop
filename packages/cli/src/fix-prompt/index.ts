@@ -84,8 +84,8 @@ export function generateFixPrompt(scanResult: ScanResult, options: FixPromptOpti
     return [
       'No issues found.',
       '',
-      `VibeCop scanned ${scanResult.filesScanned} file${scanResult.filesScanned !== 1 ? 's' : ''}.`,
-      `VibeScore: ${scanResult.vibeScore}/100`,
+      `AICop scanned ${scanResult.filesScanned} file${scanResult.filesScanned !== 1 ? 's' : ''}.`,
+      `AIScore: ${scanResult.vibeScore}/100`,
     ].join('\n');
   }
 
@@ -94,7 +94,7 @@ export function generateFixPrompt(scanResult: ScanResult, options: FixPromptOpti
   const errorCount = filtered.filter((finding) => finding.severity === 'error').length;
   const warnCount = filtered.filter((finding) => finding.severity === 'warn').length;
   const lines: string[] = [
-    'Please fix the following VibeCop findings.',
+    'Please fix the following AICop findings.',
     'Only change the listed files and preserve behavior.',
     '',
   ];
@@ -126,7 +126,7 @@ export function generateFixPrompt(scanResult: ScanResult, options: FixPromptOpti
   if (errorCount > 0) lines.push(`Critical errors: ${errorCount}`);
   if (warnCount > 0) lines.push(`Warnings: ${warnCount}`);
   lines.push(`Estimated complexity: ${estimateComplexity(filtered.length)}`);
-  lines.push('Run "vibecop scan ." after applying fixes.');
+  lines.push('Run "aicop scan ." after applying fixes.');
 
   return lines.join('\n');
 }

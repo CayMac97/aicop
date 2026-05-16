@@ -5,20 +5,20 @@ import { validateConfig } from './validator.js';
 import { logger } from '../utils/logger.js';
 import path from 'path';
 
-const MODULE_NAME = 'vibescan';
+const MODULE_NAME = 'aicop';
 
 export async function loadConfig(searchFrom?: string, configPath?: string): Promise<VibescanConfig> {
   const explorer = cosmiconfig(MODULE_NAME, {
     searchPlaces: [
       'package.json',
-      '.vibecoprc.json',
-      '.vibecoprc.js',
+      '.aicoprc.json',
+      '.aicoprc.js',
       `.${MODULE_NAME}rc.json`,
       `.${MODULE_NAME}rc.js`,
       `.${MODULE_NAME}rc.cjs`,
       `${MODULE_NAME}.config.js`,
       `${MODULE_NAME}.config.cjs`,
-      'vibecop.config.js',
+      'aicop.config.js',
     ],
     searchStrategy: 'project',
   } as Parameters<typeof cosmiconfig>[1]);

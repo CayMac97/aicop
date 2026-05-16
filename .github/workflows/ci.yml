@@ -40,7 +40,7 @@ jobs:
       - name: Build
         run: npm run build --workspace=packages/cli
 
-      - name: Self-scan (VibeCop scanning its own code)
+      - name: Self-scan (AICop scanning its own code)
         run: node packages/cli/dist/index.js ./packages/cli/src --ci --severity warn
         continue-on-error: false
 
@@ -48,12 +48,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: vibescan-report-node${{ matrix.node-version }}
-          path: .vibescan/
+          name: aicop-report-node${{ matrix.node-version }}
+          path: .aicop/
           if-no-files-found: ignore
 
-  vibescore-gate:
-    name: VibeScore™ Gate (must be ≥ 90)
+  aiscore-gate:
+    name: AIScore™ Gate (must be ≥ 90)
     runs-on: ubuntu-latest
     needs: build-and-test
 
@@ -74,14 +74,14 @@ jobs:
         run: npm run build --workspace=packages/cli
 
       - name: Run full JSON scan
-        run: node packages/cli/dist/index.js ./packages/cli/src --ci --format json --output vibescan-result.json
+        run: node packages/cli/dist/index.js ./packages/cli/src --ci --format json --output aicop-result.json
 
-      - name: Assert VibeScore ≥ 90
+      - name: Assert AIScore ≥ 90
         run: |
-          SCORE=$(node -e "const r=require('./vibescan-result.json');console.log(r.summary.vibeScore)")
-          echo "VibeScore: $SCORE"
+          SCORE=$(node -e "const r=require('./aicop-result.json');console.log(r.summary.vibeScore)")
+          echo "AIScore: $SCORE"
           if [ "$SCORE" -lt 90 ]; then
-            echo "❌ VibeScore $SCORE is below the required 90 threshold"
+            echo "❌ AIScore $SCORE is below the required 90 threshold"
             exit 1
           fi
-          echo "✅ VibeScore $SCORE meets the 90+ requirement"
+          echo "✅ AIScore $SCORE meets the 90+ requirement"

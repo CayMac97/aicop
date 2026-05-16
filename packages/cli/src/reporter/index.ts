@@ -31,7 +31,7 @@ export async function report(result: ScanResult, options: ReporterOptions): Prom
 
     if (format === 'html') {
       const html = formatHtml(result, version);
-      const dest = outputPath ?? '.vibescan/report.html';
+      const dest = outputPath ?? '.aicop/report.html';
       await writeFile(dest, html);
       logger.info(`HTML report written to ${dest}`);
       return;

@@ -1,8 +1,8 @@
-# VibeCop — AI Code Scanner
+# AICop — AI Code Scanner
 
 Detects security holes, AI-generated anti-patterns, and tech debt in JS/TS code — inline, as you work.
 
-![VibeScore status bar](https://vibecop.net/assets/screenshot-statusbar.png)
+![AIScore status bar](https://aicop.net/assets/screenshot-statusbar.png)
 
 ---
 
@@ -11,7 +11,7 @@ Detects security holes, AI-generated anti-patterns, and tech debt in JS/TS code 
 - **38 rules** covering security, AI-smell, and tech-debt categories
 - **Inline diagnostics** — squiggly lines and Problems panel entries
 - **CodeLens annotations** — rule name and severity above each finding
-- **VibeScore™** — overall code quality score (0–100) in the status bar
+- **AIScore™** — overall code quality score (0–100) in the status bar
 - **Generate AI Fix Prompt** — one click to get a ready-to-paste prompt for Claude, Cursor, or ChatGPT
 - **Scan on save / open** — automatic, zero-config analysis
 
@@ -21,10 +21,10 @@ Detects security holes, AI-generated anti-patterns, and tech debt in JS/TS code 
 
 | Command | Description |
 |---|---|
-| `VibeCop: Scan Current File` | Run all rules on the active file |
-| `VibeCop: Scan Entire Workspace` | Scan every JS/TS file in the workspace |
-| `VibeCop: Clear All Diagnostics` | Remove all VibeCop markers |
-| `VibeCop: Generate AI Fix Prompt` | Create a fix prompt for the current file's findings |
+| `AICop: Scan Current File` | Run all rules on the active file |
+| `AICop: Scan Entire Workspace` | Scan every JS/TS file in the workspace |
+| `AICop: Clear All Diagnostics` | Remove all AICop markers |
+| `AICop: Generate AI Fix Prompt` | Create a fix prompt for the current file's findings |
 
 ---
 
@@ -32,16 +32,16 @@ Detects security holes, AI-generated anti-patterns, and tech debt in JS/TS code 
 
 | Setting | Default | Description |
 |---|---|---|
-| `vibecop.enabled` | `true` | Enable/disable VibeCop |
-| `vibecop.scanOnSave` | `true` | Scan automatically on file save |
-| `vibecop.scanOnOpen` | `true` | Scan automatically when a file is opened |
-| `vibecop.minSeverity` | `"warn"` | Minimum severity to display (`info` / `warn` / `error`) |
-| `vibecop.showVibeScore` | `true` | Show VibeScore™ in the status bar |
-| `vibecop.excludePatterns` | `["node_modules/**", "dist/**", "build/**"]` | Glob patterns to exclude |
+| `aicop.enabled` | `true` | Enable/disable AICop |
+| `aicop.scanOnSave` | `true` | Scan automatically on file save |
+| `aicop.scanOnOpen` | `true` | Scan automatically when a file is opened |
+| `aicop.minSeverity` | `"warn"` | Minimum severity to display (`info` / `warn` / `error`) |
+| `aicop.showAIScore` | `true` | Show AIScore™ in the status bar |
+| `aicop.excludePatterns` | `["node_modules/**", "dist/**", "build/**"]` | Glob patterns to exclude |
 
 ---
 
-## VibeScore™
+## AIScore™
 
 The status bar shows your current file or workspace score:
 
@@ -68,14 +68,14 @@ The status bar shows your current file or workspace score:
 
 ## Installation
 
-Search for **VibeCop** in the VS Code Extensions panel, or install via:
+Search for **AICop** in the VS Code Extensions panel, or install via:
 
 ```
-ext install vibecop.vibecop
+ext install aicop.aicop
 ```
 
 ---
 
 ## License
 
-MIT — [vibecop.net](https://vibecop.net)
+MIT — [aicop.net](https://aicop.net)

@@ -50,10 +50,10 @@ function applyIgnoreComments(findings: Finding[], source: string): Finding[] {
   return findings.filter((f) => {
     const lineIdx = f.line - 1;
     const sameLine = lines[lineIdx] ?? '';
-    if (/\/\/\s*vibecop-ignore\b/.test(sameLine)) return false;
+    if (/\/\/\s*aicop-ignore\b/.test(sameLine)) return false;
     const prevLine = lineIdx > 0 ? (lines[lineIdx - 1] ?? '').trim() : '';
-    if (prevLine === '// vibecop-ignore') return false;
-    if (prevLine === `// vibecop-ignore ${f.ruleId}`) return false;
+    if (prevLine === '// aicop-ignore') return false;
+    if (prevLine === `// aicop-ignore ${f.ruleId}`) return false;
     return true;
   });
 }

@@ -38,7 +38,7 @@ interface FixPromptOptions {
   targetPath?: string;
 }
 
-interface VibeCopLib {
+interface AICopLib {
   scan: (options: {
     path: string;
     config: unknown;
@@ -54,7 +54,7 @@ interface VibeCopLib {
   generateFixPrompt: (scanResult: ScanResult, options: FixPromptOptions) => string;
 }
 
-let cachedLib: VibeCopLib | null = null;
+let cachedLib: AICopLib | null = null;
 
 export function computeFileVibeScore(findings: Finding[]): number {
   const secErrCount = findings.filter((f) => f.ruleId.startsWith('security/') && f.severity === 'error').length;
@@ -71,16 +71,16 @@ export function computeFileVibeScore(findings: Finding[]): number {
   return Math.max(0, Math.round(100 - (secErrPenalty + secWarnPenalty + aiErrPenalty + aiWarnPenalty + techPenalty)));
 }
 
-function loadLib(): VibeCopLib {
+function loadLib(): AICopLib {
   if (cachedLib) return cachedLib;
   const libPath = path.join(__dirname, '..', '..', 'cli', 'dist', 'lib.js');
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    cachedLib = require(libPath) as VibeCopLib;
+    cachedLib = require(libPath) as AICopLib;
     return cachedLib;
   } catch (err) {
     throw new Error(
-      `VibeCop: could not load scanner from ${libPath} — run 'npm run build' in packages/cli first.\n${String(err)}`,
+      `AICop: could not load scanner from ${libPath} — run 'npm run build' in packages/cli first.\n${String(err)}`,
     );
   }
 }
@@ -148,7 +148,7 @@ export interface BaselineData {
 }
 
 export function loadBaseline(workspaceRoot: string): BaselineData | null {
-  const p = path.join(workspaceRoot, '.vibecop-baseline.json');
+  const p = path.join(workspaceRoot, '.aicop-baseline.json');
   try {
     const raw = fs.readFileSync(p, 'utf8');
     return JSON.parse(raw) as BaselineData;
@@ -166,7 +166,7 @@ export function saveBaseline(workspaceRoot: string, result: ScanResult): void {
     date: new Date().toISOString().slice(0, 10),
   };
   fs.writeFileSync(
-    path.join(workspaceRoot, '.vibecop-baseline.json'),
+    path.join(workspaceRoot, '.aicop-baseline.json'),
     JSON.stringify(data, null, 2),
     'utf8',
   );

@@ -1,9 +1,23 @@
-src/
-node_modules/
-.vscode/
-*.ts
-!out/**
-*.map
-package-lock.json
+# Source & build tooling — not needed in the installed extension
+src/**
+.vscode/**
+node_modules/**
+**/*.ts
+**/*.map
 tsconfig.json
+package-lock.json
+
+# Keep compiled output
+!out/**
+
+# Repo / dev files
 .gitignore
+.github/**
+*.vsix
+create-icon.js
+
+# Keep in package (marketplace needs these):
+# README.md, CHANGELOG.md, LICENSE, icon.png — all kept
+
+# Original SVG not needed once PNG is present
+icon.svg

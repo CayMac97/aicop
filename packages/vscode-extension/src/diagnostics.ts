@@ -12,7 +12,7 @@ export function findingToDiagnostic(finding: Finding, _docUri: vscode.Uri): vsco
 
   const message = `[${finding.ruleId}] ${finding.message}${finding.fix ? `\n\nFIX: ${finding.fix}` : ''}`;
   const diagnostic = new vscode.Diagnostic(range, message, mapSeverity(finding.severity));
-  diagnostic.source = 'VibeCop';
+  diagnostic.source = 'AICop';
   diagnostic.code = finding.ruleId;
 
   if (finding.severity === 'info' && finding.ruleId.includes('debug-leftovers')) {

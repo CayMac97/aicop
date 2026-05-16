@@ -38,7 +38,7 @@ const RULE_CONTEXTS: Record<string, string> = {
 
 /**
  * Add diff context explanation to a list of findings.
- * Used by `vibescan diff` to explain why each finding is noteworthy in this changeset.
+ * Used by `aicop diff` to explain why each finding is noteworthy in this changeset.
  */
 export function explainFindings(findings: Finding[]): ExplainedFinding[] {
   return findings.map((f) => ({

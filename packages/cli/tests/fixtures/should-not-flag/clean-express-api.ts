@@ -1,6 +1,6 @@
 /**
  * Clean Express utility module — zero findings expected at warn severity.
- * Used by the VibeCop smoke test suite to verify no false positives.
+ * Used by the AICop smoke test suite to verify no false positives.
  */
 import { Request, Response } from 'express';
 

@@ -1,6 +1,6 @@
-name: 'VibeCop'
+name: 'AICop'
 description: 'Scan TypeScript/JavaScript for security issues, AI code smells, and tech debt'
-author: 'VibeCop'
+author: 'AICop'
 
 branding:
   icon: 'shield'
@@ -33,9 +33,9 @@ inputs:
     default: 'true'
 
 outputs:
-  vibe-score:
-    description: 'Overall VibeScore (0-100)'
-    value: ${{ steps.scan.outputs.vibe-score }}
+  ai-score:
+    description: 'Overall AIScore (0-100)'
+    value: ${{ steps.scan.outputs.ai-score }}
   error-count:
     description: 'Number of error-severity findings'
     value: ${{ steps.scan.outputs.error-count }}
@@ -46,12 +46,12 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Run VibeCop scan
+    - name: Run AICop scan
       id: scan
       shell: bash
       run: |
         REPORT_FILE=$(mktemp --suffix=.json)
-        npx --yes vibecop@latest scan "${{ inputs.path }}" \
+        npx --yes aicop@latest scan "${{ inputs.path }}" \
           --ci \
           --severity "${{ inputs.severity }}" \
           --format json \
@@ -63,7 +63,7 @@ runs:
         WARN_COUNT=$(node -e "const r=require('$REPORT_FILE'); console.log(r.warnCount ?? 0)")
         INFO_COUNT=$(node -e "const r=require('$REPORT_FILE'); console.log(r.infoCount ?? 0)")
 
-        echo "vibe-score=$VIBE_SCORE" >> "$GITHUB_OUTPUT"
+        echo "ai-score=$VIBE_SCORE" >> "$GITHUB_OUTPUT"
         echo "error-count=$ERROR_COUNT" >> "$GITHUB_OUTPUT"
         echo "warn-count=$WARN_COUNT" >> "$GITHUB_OUTPUT"
         echo "REPORT_FILE=$REPORT_FILE" >> "$GITHUB_ENV"
@@ -75,7 +75,7 @@ runs:
     - name: Print terminal summary
       shell: bash
       run: |
-        npx --yes vibecop@latest scan "${{ inputs.path }}" --ci --severity "${{ inputs.severity }}" || true
+        npx --yes aicop@latest scan "${{ inputs.path }}" --ci --severity "${{ inputs.severity }}" || true
 
     - name: Post PR comment
       if: inputs.comment-on-pr == 'true' && github.event_name == 'pull_request'
@@ -99,28 +99,28 @@ runs:
             : '> ✅ **No errors** — no blocking issues found.';
 
           const body = [
-            '## 🛡 VibeCop Scan Results',
+            '## 🛡 AICop Scan Results',
             '',
             statusLine,
             '',
             `| | |`,
             `|---|---|`,
-            `| VibeScore™ | ${scoreEmoji} **${vibeScore}/100** — ${scoreLabel} |`,
+            `| AIScore™ | ${scoreEmoji} **${vibeScore}/100** — ${scoreLabel} |`,
             `| 🔴 Errors | ${errors} |`,
             `| 🟡 Warnings | ${warnings} |`,
             `| 🔵 Info | ${info} |`,
             '',
-            `<sub>Powered by [VibeCop](https://vibecop.net) — AI code quality scanner</sub>`,
+            `<sub>Powered by [AICop](https://aicop.net) — AI code quality scanner</sub>`,
           ].join('\n');
 
-          // Find existing VibeCop comment and update, or create new
+          // Find existing AICop comment and update, or create new
           const { data: comments } = await github.rest.issues.listComments({
             owner: context.repo.owner,
             repo: context.repo.repo,
             issue_number: context.payload.pull_request.number,
           });
 
-          const existing = comments.find(c => c.body.startsWith('## 🛡 VibeCop'));
+          const existing = comments.find(c => c.body.startsWith('## 🛡 AICop'));
           if (existing) {
             await github.rest.issues.updateComment({
               owner: context.repo.owner,
@@ -142,6 +142,6 @@ runs:
       shell: bash
       run: |
         if [ "$ERROR_COUNT" -gt "0" ]; then
-          echo "::error::VibeCop found $ERROR_COUNT error(s). Fix them before merging."
+          echo "::error::AICop found $ERROR_COUNT error(s). Fix them before merging."
           exit 1
         fi

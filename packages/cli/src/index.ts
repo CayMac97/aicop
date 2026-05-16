@@ -17,8 +17,8 @@ import { writeFile } from './utils/file-utils.js';
 import { generateFixPrompt } from './fix-prompt/index.js';
 import { copyToClipboard, showInteractiveGroups, runWatch, CliOptions, buildScanOptions, buildDisplayResult, isInteractiveSession, shouldShowFixPromptHint } from './cli-helpers.js';
 
-declare const __VIBESCAN_VERSION__: string | undefined;
-const VERSION: string = (typeof __VIBESCAN_VERSION__ !== 'undefined' ? __VIBESCAN_VERSION__ : null)
+declare const __AISCOP_VERSION__: string | undefined;
+const VERSION: string = (typeof __AISCOP_VERSION__ !== 'undefined' ? __AISCOP_VERSION__ : null)
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   ?? (require('../package.json') as { version: string }).version;
 
@@ -43,27 +43,27 @@ function addScanOptions(cmd: Command): Command {
 
 addScanOptions(
   program
-    .name('vibescan')
-    .description('🛡️ VibeCop — AI code quality & security scanner')
+    .name('aiscop')
+    .description('🛡️ AICop — AI code quality & security scanner')
     .version(VERSION, '-v, --version', 'Output the current version')
     .enablePositionalOptions(),
 );
 
 program
   .command('init')
-  .description('Generate a .vibescanrc.json config file in the current directory')
+  .description('Generate a .aicoprc.json config file in the current directory')
   .action(async () => {
-    const configPath = path.join(process.cwd(), '.vibecoprc.json');
+    const configPath = path.join(process.cwd(), '.aicoprc.json');
     const { writeFile: wf } = await import('./utils/file-utils.js');
     await wf(configPath, JSON.stringify(DEFAULT_CONFIG, null, 2));
-    process.stdout.write(chalk.green('✓') + ` .vibecoprc.json created at ${configPath}\n`);
+    process.stdout.write(chalk.green('✓') + ` .aicoprc.json created at ${configPath}\n`);
     process.stdout.write(chalk.dim('Edit this file to customize rules, thresholds, and output settings.\n'));
-    process.stdout.write(chalk.dim('Tip: .vibescanrc.json is also supported for backwards compatibility.\n'));
+    process.stdout.write(chalk.dim('Tip: .aicoprc.json is also supported for backwards compatibility.\n'));
   });
 
 program
   .command('baseline')
-  .description('Save the current VibeScore as a baseline for future comparison')
+  .description('Save the current AIScore as a baseline for future comparison')
   .option('--path <path>', 'Path to scan for baseline', '.')
   .option('--config <path>', 'Config file path')
   .action(async (opts: { path: string; config?: string }) => {
@@ -83,7 +83,7 @@ program
       spinner.stop();
       writeBaseline(process.cwd(), result);
       process.stdout.write(
-        chalk.green('✓') + ` Baseline saved: VibeScore™ ${chalk.bold(String(result.vibeScore))}/100 ` +
+        chalk.green('✓') + ` Baseline saved: AIScore™ ${chalk.bold(String(result.vibeScore))}/100 ` +
         chalk.dim(`(${result.errorCount} errors, ${result.warnCount} warnings, ${result.filesScanned} files)\n`) +
         chalk.dim('  Every future scan will show the delta against this baseline.\n')
       );
@@ -239,7 +239,7 @@ program
 
       process.stdout.write('\n');
       process.stdout.write(chalk.bold.cyan('━'.repeat(72)) + '\n');
-      process.stdout.write(chalk.bold.white('  🤖 VibeCop AI Fix Prompt\n'));
+      process.stdout.write(chalk.bold.white('  🤖 AICop AI Fix Prompt\n'));
       process.stdout.write(chalk.dim('  Copy this prompt and paste it into Claude, Cursor, or ChatGPT\n'));
       process.stdout.write(chalk.bold.cyan('━'.repeat(72)) + '\n\n');
       process.stdout.write(prompt + '\n\n');
@@ -268,7 +268,7 @@ function getScoreEmoji(score: number): string {
 
 program
   .command('badge [path]')
-  .description('Generate a VibeScore badge URL for your README')
+  .description('Generate an AIScore badge URL for your README')
   .option('--style <style>', 'Badge style: flat | flat-square | for-the-badge', 'flat')
   .option('--output <format>', 'Output format: markdown | url', 'markdown')
   .option('--config <path>', 'Config file path')
@@ -280,7 +280,7 @@ program
       process.exit(2);
     }
     const config = await loadConfig(process.cwd(), opts.config);
-    const spinner = ora(chalk.dim('Scanning for VibeScore…')).start();
+    const spinner = ora(chalk.dim('Scanning for AIScore…')).start();
     try {
       const result = await scan({
         path: resolvedTarget,
@@ -295,16 +295,16 @@ program
       spinner.succeed(chalk.green(`Scanned ${result.filesScanned} files`));
       const score = result.vibeScore;
       const color = getBadgeColor(score);
-      const badgeUrl = `https://img.shields.io/badge/VibeScore-${score}%2F100-${color}?style=${opts.style}`;
-      const markdown = `![VibeScore](${badgeUrl})`;
+      const badgeUrl = `https://img.shields.io/badge/AIScore-${score}%2F100-${color}?style=${opts.style}`;
+      const markdown = `![AIScore](${badgeUrl})`;
       const scoreEmoji = getScoreEmoji(score);
       const W = 63;
       const line = (inner: string): string => `│${inner.padEnd(W - 2)}│`;
       process.stdout.write('\n');
       process.stdout.write('┌' + '─'.repeat(W - 2) + '┐\n');
-      process.stdout.write(line('  VibeCop Badge generated!') + '\n');
+      process.stdout.write(line('  AICop Badge generated!') + '\n');
       process.stdout.write(line('') + '\n');
-      process.stdout.write(line(`  VibeScore: ${score}/100 ${scoreEmoji}`) + '\n');
+      process.stdout.write(line(`  AIScore: ${score}/100 ${scoreEmoji}`) + '\n');
       process.stdout.write(line('') + '\n');
       process.stdout.write(line('  Add this to your README.md:') + '\n');
       process.stdout.write(line('') + '\n');
@@ -422,7 +422,7 @@ async function runScan(targetPath: string, opts: CliOptions): Promise<void> {
       const target = path.resolve(targetPath);
       process.stdout.write(
         chalk.yellow('\n  ⚠  No JS/TS files found in ') + chalk.bold(target) + '\n' +
-        chalk.dim('     VibeCop scans: .ts .tsx .js .jsx .mjs .cjs .mts .cts\n\n')
+        chalk.dim('     AICop scans: .ts .tsx .js .jsx .mjs .cjs .mts .cts\n\n')
       );
       process.exit(0);
     }

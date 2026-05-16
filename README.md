@@ -1,13 +1,13 @@
-﻿# 🛡 VibeCop
+﻿# 🛡 AICop
 
-**Your AI wrote bugs. VibeCop finds them.
-npx vibecop scan .**  
+**Your AI wrote bugs. AICop finds them.
+npx aicop scan .**  
 
 Catch security vulnerabilities, AI code smells, and tech debt — before you ship to production.
 
 ```bash
-npm install -g vibecop
-vibecop scan ./src
+npm install -g aicop
+aicop scan ./src
 ```
 
 > Works with any JS/TS project. No config required to get started.
@@ -18,7 +18,7 @@ vibecop scan ./src
 - [Install](#install)
 - [Usage](#usage)
 - [All Rules](#all-rules)
-- [VibeScore](#vibescore)
+- [AIScore](#aiscore)
 - [Configuration](#configuration)
 - [Test-File Behaviour](#test-file-behaviour)
 - [GitHub Actions](#github-actions)
@@ -31,7 +31,7 @@ vibecop scan ./src
 
 ## What it does
 
-VibeCop parses every `.ts`, `.tsx`, `.js`, `.jsx` file into a full AST and runs **35 detection rules**:
+AICop parses every `.ts`, `.tsx`, `.js`, `.jsx` file into a full AST and runs **35 detection rules**:
 
 | Category | Count | What it catches |
 |---|---|---|
@@ -39,14 +39,14 @@ VibeCop parses every `.ts`, `.tsx`, `.js`, `.jsx` file into a full AST and runs 
 | 🤖 AI Smells | 11 | Hallucinated APIs, dead code, TODO stubs, copy-paste patterns, debug leftovers, mixed async, missing null checks, generic variable names, magic numbers, inconsistent error handling, AI confidence score |
 | 🧹 Tech Debt | 6 | Cyclomatic complexity, function length, nesting depth, god files, hardcoded config, missing types |
 
-Every scanned file gets an **AI Confidence Score** and every scan produces an overall **VibeScore™** (0–100).
+Every scanned file gets an **AI Confidence Score** and every scan produces an overall **AIScore™** (0–100).
 
 ## Install
 
 ```bash
-npm install -g vibecop      # global install
-npx vibecop scan ./src      # one-off, no install needed
-pnpm dlx vibecop scan ./src # pnpm
+npm install -g aicop      # global install
+npx aicop scan ./src      # one-off, no install needed
+pnpm dlx aicop scan ./src # pnpm
 ```
 
 Requires **Node.js ≥ 18**.
@@ -56,15 +56,15 @@ Requires **Node.js ≥ 18**.
 ## Usage
 
 ```bash
-vibecop scan ./src                      # scan a directory
-vibecop scan ./src --severity error     # errors only
-vibecop scan ./src --format html        # HTML report
-vibecop scan ./src --output report.html # save to file
-vibecop diff main                       # only files changed since branch main
-vibecop scan ./src --ci                 # CI mode (exits 1 on any error)
-vibecop baseline save                   # save current score as baseline
-vibecop rules                           # list all available rules
-vibecop init                            # create .vibecoprc.json config
+aicop scan ./src                      # scan a directory
+aicop scan ./src --severity error     # errors only
+aicop scan ./src --format html        # HTML report
+aicop scan ./src --output report.html # save to file
+aicop diff main                       # only files changed since branch main
+aicop scan ./src --ci                 # CI mode (exits 1 on any error)
+aicop baseline save                   # save current score as baseline
+aicop rules                           # list all available rules
+aicop init                            # create .aicoprc.json config
 ```
 
 ### CLI Options
@@ -135,9 +135,9 @@ vibecop init                            # create .vibecoprc.json config
 
 ---
 
-## VibeScore
+## AIScore
 
-The **VibeScore™** is a 0–100 number that summarises the overall AI-smell and security risk of your codebase.
+The **AIScore™** is a 0–100 number that summarises the overall AI-smell and security risk of your codebase.
 
 | Score | Label | Meaning |
 |---|---|---|
@@ -146,14 +146,14 @@ The **VibeScore™** is a 0–100 number that summarises the overall AI-smell an
 | 51–80 | 🟠 Heavy AI smell | Significant rework needed |
 | 81–100 | 🔴 Needs rewrite | Major security or quality problems |
 
-> VibeScore only considers `error` and `warn` findings. `info` findings don't affect it.
+> AIScore only considers `error` and `warn` findings. `info` findings don't affect it.
 
 ---
 
 ## Configuration
 
 ```bash
-vibecop init   # creates .vibecoprc.json in the project root
+aicop init   # creates .aicoprc.json in the project root
 ```
 
 ```json
@@ -168,7 +168,7 @@ vibecop init   # creates .vibecoprc.json in the project root
   "thresholds": {
     "maxErrors": 0,
     "maxWarnings": 10,
-    "minVibeScore": 60
+    "minAIScore": 60
   }
 }
 ```
@@ -182,7 +182,7 @@ Minified files (`*.min.js`, `*.min.css`), chunk files, and vendor directories ar
 
 ## Test-File Behaviour
 
-VibeCop applies relaxed rules to test files (paths containing `test/`, `tests/`, `spec/`, `__tests__/`, or filenames ending in `.test.ts`, `.spec.js`, etc.):
+AICop applies relaxed rules to test files (paths containing `test/`, `tests/`, `spec/`, `__tests__/`, or filenames ending in `.test.ts`, `.spec.js`, etc.):
 
 | Rule | Normal files | Test files |
 |---|---|---|
@@ -194,8 +194,8 @@ VibeCop applies relaxed rules to test files (paths containing `test/`, `tests/`,
 ## GitHub Actions
 
 ```yaml
-# .github/workflows/vibecop.yml
-name: VibeCop
+# .github/workflows/aicop.yml
+name: AICop
 
 on: [push, pull_request]
 
@@ -206,7 +206,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: '20' }
-      - uses: vibecop/action@v1
+      - uses: aicop/action@v1
         with:
           path: ./src
           severity: warn
@@ -215,25 +215,25 @@ jobs:
 Or inline without the Action:
 
 ```yaml
-- run: npx vibecop scan ./src --ci --severity warn
+- run: npx aicop scan ./src --ci --severity warn
 ```
 
 ---
 
 ## VS Code Extension
 
-The **VibeCop VS Code Extension** (`packages/vscode-extension`) adds real-time diagnostics directly in your editor:
+The **AICop VS Code Extension** (`packages/vscode-extension`) adds real-time diagnostics directly in your editor:
 
 - Underlines findings inline as you type
 - Shows severity icons (🔴 error / ⚠️ warn / ℹ️ info) in the Problems panel
 - Adds CodeLens above flagged functions with a quick-fix link
-- Status bar indicator shows current file's VibeScore
-- Commands: `VibeCop: Scan Current File`, `VibeCop: Scan Entire Workspace`, `VibeCop: Clear All Diagnostics`
+- Status bar indicator shows current file's AIScore
+- Commands: `AICop: Scan Current File`, `AICop: Scan Entire Workspace`, `AICop: Clear All Diagnostics`
 
 Install locally:
 ```bash
 npm run package:extension    # builds a .vsix file
-code --install-extension vibecop-1.0.0.vsix
+code --install-extension aicop-1.0.0.vsix
 ```
 
 ---
@@ -243,21 +243,21 @@ code --install-extension vibecop-1.0.0.vsix
 Track your codebase score over time:
 
 ```bash
-vibecop baseline save         # saves current VibeScore as baseline
+aicop baseline save         # saves current AIScore as baseline
 # ... fix things ...
-vibecop scan ./src            # output shows delta vs baseline (↑ or ↓)
+aicop scan ./src            # output shows delta vs baseline (↑ or ↓)
 ```
 
-The baseline is stored in `.vibecopbaseline.json` (add this to git to share with your team).
+The baseline is stored in `.aicop-baseline.json` (add this to git to share with your team).
 
 ---
 
 ## Project Structure
 
 ```
-vibecop.net/
+aicop.net/
 ├── packages/
-│   ├── cli/                   # Main CLI package (published to npm as "vibecop")
+│   ├── cli/                   # Main CLI package (published to npm as "aicop")
 │   │   ├── src/
 │   │   │   ├── scanner/       # AST walker + 35 detection rules
 │   │   │   │   └── rules/
@@ -270,7 +270,7 @@ vibecop.net/
 │   │   │   └── config/        # Config loading and defaults
 │   │   └── tests/             # Smoke tests + flagging fixtures
 │   ├── vscode-extension/      # VS Code extension
-│   └── website/               # vibecop.net landing page
+│   └── website/               # aicop.net landing page
 └── action.yml                 # GitHub Action definition
 ```
 
