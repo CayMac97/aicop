@@ -73,15 +73,12 @@ export function computeFileVibeScore(findings: Finding[]): number {
 
 function loadLib(): AICopLib {
   if (cachedLib) return cachedLib;
-  const libPath = path.join(__dirname, '..', '..', 'cli', 'dist', 'lib.js');
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    cachedLib = require(libPath) as AICopLib;
+    cachedLib = require('aicop/lib') as AICopLib;
     return cachedLib;
   } catch (err) {
-    throw new Error(
-      `AICop: could not load scanner from ${libPath} — run 'npm run build' in packages/cli first.\n${String(err)}`,
-    );
+    throw new Error(`AICop: scanner failed to load — ${String(err)}`);
   }
 }
 

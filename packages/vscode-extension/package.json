@@ -2,7 +2,7 @@
   "name": "aicop",
   "displayName": "AICop — AI Code Scanner",
   "description": "Detects security holes, AI-generated anti-patterns, and tech debt in JS/TS code",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "publisher": "aicop",
   "license": "MIT",
   "icon": "icon.png",
@@ -11,9 +11,9 @@
   "keywords": ["security", "ai", "linter", "ai-coding", "typescript"],
   "repository": {
     "type": "git",
-    "url": "https://github.com/CayMac97/Vibecop"
+    "url": "https://github.com/CayMac97/aicop"
   },
-  "bugs": { "url": "https://github.com/CayMac97/Vibecop/issues" },
+  "bugs": { "url": "https://github.com/CayMac97/aicop/issues" },
   "homepage": "https://aicop.net",
   "galleryBanner": { "color": "#0a0a0a", "theme": "dark" },
   "activationEvents": [
@@ -94,14 +94,20 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p tsconfig.json",
-    "watch": "tsc -p tsconfig.json --watch",
-    "package": "vsce package --no-dependencies"
+    "clean": "node -e \"const fs=require('fs');if(fs.existsSync('out'))fs.readdirSync('out').filter(f=>f!=='extension.js').forEach(f=>fs.rmSync('out/'+f,{force:true}))\"",
+    "compile": "npm run clean && esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --platform=node --format=cjs --minify",
+    "watch": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --platform=node --format=cjs --watch",
+    "typecheck": "tsc --noEmit",
+    "package": "npm run compile && vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "aicop": "^1.0.1"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.21.0",
     "typescript": "^5.5.0"
   }
 }
