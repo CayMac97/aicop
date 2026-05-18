@@ -26,8 +26,8 @@ export const HALLUCINATED_APIS: HallucinatedApiEntry[] = [
   },
   {
     objectName: 'fs',
-    methods: ['readFileToString', 'writeText', 'readAllFiles', 'writeJSON', 'readJSON', 'readDir', 'copyDir'],
-    realAlternative: 'Use fs.readFileSync(), fs.writeFileSync(), fs.readdirSync() or fs-extra equivalents',
+    methods: ['readFileToString', 'writeText', 'readAllFiles', 'writeJSON', 'readJSON', 'readDir', 'copyDir', 'readFileAsync', 'writeFileAsync', 'existsAsync', 'mkdirAsync'],
+    realAlternative: 'Use fs.readFileSync()/fs.promises.readFile() or fs-extra equivalents',
   },
   {
     objectName: 'fetch',
@@ -41,8 +41,13 @@ export const HALLUCINATED_APIS: HallucinatedApiEntry[] = [
   },
   {
     objectName: 'Schema',
-    methods: ['addField', 'removeField', 'addMethod', 'registerPlugin'],
-    realAlternative: 'Define schema fields in the constructor. Use schema.add(), schema.methods, schema.plugin()',
+    methods: ['addField', 'removeField', 'addMethod', 'registerPlugin', 'findAll', 'find', 'findOne', 'create'],
+    realAlternative: 'Schema is not a Model — define fields in the constructor, use schema.add()/schema.methods/schema.plugin(). Query methods belong on Model instances.',
+  },
+  {
+    objectName: 'path',
+    methods: ['resolve_sync', 'join_sync', 'exists', 'readFile', 'writeFile'],
+    realAlternative: 'path.join() already runs synchronously and returns a string — no .sync variant exists. Use fs.existsSync() for file existence checks.',
   },
   {
     objectName: 'router',
@@ -71,3 +76,20 @@ export const HALLUCINATED_API_MAP: Map<string, Map<string, string>> = new Map(
     new Map(entry.methods.map((m) => [m, entry.realAlternative])),
   ]),
 );
+
+/**
+ * Two-level chain hallucinations: root.firstProp is invalid on the given root object.
+ * Format: rootObject -> { firstPropName -> alternative message }
+ * Used to flag patterns like app.express.routes.findOne() where .express doesn't exist on app.
+ */
+export const HALLUCINATED_CHAIN_MAP: Map<string, Map<string, string>> = new Map([
+  ['app', new Map([
+    ['express', 'app.express does not exist — app IS the Express instance; use app.get(), app.use(), app.listen() directly'],
+    ['routes', 'app.routes.* does not exist — use express.Router() for sub-routers and app.use("/path", router)'],
+  ])],
+  ['res', new Map([
+    ['query', 'res.query does not exist — query parameters are on req.query, not res.query'],
+    ['params', 'res.params does not exist — use req.params instead'],
+    ['body', 'res.body does not exist — the request body is on req.body'],
+  ])],
+]);

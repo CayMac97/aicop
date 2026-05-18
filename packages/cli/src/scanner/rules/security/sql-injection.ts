@@ -9,6 +9,10 @@ const HTML_TAG_PATTERN = /<(?:select|table|input|form|option|textarea)\b/i;
 const USER_INPUT_SOURCES = new Set(['params', 'body', 'query', 'headers', 'cookies']);
 const PARAMETERIZED_PATTERN = /\?\s*[,)]/;
 
+const DB_CALL_METHODS = new Set(['query', 'execute', 'raw', 'prepare', 'run', 'all', 'get']);
+const SAFE_SINK_METHODS = new Set(['log', 'warn', 'error', 'info', 'debug', 'send', 'json', 'render', 'write', 'end', 'format', 'trace', 'dir', 'table', 'print']);
+const SAFE_SINK_ROOTS = new Set(['console', 'logger', 'log', 'res', 'response', 'winston', 'pino', 'bunyan']);
+
 function isExpressionNode(node: TSESTree.Expression | TSESTree.PrivateIdentifier): node is TSESTree.Expression {
   return node.type !== 'PrivateIdentifier';
 }
@@ -28,7 +32,7 @@ function isUserInputExpression(node: TSESTree.Expression): boolean {
 function templateHasUserInput(node: TSESTree.TemplateLiteral): boolean {
   return node.expressions.some((expr) => {
     if (isUserInputExpression(expr)) return true;
-    if (isIdentifier(expr)) return true; // conservative: any identifier in SQL template
+    if (isIdentifier(expr)) return true;
     return false;
   });
 }
@@ -46,37 +50,88 @@ function looksLikeSQL(text: string): boolean {
   return true;
 }
 
-function checkTemplate(node: TSESTree.TemplateLiteral, source: string, filePath: string): Finding | null {
-  const raw = node.quasis.map((q) => q.value.raw).join('');
-  if (!looksLikeSQL(raw)) return null;
-  if (!templateHasUserInput(node)) return null;
-  return {
-    ruleId: 'security/sql-injection',
-    severity: 'error',
-    message: 'SQL template literal with user input — injection risk',
-    file: filePath,
-    line: getLine(node),
-    column: getColumn(node),
-    snippet: extractSnippet(source, getLine(node)),
-    fix: 'Use parameterized queries: db.query("SELECT * FROM users WHERE id = ?", [id])',
-  };
+function isDbCall(node: TSESTree.CallExpression): boolean {
+  if (!isMemberExpression(node.callee)) return false;
+  const me = node.callee as TSESTree.MemberExpression;
+  if (!isIdentifier(me.property)) return false;
+  return DB_CALL_METHODS.has((me.property as TSESTree.Identifier).name);
 }
 
-function checkBinaryConcat(node: TSESTree.BinaryExpression, source: string, filePath: string): Finding | null {
-  if (node.operator !== '+') return null;
-  const leftStr = isStringLiteral(node.left) ? String((node.left as TSESTree.StringLiteral).value) : '';
-  if (!looksLikeSQL(leftStr)) return null;
-  if (!concatHasUserInput(node)) return null;
-  return {
-    ruleId: 'security/sql-injection',
-    severity: 'error',
-    message: 'SQL string concat with user input — injection risk',
-    file: filePath,
-    line: getLine(node),
-    column: getColumn(node),
-    snippet: extractSnippet(source, getLine(node)),
-    fix: 'Use parameterized queries or a query builder like Prisma, Knex, or TypeORM',
-  };
+function isSafeSinkCall(node: TSESTree.CallExpression): boolean {
+  if (!isMemberExpression(node.callee)) return false;
+  const me = node.callee as TSESTree.MemberExpression;
+  if (!isIdentifier(me.property)) return false;
+  if (!SAFE_SINK_METHODS.has((me.property as TSESTree.Identifier).name)) return false;
+  let obj: TSESTree.Expression | TSESTree.PrivateIdentifier = me.object;
+  while (isMemberExpression(obj)) {
+    obj = (obj as TSESTree.MemberExpression).object;
+  }
+  if (!isIdentifier(obj)) return false;
+  return SAFE_SINK_ROOTS.has((obj as TSESTree.Identifier).name.toLowerCase());
+}
+
+function buildParentMap(ast: ParsedAST): Map<TSESTree.Node, TSESTree.Node> {
+  const map = new Map<TSESTree.Node, TSESTree.Node>();
+  walk(ast, {
+    enter(node, parent) {
+      if (parent) map.set(node, parent);
+    },
+  });
+  return map;
+}
+
+function findContext(
+  sqlNode: TSESTree.Node,
+  parentMap: Map<TSESTree.Node, TSESTree.Node>,
+): { kind: 'db-call' | 'safe-sink' | 'var'; varName?: string } | null {
+  let current = sqlNode;
+  for (let depth = 0; depth < 15; depth++) {
+    const parent = parentMap.get(current);
+    if (!parent) return null;
+
+    if (parent.type === 'CallExpression') {
+      const call = parent as TSESTree.CallExpression;
+      if (isDbCall(call)) return { kind: 'db-call' };
+      if (isSafeSinkCall(call)) return { kind: 'safe-sink' };
+      return null;
+    }
+
+    if (parent.type === 'VariableDeclarator') {
+      const decl = parent as TSESTree.VariableDeclarator;
+      if (isIdentifier(decl.id)) return { kind: 'var', varName: (decl.id as TSESTree.Identifier).name };
+      return null;
+    }
+
+    if (parent.type === 'AssignmentExpression') {
+      const assign = parent as TSESTree.AssignmentExpression;
+      if (isExpressionNode(assign.left) && isIdentifier(assign.left)) {
+        return { kind: 'var', varName: (assign.left as TSESTree.Identifier).name };
+      }
+      return null;
+    }
+
+    if (parent.type === 'FunctionDeclaration' || parent.type === 'FunctionExpression' || parent.type === 'ArrowFunctionExpression') {
+      return null;
+    }
+
+    current = parent;
+  }
+  return null;
+}
+
+function collectDbCallVars(ast: ParsedAST): Set<string> {
+  const vars = new Set<string>();
+  walk(ast, {
+    CallExpression(rawNode) {
+      const call = rawNode as TSESTree.CallExpression;
+      if (!isDbCall(call) || call.arguments.length === 0) return;
+      const firstArg = call.arguments[0];
+      if (firstArg && isIdentifier(firstArg)) {
+        vars.add((firstArg as TSESTree.Identifier).name);
+      }
+    },
+  });
+  return vars;
 }
 
 const rule: Rule = {
@@ -103,17 +158,44 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
+    const parentMap = buildParentMap(ast);
+    const dbCallVars = collectDbCallVars(ast);
+
+    function tryFlag(node: TSESTree.Node, message: string, fixMsg: string): void {
+      const line = getLine(node);
+      if (PARAMETERIZED_PATTERN.test(extractSnippet(source, line))) return;
+      const ctx = findContext(node, parentMap);
+      if (!ctx) return;
+      if (ctx.kind === 'safe-sink') return;
+      if (ctx.kind === 'db-call' || (ctx.kind === 'var' && ctx.varName && dbCallVars.has(ctx.varName))) {
+        findings.push({
+          ruleId: 'security/sql-injection',
+          severity: 'error',
+          message,
+          file: filePath,
+          line,
+          column: getColumn(node),
+          snippet: extractSnippet(source, line),
+          fix: fixMsg,
+        });
+      }
+    }
 
     walk(ast, {
       TemplateLiteral(rawNode) {
-        const finding = checkTemplate(rawNode as TSESTree.TemplateLiteral, source, filePath);
-        if (finding) findings.push(finding);
+        const node = rawNode as TSESTree.TemplateLiteral;
+        const raw = node.quasis.map((q) => q.value.raw).join('');
+        if (!looksLikeSQL(raw) || !templateHasUserInput(node)) return;
+        tryFlag(node, 'SQL template literal with user input — injection risk',
+          'Use parameterized queries: db.query("SELECT * FROM users WHERE id = ?", [id])');
       },
       BinaryExpression(rawNode) {
-        const finding = checkBinaryConcat(rawNode as TSESTree.BinaryExpression, source, filePath);
-        if (finding && !PARAMETERIZED_PATTERN.test(extractSnippet(source, getLine(rawNode)))) {
-          findings.push(finding);
-        }
+        const node = rawNode as TSESTree.BinaryExpression;
+        if (node.operator !== '+') return;
+        const leftStr = isStringLiteral(node.left) ? String((node.left as TSESTree.StringLiteral).value) : '';
+        if (!looksLikeSQL(leftStr) || !concatHasUserInput(node)) return;
+        tryFlag(node, 'SQL string concat with user input — injection risk',
+          'Use parameterized queries or a query builder like Prisma, Knex, or TypeORM');
       },
     });
 

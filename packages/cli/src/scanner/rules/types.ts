@@ -53,6 +53,11 @@ export interface ScanResult {
   warnCount: number;
   infoCount: number;
   vibeScore: number;
+  categoryScores?: {
+    security: number;
+    aiSmell: number;
+    techDebt: number;
+  };
   scanDurationMs: number;
   filesScanned: number;
   filesWithIssues: number;
@@ -81,6 +86,7 @@ export interface VibescanConfig {
   rules: Record<string, Severity | 'off'>;
   thresholds: Thresholds;
   output: OutputConfig;
+  includeExamples?: boolean;
 }
 
 /** CLI scan options assembled from args + config */
@@ -97,4 +103,5 @@ export interface ScanOptions {
   ruleId?: string;
   ignore?: string[];
   includeVendor?: boolean;
+  includeExamples?: boolean;
 }

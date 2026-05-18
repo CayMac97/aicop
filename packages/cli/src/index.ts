@@ -36,6 +36,7 @@ function addScanOptions(cmd: Command): Command {
     .option('--config <path>', 'Path to config file')
     .option('--debug', 'Enable debug logging')
     .option('--include-vendor', 'Include vendor/library files in scan')
+    .option('--include-examples', 'Include examples/, demo/, fixtures/ directories in scan (excluded by default)')
     .action(async (targetPath: string, opts: CliOptions) => {
       await runScan(targetPath, opts);
     });
@@ -43,7 +44,7 @@ function addScanOptions(cmd: Command): Command {
 
 addScanOptions(
   program
-    .name('aiscop')
+    .name('aicop')
     .description('🛡️ AICop — AI code quality & security scanner')
     .version(VERSION, '-v, --version', 'Output the current version')
     .enablePositionalOptions(),
@@ -344,6 +345,7 @@ program
   .option('--watch', 'Watch for file changes and re-scan')
   .option('--debug', 'Enable debug logging')
   .option('--include-vendor', 'Include vendor/library files in scan')
+  .option('--include-examples', 'Include examples/, demo/, fixtures/ directories in scan (excluded by default)')
   .action(async (targetPath: string | undefined, opts: CliOptions) => {
     await runScan(targetPath ?? '.', opts);
   });
@@ -371,7 +373,7 @@ async function handleScanResult(result: ScanResult, opts: CliOptions, ci: boolea
       process.stdout.write(renderFixPromptHint(targetPath) + '\n');
     }
     if (hiddenInfoCount > 0 && !ci && !opts.output) {
-      process.stdout.write(chalk.blue(`\nℹ  ${hiddenInfoCount} info findings hidden  —  run with --severity info to see all\n`));
+      process.stdout.write(chalk.blue(`\nℹ  ${hiddenInfoCount} info finding${hiddenInfoCount === 1 ? '' : 's'} — run with --severity info to see per-file locations\n`));
     }
     const code = exitCode(displayResult);
     if (ci && code !== 0) {

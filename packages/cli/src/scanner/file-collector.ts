@@ -14,6 +14,17 @@ const DEFAULT_EXCLUDE = [
   '**/public/js/**',
 ];
 
+const EXAMPLES_EXCLUDE = [
+  '**/examples/**',
+  '**/example/**',
+  '**/demo/**',
+  '**/demos/**',
+  '**/sample/**',
+  '**/samples/**',
+  '**/fixtures/**',
+  '**/__fixtures__/**',
+];
+
 const MAX_FILE_BYTES = 500 * 1024;
 const MEDIUM_FILE_BYTES = 100 * 1024;
 const LARGE_NONTS_BYTES = 200 * 1024;
@@ -178,6 +189,7 @@ export interface FileCollectorOptions {
   scanPath: string;
   config: VibescanConfig;
   ignorePatterns?: string[];
+  includeExamples?: boolean;
 }
 
 function resolveScanBase(scanPath: string): { base: string; singleFile: string | null } {
@@ -194,7 +206,7 @@ function resolveScanBase(scanPath: string): { base: string; singleFile: string |
 }
 
 export async function collectFiles(options: FileCollectorOptions): Promise<string[]> {
-  const { scanPath, config, ignorePatterns = [] } = options;
+  const { scanPath, config, ignorePatterns = [], includeExamples } = options;
   try {
     const { base, singleFile } = await resolveScanBase(scanPath);
 
@@ -206,6 +218,7 @@ export async function collectFiles(options: FileCollectorOptions): Promise<strin
     const includePatterns = config.include.length > 0 ? config.include : ['**/*.{ts,tsx,js,jsx,mjs,cjs}'];
     const excludePatterns = [
       ...DEFAULT_EXCLUDE,
+      ...(includeExamples ? [] : EXAMPLES_EXCLUDE),
       ...config.exclude,
       ...ignorePatterns,
     ];

@@ -157,6 +157,7 @@ export interface CliOptions {
   config?: string;
   debug?: boolean;
   includeVendor?: boolean;
+  includeExamples?: boolean;
 }
 
 export function buildScanOptions(targetPath: string, config: VibescanConfig, opts: CliOptions, minSeverity: Severity): ScanOptions {
@@ -173,21 +174,23 @@ export function buildScanOptions(targetPath: string, config: VibescanConfig, opt
     ruleId: opts.rule?.[0],
     ignore: opts.ignore,
     includeVendor: Boolean(opts.includeVendor),
+    includeExamples: Boolean(opts.includeExamples),
   };
 }
 
 export function buildDisplayResult(result: ScanResult, displaySeverity: Severity): { displayResult: ScanResult; hiddenInfoCount: number } {
   const sevOrder: Record<Severity, number> = { error: 0, warn: 1, info: 2 };
+  // hiddenInfoCount drives the hint "run with --severity info to see per-file locations"
   const hiddenInfoCount = sevOrder[displaySeverity] < sevOrder['info'] ? result.infoCount : 0;
   if (hiddenInfoCount === 0) return { displayResult: result, hiddenInfoCount: 0 };
   const displayResult: ScanResult = {
     ...result,
+    // Filter per-file listings to the requested display severity, but keep
+    // infoCount so the summary always reflects the real number of info findings.
     files: result.files.map((f) => ({
       ...f,
       findings: f.findings.filter((x) => sevOrder[x.severity] <= sevOrder[displaySeverity]),
     })),
-    infoCount: 0,
-    totalFindings: result.totalFindings - hiddenInfoCount,
   };
   return { displayResult, hiddenInfoCount };
 }

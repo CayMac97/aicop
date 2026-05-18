@@ -88,6 +88,14 @@ function buildSummaryContent(result: ScanResult): string {
   lines.push(infoLine);
   lines.push('');
 
+  if (result.categoryScores) {
+    const cs = result.categoryScores;
+    lines.push(pad('Security Score:', `${scoreColor(cs.security)(`${cs.security}/100`)}`));
+    lines.push(pad('AI-Smell Score:', `${scoreColor(cs.aiSmell)(`${cs.aiSmell}/100`)}`));
+    lines.push(pad('Tech-Debt Score:', `${scoreColor(cs.techDebt)(`${cs.techDebt}/100`)}`));
+    lines.push('   ' + chalk.dim('─'.repeat(32)));
+  }
+
   const score = result.vibeScore;
   const label = vibeScoreLabel(score);
   const emoji = vibeScoreEmoji(score);
@@ -123,6 +131,11 @@ function buildCiSummary(result: ScanResult): string {
     `Files with issues: ${result.filesWithIssues}`,
     `Errors: ${result.errorCount}  Warnings: ${result.warnCount}  Info: ${result.infoCount}`,
     `AIScore: ${result.vibeScore}/100 (${vibeScoreLabel(result.vibeScore)})`,
+    ...(result.categoryScores ? [
+      `Security Score: ${result.categoryScores.security}/100`,
+      `AI-Smell Score: ${result.categoryScores.aiSmell}/100`,
+      `Tech-Debt Score: ${result.categoryScores.techDebt}/100`,
+    ] : []),
   ];
   if (result.topIssues.length > 0) {
     lines.push('Top issues:');

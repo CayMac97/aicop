@@ -3,9 +3,9 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
-import { HALLUCINATED_API_MAP } from './hallucinated-apis.data.js';
+import { HALLUCINATED_API_MAP, HALLUCINATED_CHAIN_MAP } from './hallucinated-apis.data.js';
 
-function checkHallucinatedCall(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+function checkSingleLevelCall(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
@@ -19,6 +19,46 @@ function checkHallucinatedCall(node: TSESTree.CallExpression, source: string, fi
     ruleId: 'ai-smell/hallucinated-api-calls',
     severity: 'error',
     message: `${objectName}.${methodName}() does not exist — this is a hallucinated API call`,
+    file: filePath,
+    line: getLine(node),
+    column: getColumn(node),
+    snippet: extractSnippet(source, getLine(node)),
+    fix: alternative,
+  };
+}
+
+function getFullChain(callee: TSESTree.Expression | TSESTree.PrivateIdentifier): { root: string; chain: string[] } | null {
+  const parts: string[] = [];
+  let current: TSESTree.Expression | TSESTree.PrivateIdentifier = callee;
+
+  while (isMemberExpression(current)) {
+    const me = current as TSESTree.MemberExpression;
+    if (!isIdentifier(me.property)) return null;
+    parts.unshift((me.property as TSESTree.Identifier).name);
+    current = me.object;
+  }
+
+  if (!isIdentifier(current)) return null;
+  return { root: (current as TSESTree.Identifier).name, chain: parts };
+}
+
+function checkChainedCall(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+  if (!isMemberExpression(node.callee)) return null;
+  const chainInfo = getFullChain(node.callee);
+  if (!chainInfo || chainInfo.chain.length < 2) return null;
+
+  const propMap = HALLUCINATED_CHAIN_MAP.get(chainInfo.root);
+  if (!propMap) return null;
+
+  const firstProp = chainInfo.chain[0];
+  const alternative = propMap.get(firstProp);
+  if (!alternative) return null;
+
+  const fullChain = `${chainInfo.root}.${chainInfo.chain.join('.')}()`;
+  return {
+    ruleId: 'ai-smell/hallucinated-api-calls',
+    severity: 'error',
+    message: `${fullChain} — hallucinated API chain (${chainInfo.root}.${firstProp} does not exist)`,
     file: filePath,
     line: getLine(node),
     column: getColumn(node),
@@ -41,7 +81,9 @@ const rule: Rule = {
 
     walk(ast, {
       CallExpression(rawNode) {
-        const finding = checkHallucinatedCall(rawNode as TSESTree.CallExpression, source, filePath);
+        const node = rawNode as TSESTree.CallExpression;
+        const finding = checkSingleLevelCall(node, source, filePath)
+          ?? checkChainedCall(node, source, filePath);
         if (finding) findings.push(finding);
       },
     });

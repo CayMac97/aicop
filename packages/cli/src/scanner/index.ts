@@ -166,35 +166,43 @@ function computeTopIssues(files: FileScanResult[]): Array<{ ruleId: string; file
     .slice(0, 5);
 }
 
-function computeVibeScore(files: FileScanResult[]): number {
-  if (files.length === 0) return 100;
-  if (files.filter((f) => !f.parseError).length === 0) return 100;
+interface VibeScoreResult {
+  vibeScore: number;
+  categoryScores: { security: number; aiSmell: number; techDebt: number };
+}
+
+function computeVibeScore(files: FileScanResult[]): VibeScoreResult {
+  const perfect = { vibeScore: 100, categoryScores: { security: 100, aiSmell: 100, techDebt: 100 } };
+  if (files.length === 0) return perfect;
+  if (files.filter((f) => !f.parseError).length === 0) return perfect;
 
   const allFindings = files.flatMap((f) => f.findings);
 
-  // Tiered security error penalty: first 3 = -8, 4-6 = -5, 7+ = -3, cap -50
+  // security/error: weight 3×, security/warn: weight 1.5×
   const secErrCount = allFindings.filter((f) => f.ruleId.startsWith('security/') && f.severity === 'error').length;
-  const secErrPenalty = Math.min(
-    Math.min(secErrCount, 3) * 8 +
-    Math.max(0, Math.min(secErrCount - 3, 3)) * 5 +
-    Math.max(0, secErrCount - 6) * 3,
-    50,
-  );
-
   const secWarnCount = allFindings.filter((f) => f.ruleId.startsWith('security/') && f.severity === 'warn').length;
-  const secWarnPenalty = Math.min(secWarnCount * 3, 15);
+  const secErrPenalty = Math.min(secErrCount * 3, 60);
+  const secWarnPenalty = Math.min(secWarnCount * 1.5, 20);
 
-  const aiErrCount = allFindings.filter((f) => f.ruleId.startsWith('ai-smell/') && f.severity === 'error').length;
-  const aiErrPenalty = Math.min(aiErrCount * 5, 10);
+  // ai-smell/*: weight 1× (info-only findings don't penalise the score)
+  const aiSmellCount = allFindings.filter((f) => f.ruleId.startsWith('ai-smell/') && f.severity !== 'info').length;
+  const aiSmellPenalty = Math.min(aiSmellCount * 1, 20);
 
-  const aiWarnCount = allFindings.filter((f) => f.ruleId.startsWith('ai-smell/') && f.severity === 'warn').length;
-  const aiWarnPenalty = Math.min(aiWarnCount, 10);
+  // tech-debt/*: weight 0.5× (info excluded)
+  const techDebtCount = allFindings.filter((f) => f.ruleId.startsWith('tech-debt/') && f.severity !== 'info').length;
+  const techDebtPenalty = Math.min(techDebtCount * 0.5, 10);
 
-  const techWarnCount = allFindings.filter((f) => f.ruleId.startsWith('tech-debt/') && f.severity === 'warn').length;
-  const techDebtPenalty = Math.min(techWarnCount * 0.5, 5);
+  const total = secErrPenalty + secWarnPenalty + aiSmellPenalty + techDebtPenalty;
+  const vibeScore = Math.max(0, Math.round(100 - total));
 
-  const total = secErrPenalty + secWarnPenalty + aiErrPenalty + aiWarnPenalty + techDebtPenalty;
-  return Math.max(0, Math.round(100 - total));
+  const secScore = Math.max(0, Math.round(100 - secErrCount * 5 - secWarnCount * 2.5));
+  const aiScore = Math.max(0, Math.round(100 - aiSmellCount * 2));   // aiSmellCount already excludes info
+  const techScore = Math.max(0, Math.round(100 - techDebtCount * 1)); // techDebtCount already excludes info
+
+  return {
+    vibeScore,
+    categoryScores: { security: secScore, aiSmell: aiScore, techDebt: techScore },
+  };
 }
 
 export async function scan(options: ScanOptions, onProgress?: (file: string) => void): Promise<ScanResult> {
@@ -205,6 +213,7 @@ export async function scan(options: ScanOptions, onProgress?: (file: string) => 
       scanPath: options.path,
       config,
       ignorePatterns: options.ignore,
+      includeExamples: options.includeExamples || config.includeExamples,
     });
 
     const enabledRules = getEnabledRules(config, ruleId);
@@ -228,12 +237,15 @@ export async function scan(options: ScanOptions, onProgress?: (file: string) => 
       }
 
       onProgress?.(getRelativePath(filePath, basePath));
-      const result = scanFile(filePath, basePath, enabledRules, config, severity, noAiScore);
+      // Always collect at 'info' so all findings are in the result;
+      // display-layer filtering happens in buildDisplayResult.
+      const result = scanFile(filePath, basePath, enabledRules, config, 'info', noAiScore);
       fileResults.push(result);
     }
 
     const allFindings = fileResults.flatMap((f) => f.findings);
     const filesWithIssues = fileResults.filter((f) => f.findings.length > 0).length;
+    const { vibeScore, categoryScores } = computeVibeScore(fileResults);
 
     return {
       files: fileResults,
@@ -241,7 +253,8 @@ export async function scan(options: ScanOptions, onProgress?: (file: string) => 
       errorCount: allFindings.filter((f) => f.severity === 'error').length,
       warnCount: allFindings.filter((f) => f.severity === 'warn').length,
       infoCount: allFindings.filter((f) => f.severity === 'info').length,
-      vibeScore: computeVibeScore(fileResults),
+      vibeScore,
+      categoryScores,
       scanDurationMs: Date.now() - startTime,
       filesScanned: fileResults.length,
       filesWithIssues,

@@ -6,11 +6,35 @@ import { getLine, getColumn } from '../../../utils/ast-helpers.js';
 
 interface FunctionBody {
   node: TSESTree.Node;
+  name: string;
   normalizedLines: string[];
   startLine: number;
 }
 
-const MIN_LINES_FOR_DUPLICATE = 5;
+const MIN_STMTS_FOR_DUPLICATE = 3;
+const TEST_FILE_RE = /\.(test|spec)\.[jt]sx?$/i;
+
+function getFunctionName(node: TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression): string {
+  if (node.type === 'FunctionDeclaration' && node.id) return node.id.name;
+  const parent = (node as unknown as { parent?: TSESTree.Node }).parent;
+  if (parent?.type === 'VariableDeclarator') {
+    const decl = parent as TSESTree.VariableDeclarator;
+    if (decl.id.type === 'Identifier') return (decl.id as TSESTree.Identifier).name;
+  }
+  if (parent?.type === 'Property') {
+    const prop = parent as TSESTree.Property;
+    if (prop.key.type === 'Identifier') return (prop.key as TSESTree.Identifier).name;
+  }
+  if (parent?.type === 'AssignmentExpression') {
+    const assign = parent as TSESTree.AssignmentExpression;
+    if (assign.left.type === 'MemberExpression') {
+      const me = assign.left as TSESTree.MemberExpression;
+      if (me.property.type === 'Identifier') return (me.property as TSESTree.Identifier).name;
+    }
+    if (assign.left.type === 'Identifier') return (assign.left as TSESTree.Identifier).name;
+  }
+  return '<anonymous>';
+}
 
 function normalizeStatement(stmt: TSESTree.Statement): string {
   const src = JSON.stringify(stmt);
@@ -34,9 +58,10 @@ function extractFunctionBodies(ast: ParsedAST): FunctionBody[] {
       const body = funcNode.body;
       if (!body || body.type !== 'BlockStatement') return;
       const stmts = (body as TSESTree.BlockStatement).body;
-      if (stmts.length < MIN_LINES_FOR_DUPLICATE) return;
+      if (stmts.length < MIN_STMTS_FOR_DUPLICATE) return;
       bodies.push({
         node: funcNode,
+        name: getFunctionName(funcNode),
         normalizedLines: stmts.map(normalizeStatement),
         startLine: getLine(funcNode),
       });
@@ -60,9 +85,11 @@ const rule: Rule = {
   fix: 'Extract the common logic into a shared function or module. Apply DRY (Don\'t Repeat Yourself) principles.',
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
+    if (TEST_FILE_RE.test(filePath)) return [];
+
     const findings: Finding[] = [];
     const bodies = extractFunctionBodies(ast);
-    const seen = new Map<string, number>();
+    const seen = new Map<string, { line: number; name: string }>();
 
     for (const body of bodies) {
       const key = normalizeFuncBody(body);
@@ -71,7 +98,7 @@ const rule: Rule = {
         findings.push({
           ruleId: 'ai-smell/copy-paste-patterns',
           severity: 'warn',
-          message: `Function body is structurally identical to function at line ${existing} — likely copy-pasted`,
+          message: `Function '${body.name}' (line ${body.startLine}) is structurally identical to '${existing.name}' (line ${existing.line}) — likely copy-pasted`,
           file: filePath,
           line: body.startLine,
           column: getColumn(body.node),
@@ -79,7 +106,7 @@ const rule: Rule = {
           fix: 'Extract the shared logic into a reusable function or utility',
         });
       } else {
-        seen.set(key, body.startLine);
+        seen.set(key, { line: body.startLine, name: body.name });
       }
     }
 
