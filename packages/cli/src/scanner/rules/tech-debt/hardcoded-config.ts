@@ -9,9 +9,26 @@ const PORT_PATTERN = /^(?:PORT|port|Port)$/;
 const URL_PATTERN = /^https?:\/\//;
 const DB_NAMES = /^(?:mongodb|postgres|mysql|sqlite|redis|localhost)\b/i;
 
+// Well-known service ports that are commonly hardcoded and expected
+const KNOWN_SERVICE_PORTS = new Set([
+  27017, // MongoDB
+  6379,  // Redis
+  5432,  // PostgreSQL
+  3306,  // MySQL/MariaDB
+  5984,  // CouchDB
+  1433,  // SQL Server
+  9200,  // Elasticsearch HTTP
+  9300,  // Elasticsearch transport
+  3000, 3001, 4000, 4200, // Common dev servers
+  5000, 8000, 8080, 8443, 9000, // Common HTTP alt ports
+]);
+
 function isPortNumber(value: unknown): boolean {
   if (typeof value !== 'number') return false;
-  return value > 0 && value < 65536 && value !== 80 && value !== 443;
+  if (value <= 0 || value >= 65536) return false;
+  if (value === 80 || value === 443) return false;
+  if (KNOWN_SERVICE_PORTS.has(value)) return false;
+  return true;
 }
 
 const KNOWN_PUBLIC_HOSTS = /\b(github\.com|gitlab\.com|npmjs\.com|cdnjs\.cloudflare\.com|unpkg\.com|cdn\.jsdelivr\.net|docs\.|api\.github\.com)\b/;
@@ -19,6 +36,8 @@ const KNOWN_PUBLIC_HOSTS = /\b(github\.com|gitlab\.com|npmjs\.com|cdnjs\.cloudfl
 function looksLikeBaseUrl(value: string): boolean {
   if (!URL_PATTERN.test(value)) return false;
   if (value.includes('localhost')) return false;
+  if (value.includes('0.0.0.0')) return false;
+  if (value.includes('127.0.0.1')) return false;
   if (value.includes('example.com')) return false;
   if (value.includes('your-')) return false;
   if (value.endsWith('.git')) return false;

@@ -107,7 +107,11 @@ function returnsPromiseOrObservable(funcNode: TSESTree.FunctionDeclaration | TSE
   return false;
 }
 
-const EVENT_LISTENER_METHODS = new Set(['on', 'once', 'pipe', 'subscribe', 'addListener', 'handle', 'use']);
+const EVENT_LISTENER_METHODS = new Set([
+  'on', 'once', 'pipe', 'subscribe', 'addListener', 'handle', 'use',
+  // Express/Fastify route methods — async handlers without await are idiomatic
+  'get', 'post', 'put', 'delete', 'patch', 'all', 'options', 'head', 'route',
+]);
 
 function isEventListenerCallback(
   funcNode: TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression,

@@ -30,6 +30,8 @@ const SECRET_NAME_PATTERNS = /(?:^(?:secret|token)$|api[_-]?key|apikey|jwt[_-]?s
 const SECRET_OBJ_KEYS = /^(?:secret|password|passwd|pwd|token|apikey|api[_-]?key|authtoken|auth[_-]?token|privatekey|private[_-]?key|accesskey|access[_-]?key|clientsecret|client[_-]?secret|jwtsecret|jwt[_-]?secret|encryptionkey|encryption[_-]?key)$/i;
 const SAFE_PLACEHOLDER_PATTERN = /(?:example|placeholder|test|fake|dummy|sample|mock|todo|changeme|your[_-\s]?)/i;
 const PLACEHOLDER_VALUES = /(?:example|placeholder|test|fake|dummy|your[_\-\s]?|<.*?>|xxx)/i;
+// Public keys that are designed to be embedded in client-side code
+const PUBLIC_KEY_PATTERN = /^(?:AIzaSy|pk_(?:test|live)_)/;
 const MIN_SECRET_VALUE_LENGTH = 8;
 
 function isProcessEnv(node: TSESTree.Node): boolean {
@@ -88,6 +90,7 @@ function checkObjectProperty(node: TSESTree.Property, source: string, filePath: 
   if (value.length < MIN_SECRET_VALUE_LENGTH + 1) return null;
   if (PLACEHOLDER_VALUES.test(value)) return null;
   if (isDocumentationString(value)) return null;
+  if (PUBLIC_KEY_PATTERN.test(value)) return null;
 
   let keyName: string | null = null;
   if (isIdentifier(node.key)) {
@@ -158,6 +161,7 @@ if (!JWT_SECRET) throw new Error('JWT_SECRET environment variable is required');
         if (typeof rawValue !== 'string') return;
         const value = rawValue;
         if (!checkVariableNamePattern(name, value)) return;
+        if (PUBLIC_KEY_PATTERN.test(value)) return;
         findings.push({
           ruleId: 'security/hardcoded-secrets',
           severity: 'error',

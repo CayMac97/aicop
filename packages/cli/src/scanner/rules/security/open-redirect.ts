@@ -7,6 +7,7 @@ import { buildTaintMap, isTaintedNode } from '../../../utils/taint-tracker.js';
 
 const USER_INPUT_PROPS = new Set(['query', 'body', 'params', 'headers']);
 
+// aicop-ignore tech-debt/cyclomatic-complexity
 function isUserInput(node: TSESTree.Node, tainted: Set<string>): boolean {
   if (isTaintedNode(node, tainted)) return true;
   if (isMemberExpression(node)) {

@@ -7,6 +7,9 @@ import { isStringLiteral, getLine, getColumn, isIdentifier, isMemberExpression }
 function checkEvalCall(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
   if (!isIdentifier(node.callee)) return null;
   if ((node.callee as TSESTree.Identifier).name !== 'eval') return null;
+  // eval('string literal') is predictable — not a code injection vector
+  const arg = node.arguments[0];
+  if (arg && isStringLiteral(arg as TSESTree.Expression)) return null;
   return {
     ruleId: 'security/eval-usage',
     severity: 'error',

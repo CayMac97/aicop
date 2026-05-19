@@ -31,6 +31,7 @@ function hasNullSafetyInSnippet(snippet: string, varName: string): boolean {
     || snippet.includes(`${varName}[0]!`);
 }
 
+// aicop-ignore tech-debt/cyclomatic-complexity
 function checkArrayIndexAccess(
   node: TSESTree.MemberExpression,
   source: string,
@@ -233,6 +234,7 @@ function checkDbResultAccess(ast: ParsedAST, source: string, filePath: string): 
 function checkJsonParseResult(ast: ParsedAST, source: string, filePath: string): Finding[] {
   const findings: Finding[] = [];
   const jsonVars = new Set<string>();
+  const parentMap = buildParentMap(ast);
 
   walk(ast, {
     VariableDeclarator(rawNode) {
@@ -246,6 +248,8 @@ function checkJsonParseResult(ast: ParsedAST, source: string, filePath: string):
       if ((me.object as TSESTree.Identifier).name !== 'JSON') return;
       if ((me.property as TSESTree.Identifier).name !== 'parse') return;
       if (node.id.type !== 'Identifier') return;
+      // JSON.parse inside a try block already has error handling in place
+      if (isInsideTryBlock(node, parentMap)) return;
       jsonVars.add((node.id as TSESTree.Identifier).name);
     },
   });

@@ -192,6 +192,28 @@ export interface FileCollectorOptions {
   includeExamples?: boolean;
 }
 
+function matchesExcludePattern(filePath: string, pattern: string): boolean {
+  const normalized = filePath.replace(/\\/g, '/');
+  const p = pattern.replace(/\\/g, '/');
+  // **/dir/** → check for /dir/ segment
+  const segMatch = p.match(/^\*\*\/([^*]+)\/\*\*$/);
+  if (segMatch) return normalized.includes(`/${segMatch[1]}/`);
+  // **/*.ext or **/*.{ext1,ext2}
+  const extMatch = p.match(/^\*\*\/\*\.(.+)$/);
+  if (extMatch) {
+    const ext = extMatch[1];
+    if (ext.startsWith('{') && ext.endsWith('}')) {
+      const exts = ext.slice(1, -1).split(',');
+      return exts.some((e) => normalized.endsWith(`.${e.trim()}`));
+    }
+    return normalized.endsWith(`.${ext}`);
+  }
+  // **/dir/ → check segment
+  const dirMatch = p.match(/^\*\*\/([^*]+)\/$/);
+  if (dirMatch) return normalized.includes(`/${dirMatch[1]}/`);
+  return false;
+}
+
 function resolveScanBase(scanPath: string): { base: string; singleFile: string | null } {
   try {
     const stats = statSync(scanPath);
@@ -212,6 +234,10 @@ export async function collectFiles(options: FileCollectorOptions): Promise<strin
 
     if (singleFile) {
       logger.debug(`Single file scan: ${singleFile}`);
+      // For explicit single-file scans only apply user-defined excludes, not built-in defaults
+      const userExcludes = [...config.exclude, ...ignorePatterns];
+      const normalizedFile = singleFile.replace(/\\/g, '/');
+      if (userExcludes.some((pat) => matchesExcludePattern(normalizedFile, pat))) return [];
       return withinSizeLimit(singleFile) ? [singleFile] : [];
     }
 

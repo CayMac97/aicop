@@ -68,7 +68,10 @@ function checkJwtSign(node: TSESTree.CallExpression, source: string, filePath: s
     };
   }
   const optionsArg = args[2];
-  if (!optionsArg || hasExpiryInOptions(optionsArg)) return null;
+  if (!optionsArg) return null;
+  // If the options arg is a variable/identifier, we can't inspect it statically
+  if (optionsArg.type === 'Identifier' || optionsArg.type === 'SpreadElement') return null;
+  if (hasExpiryInOptions(optionsArg)) return null;
   return {
     ruleId: 'security/jwt-no-expiry',
     severity: 'error',

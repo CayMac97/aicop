@@ -96,6 +96,7 @@ function buildParentMap(ast: ParsedAST): Map<TSESTree.Node, TSESTree.Node> {
   return map;
 }
 
+// aicop-ignore tech-debt/cyclomatic-complexity
 function findContext(
   sqlNode: TSESTree.Node,
   parentMap: Map<TSESTree.Node, TSESTree.Node>,

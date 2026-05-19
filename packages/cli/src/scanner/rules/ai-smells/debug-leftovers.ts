@@ -7,13 +7,49 @@ import { isTestFile } from '../../../utils/file-utils.js';
 
 const CONSOLE_METHODS = new Set(['log', 'debug', 'warn', 'error', 'info', 'trace', 'dir', 'dirxml', 'table']);
 
-function checkConsoleCall(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+function buildParentMap(ast: ParsedAST): Map<TSESTree.Node, TSESTree.Node> {
+  const map = new Map<TSESTree.Node, TSESTree.Node>();
+  walk(ast, {
+    enter(node, parent) { if (parent) map.set(node, parent); },
+  });
+  return map;
+}
+
+function isInsideErrorHandler(node: TSESTree.Node, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  let current: TSESTree.Node = node;
+  for (let i = 0; i < 20; i++) {
+    const parent = parentMap.get(current);
+    if (!parent) return false;
+    const isFunc = parent.type === 'FunctionDeclaration' || parent.type === 'FunctionExpression' || parent.type === 'ArrowFunctionExpression';
+    if (isFunc) {
+      const fn = parent as TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression;
+      const firstParam = fn.params[0];
+      if (firstParam?.type === 'Identifier') {
+        const name = (firstParam as TSESTree.Identifier).name;
+        if (name === 'err' || name === 'error') return true;
+      }
+      // Express 4-param error handler: (err, req, res, next)
+      if (fn.params.length === 4) return true;
+      return false;
+    }
+    current = parent;
+  }
+  return false;
+}
+
+function checkConsoleCall(
+  node: TSESTree.CallExpression,
+  source: string,
+  filePath: string,
+  parentMap: Map<TSESTree.Node, TSESTree.Node>,
+): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
   if ((me.object as TSESTree.Identifier).name !== 'console') return null;
   const method = (me.property as TSESTree.Identifier).name;
   if (!CONSOLE_METHODS.has(method)) return null;
+  if (isInsideErrorHandler(node, parentMap)) return null;
   return {
     ruleId: 'ai-smell/debug-leftovers',
     severity: 'info',
@@ -97,10 +133,12 @@ const rule: Rule = {
     if (isTestFile(filePath)) return [];
     const findings: Finding[] = [];
 
+    const parentMap = buildParentMap(ast);
+
     walk(ast, {
       CallExpression(rawNode) {
         const node = rawNode as TSESTree.CallExpression;
-        const consoleF = checkConsoleCall(node, source, filePath);
+        const consoleF = checkConsoleCall(node, source, filePath, parentMap);
         if (consoleF) { findings.push(consoleF); return; }
         const exitF = checkProcessExit(node, source, filePath);
         if (exitF) findings.push(exitF);

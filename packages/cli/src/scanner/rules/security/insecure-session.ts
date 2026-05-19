@@ -35,7 +35,7 @@ function checkSessionOptions(node: TSESTree.CallExpression, source: string, file
     if (val.length < 20) {
       findings.push({
         ruleId: 'security/insecure-session',
-        severity: 'error',
+        severity: 'warn',
         message: 'weak session secret — use a long random string from process.env',
         file: filePath,
         line: getLine(secretProp),
@@ -56,7 +56,7 @@ function checkSessionOptions(node: TSESTree.CallExpression, source: string, file
       if (val === false) {
         findings.push({
           ruleId: 'security/insecure-session',
-          severity: 'error',
+          severity: 'warn',
           message: 'session cookie httpOnly:false — accessible via JavaScript',
           file: filePath,
           line: getLine(httpOnlyProp),
@@ -89,7 +89,7 @@ function checkSessionOptions(node: TSESTree.CallExpression, source: string, file
   if (!resaveProp) {
     findings.push({
       ruleId: 'security/insecure-session',
-      severity: 'info',
+      severity: 'warn',
       message: 'session missing resave option — set resave:false to prevent unnecessary session saves',
       file: filePath,
       line: getLine(node),

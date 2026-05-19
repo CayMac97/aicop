@@ -4,7 +4,7 @@ import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isStringLiteral, isIdentifier } from '../../../utils/ast-helpers.js';
 
-const TODO_PATTERN = /\/\/\s*(?:TODO|FIXME|HACK|XXX|PLACEHOLDER|STUB)\b/i;
+const TODO_PATTERN = /\/\/\s*(?:TODO|FIXME|HACK|XXX|STUB)\b/i;
 const NOT_IMPLEMENTED_PATTERN = /not\s+implemented/i;
 const STUB_RETURN_NAMES = /^(?:get|fetch|load|retrieve|find|list|create|update|delete|process|handle|validate)/i;
 
@@ -89,20 +89,34 @@ const rule: Rule = {
     const findings: Finding[] = [];
     const funcTypes = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression']);
 
+    // Collect function body line ranges so we only flag TODOs inside functions
+    const funcBodyRanges: Array<[number, number]> = [];
+    walk(ast, {
+      enter(rawNode) {
+        if (!funcTypes.has(rawNode.type)) return;
+        const fn = rawNode as TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression;
+        if (fn.body?.type === 'BlockStatement' && fn.body.loc) {
+          funcBodyRanges.push([fn.body.loc.start.line, fn.body.loc.end.line]);
+        }
+      },
+    });
+
     const lines = source.split('\n');
     lines.forEach((line, idx) => {
-      if (TODO_PATTERN.test(line)) {
-        findings.push({
-          ruleId: 'ai-smell/todo-stub-functions',
-          severity: 'warn',
-          message: 'TODO/FIXME/STUB comment found in production code',
-          file: filePath,
-          line: idx + 1,
-          column: 0,
-          snippet: line.trim(),
-          fix: 'Resolve the TODO or track it in your issue tracker, then remove the comment',
-        });
-      }
+      if (!TODO_PATTERN.test(line)) return;
+      const lineNum = idx + 1;
+      const insideFunction = funcBodyRanges.some(([start, end]) => lineNum > start && lineNum < end);
+      if (!insideFunction) return;
+      findings.push({
+        ruleId: 'ai-smell/todo-stub-functions',
+        severity: 'warn',
+        message: 'TODO/FIXME/STUB comment found in production code',
+        file: filePath,
+        line: lineNum,
+        column: 0,
+        snippet: line.trim(),
+        fix: 'Resolve the TODO or track it in your issue tracker, then remove the comment',
+      });
     });
 
     walk(ast, {

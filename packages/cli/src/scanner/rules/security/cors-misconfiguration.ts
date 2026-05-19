@@ -31,6 +31,12 @@ function getObjectPropValue(obj: TSESTree.ObjectExpression, propName: string): T
   return null;
 }
 
+function callbackReflectsOrigin(call: TSESTree.CallExpression, cbName: string, originName: string): boolean {
+  if (!isIdentifier(call.callee) || (call.callee as TSESTree.Identifier).name !== cbName) return false;
+  const args = call.arguments;
+  return args.length >= 2 && !!args[1] && isIdentifier(args[1]) && (args[1] as TSESTree.Identifier).name === originName;
+}
+
 function isOriginReflectCallback(node: TSESTree.Expression): boolean {
   if (node.type !== 'ArrowFunctionExpression' && node.type !== 'FunctionExpression') return false;
   const fn = node as TSESTree.ArrowFunctionExpression | TSESTree.FunctionExpression;
@@ -43,26 +49,13 @@ function isOriginReflectCallback(node: TSESTree.Expression): boolean {
   const body = fn.body;
   if (body.type === 'BlockStatement') {
     const stmts = (body as TSESTree.BlockStatement).body;
-    if (stmts.length === 1 && stmts[0].type === 'ExpressionStatement') {
-      const expr = (stmts[0] as TSESTree.ExpressionStatement).expression;
-      if (expr.type === 'CallExpression') {
-        const call = expr as TSESTree.CallExpression;
-        if (isIdentifier(call.callee) && (call.callee as TSESTree.Identifier).name === cbName) {
-          const args = call.arguments;
-          if (args.length >= 2 && args[1] && isIdentifier(args[1]) && (args[1] as TSESTree.Identifier).name === originName) {
-            return true;
-          }
-        }
-      }
-    }
-  } else if (body.type === 'CallExpression') {
-    const call = body as TSESTree.CallExpression;
-    if (isIdentifier(call.callee) && (call.callee as TSESTree.Identifier).name === cbName) {
-      const args = call.arguments;
-      if (args.length >= 2 && args[1] && isIdentifier(args[1]) && (args[1] as TSESTree.Identifier).name === originName) {
-        return true;
-      }
-    }
+    if (stmts.length !== 1 || stmts[0].type !== 'ExpressionStatement') return false;
+    const expr = (stmts[0] as TSESTree.ExpressionStatement).expression;
+    if (expr.type !== 'CallExpression') return false;
+    return callbackReflectsOrigin(expr as TSESTree.CallExpression, cbName, originName);
+  }
+  if (body.type === 'CallExpression') {
+    return callbackReflectsOrigin(body as TSESTree.CallExpression, cbName, originName);
   }
   return false;
 }

@@ -7,6 +7,7 @@ import { getLine, getColumn, isIdentifier, isStringLiteral, isMemberExpression }
 const CSRF_PACKAGES = new Set(['csurf', 'csrf-csrf', 'lusca']);
 const SESSION_PACKAGES = new Set(['express-session', 'cookie-session']);
 const EXPRESS_PACKAGES = new Set(['express', 'express-router']);
+const JWT_PACKAGES = new Set(['express-jwt', 'passport-jwt', 'jsonwebtoken', 'jose', 'koa-jwt', 'fastify-jwt', '@auth/express']);
 const HTTP_CLIENT_OBJECTS = new Set(['axios', 'got', 'request', 'supertest', 'http', 'https', 'fetch']);
 const CSRF_IDENTIFIER_RE = /^(?:csrf|csrfProtection|csrfMiddleware|csrfToken|doubleCsrf|csurfProtection|lusca)/i;
 
@@ -77,6 +78,7 @@ const rule: Rule = {
 
     let hasExpressImport = false;
     let hasSession = false;
+    let hasJwt = false;
     let hasGlobalCsrf = false;
     const unprotectedPostRoutes: TSESTree.CallExpression[] = [];
 
@@ -88,6 +90,7 @@ const rule: Rule = {
           if (CSRF_PACKAGES.has(pkg)) return; // import alone doesn't protect; we track usage
           if (SESSION_PACKAGES.has(pkg)) hasSession = true;
           if (EXPRESS_PACKAGES.has(pkg)) hasExpressImport = true;
+          if (JWT_PACKAGES.has(pkg)) hasJwt = true;
           return;
         }
         if (isGlobalUseWithCsrf(node)) { hasGlobalCsrf = true; return; }
@@ -100,12 +103,15 @@ const rule: Rule = {
         const src = String(decl.source.value);
         if (SESSION_PACKAGES.has(src)) hasSession = true;
         if (EXPRESS_PACKAGES.has(src)) hasExpressImport = true;
+        if (JWT_PACKAGES.has(src)) hasJwt = true;
         // CSRF package import alone doesn't guarantee protection — track usage above
       },
     });
 
     if (hasGlobalCsrf) return findings;
     if (!hasExpressImport && !hasSession) return findings;
+    // JWT/stateless APIs don't use cookies so CSRF doesn't apply
+    if (hasJwt && !hasSession) return findings;
     if (unprotectedPostRoutes.length === 0) return findings;
 
     // Report the first unprotected POST route

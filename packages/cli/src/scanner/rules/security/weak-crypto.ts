@@ -38,7 +38,9 @@ function checkCreateHash(node: TSESTree.CallExpression, source: string, filePath
     line: getLine(node),
     column: getColumn(node),
     snippet: extractSnippet(source, getLine(node)),
-    fix: passwordContext ? 'Use bcrypt or argon2 for passwords' : 'Use stronger crypto primitives',
+    fix: passwordContext
+      ? 'Use bcrypt or argon2 for passwords'
+      : `For checksums/ETags, ${alg} is acceptable. For security contexts, upgrade to SHA-256: crypto.createHash("sha256")`,
     fixCode: passwordContext ? BCRYPT_FIX_SNIPPET : HASH_FIX_CODE,
   };
 }
