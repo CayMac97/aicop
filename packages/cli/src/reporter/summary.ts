@@ -86,6 +86,9 @@ function buildSummaryContent(result: ScanResult): string {
   lines.push(errLine);
   lines.push(warnLine);
   lines.push(infoLine);
+  if (result.parseErrors > 0) {
+    lines.push(`   ⚠  Parse errors: ${result.parseErrors} ${result.parseErrors === 1 ? 'file' : 'files'} could not be parsed (excluded from score)`);
+  }
   lines.push('');
 
   if (result.categoryScores) {
@@ -129,7 +132,7 @@ function buildCiSummary(result: ScanResult): string {
     '=== SCAN COMPLETE ===',
     `Files scanned: ${result.filesScanned}  Time: ${formatDuration(result.scanDurationMs)}`,
     `Files with issues: ${result.filesWithIssues}`,
-    `Errors: ${result.errorCount}  Warnings: ${result.warnCount}  Info: ${result.infoCount}`,
+    `Errors: ${result.errorCount}  Warnings: ${result.warnCount}  Info: ${result.infoCount}${result.parseErrors > 0 ? `  Parse errors: ${result.parseErrors}` : ''}`,
     `AIScore: ${result.vibeScore}/100 (${vibeScoreLabel(result.vibeScore)})`,
     ...(result.categoryScores ? [
       `Security Score: ${result.categoryScores.security}/100`,
@@ -140,7 +143,7 @@ function buildCiSummary(result: ScanResult): string {
   if (result.topIssues.length > 0) {
     lines.push('Top issues:');
     result.topIssues.forEach((issue, i) => {
-      lines.push(`  ${i + 1}. ${issue.ruleId} (${issue.fileCount} files)`);
+      lines.push(`  ${i + 1}. ${issue.ruleId} (${issue.fileCount} ${issue.fileCount === 1 ? 'file' : 'files'})`);
     });
   }
   if (result.skippedVendorFiles > 0) {

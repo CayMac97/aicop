@@ -4,6 +4,8 @@ import { dirname, join } from 'node:path';
 import { scan, loadConfig, DEFAULT_CONFIG } from '../src/lib.js';
 import type { ScanOptions } from '../src/lib.js';
 import { isVendorFile } from '../src/scanner/file-collector.js';
+import { parse } from '@typescript-eslint/typescript-estree';
+import functionLengthRule from '../src/scanner/rules/tech-debt/function-length.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(__dirname, 'fixtures');
@@ -260,5 +262,37 @@ describe('DEFAULT_CONFIG', () => {
 
   it('excludes node_modules', () => {
     expect(DEFAULT_CONFIG.exclude.some((p) => p.includes('node_modules'))).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite 5 — function-length thresholds (60 warn / 100 error)
+// ─────────────────────────────────────────────────────────────────────────────
+function makeFunction(lines: number): string {
+  const body = Array.from({ length: lines - 2 }, (_, i) => `  const _v${i} = ${i};`).join('\n');
+  return `function longFn() {\n${body}\n}`;
+}
+
+function scanFunctionLength(source: string) {
+  const ast = parse(source, { loc: true, range: true, jsx: false });
+  return functionLengthRule.check(ast, source, 'test.ts');
+}
+
+describe('function-length rule thresholds', () => {
+  it('does not flag a 55-line function', () => {
+    const findings = scanFunctionLength(makeFunction(55));
+    expect(findings).toHaveLength(0);
+  });
+
+  it('flags a 65-line function as warn', () => {
+    const findings = scanFunctionLength(makeFunction(65));
+    expect(findings).toHaveLength(1);
+    expect(findings[0].severity).toBe('warn');
+  });
+
+  it('flags a 105-line function as error', () => {
+    const findings = scanFunctionLength(makeFunction(105));
+    expect(findings).toHaveLength(1);
+    expect(findings[0].severity).toBe('error');
   });
 });

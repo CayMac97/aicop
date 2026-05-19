@@ -207,7 +207,7 @@ function computeVibeScore(files: FileScanResult[]): VibeScoreResult {
 
 export async function scan(options: ScanOptions, onProgress?: (file: string) => void): Promise<ScanResult> {
   const startTime = Date.now();
-  const { config, severity, noAiScore, ruleId, includeVendor } = options;
+  const { config, noAiScore, ruleId, includeVendor } = options;
   try {
     const files = await collectFiles({
       scanPath: options.path,
@@ -245,6 +245,7 @@ export async function scan(options: ScanOptions, onProgress?: (file: string) => 
 
     const allFindings = fileResults.flatMap((f) => f.findings);
     const filesWithIssues = fileResults.filter((f) => f.findings.length > 0).length;
+    const parseErrors = fileResults.filter((f) => f.parseError != null).length;
     const { vibeScore, categoryScores } = computeVibeScore(fileResults);
 
     return {
@@ -260,6 +261,7 @@ export async function scan(options: ScanOptions, onProgress?: (file: string) => 
       filesWithIssues,
       topIssues: computeTopIssues(fileResults),
       skippedVendorFiles,
+      parseErrors,
     };
   } catch (err) {
     throw new Error(`Scan failed: ${String(err)}`);

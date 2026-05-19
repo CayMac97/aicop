@@ -36,8 +36,10 @@ function getFunctionName(node: TSESTree.FunctionDeclaration | TSESTree.FunctionE
   return '<anonymous>';
 }
 
+const SKIP_KEYS = new Set(['loc', 'range', 'start', 'end', 'parent']);
+
 function normalizeStatement(stmt: TSESTree.Statement): string {
-  const src = JSON.stringify(stmt);
+  const src = JSON.stringify(stmt, (key, val) => (SKIP_KEYS.has(key) ? undefined : val));
   return src
     .replace(/"name":"[^"]+"/g, '"name":"$ID"')
     .replace(/"value":"[^"]+"/g, '"value":"$LIT"')

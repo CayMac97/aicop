@@ -3,6 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral } from '../../../utils/ast-helpers.js';
+import { buildTaintMap, isTaintedNode } from '../../../utils/taint-tracker.js';
 
 const EXEC_FUNCTIONS = new Set(['exec', 'execSync', 'spawn', 'spawnSync', 'execFile', 'execFileSync']);
 const USER_INPUT_PROPS = new Set(['body', 'query', 'params', 'headers']);
@@ -22,29 +23,30 @@ function isDirectPropUserInput(node: TSESTree.MemberExpression): boolean {
     && USER_INPUT_PROPS.has((node.property as TSESTree.Identifier).name);
 }
 
-function isUserInput(node: TSESTree.Node): boolean {
+function isUserInput(node: TSESTree.Node, tainted: Set<string> = new Set()): boolean {
+  if (isTaintedNode(node, tainted)) return true;
   if (isMemberExpression(node)) {
     const me = node as TSESTree.MemberExpression;
     if (isReqPropUserInput(me)) return true;
     if (isDirectPropUserInput(me)) return true;
   }
   if (node.type === 'TemplateLiteral') {
-    return (node as TSESTree.TemplateLiteral).expressions.some((e) => isUserInput(e));
+    return (node as TSESTree.TemplateLiteral).expressions.some((e) => isUserInput(e, tainted));
   }
   if (node.type === 'BinaryExpression') {
     const be = node as TSESTree.BinaryExpression;
     if (be.operator !== '+') return false;
-    return isUserInput(be.left) || isUserInput(be.right);
+    return isUserInput(be.left, tainted) || isUserInput(be.right, tainted);
   }
   return false;
 }
 
-function argContainsUserInput(arg: TSESTree.Node): boolean {
+function argContainsUserInput(arg: TSESTree.Node, tainted: Set<string>): boolean {
   if (isStringLiteral(arg)) return false;
-  return isUserInput(arg);
+  return isUserInput(arg, tainted);
 }
 
-function checkExecCall(node: TSESTree.CallExpression, source: string, filePath: string, childProcessUsed: boolean): Finding | null {
+function checkExecCall(node: TSESTree.CallExpression, source: string, filePath: string, childProcessUsed: boolean, tainted: Set<string>): Finding | null {
   if (!childProcessUsed) return null;
 
   let funcName: string | null = null;
@@ -63,7 +65,7 @@ function checkExecCall(node: TSESTree.CallExpression, source: string, filePath: 
 
   const firstArg = node.arguments[0];
   if (!firstArg) return null;
-  if (!argContainsUserInput(firstArg)) return null;
+  if (!argContainsUserInput(firstArg, tainted)) return null;
 
   return {
     ruleId: 'security/command-injection',
@@ -95,9 +97,11 @@ const rule: Rule = {
     const childProcessUsed = sourceUsesChildProcess(source);
     if (!childProcessUsed) return findings;
 
+    const tainted = buildTaintMap(ast);
+
     walk(ast, {
       CallExpression(rawNode) {
-        const f = checkExecCall(rawNode as TSESTree.CallExpression, source, filePath, childProcessUsed);
+        const f = checkExecCall(rawNode as TSESTree.CallExpression, source, filePath, childProcessUsed, tainted);
         if (f) findings.push(f);
       },
     });

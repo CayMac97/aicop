@@ -37,6 +37,16 @@ function isReqInput(node: TSESTree.Node): boolean {
   return isReqSource(me.object);
 }
 
+function isSequelizeCall(node: TSESTree.CallExpression): boolean {
+  const firstArg = node.arguments[0];
+  if (!firstArg || firstArg.type !== 'ObjectExpression') return false;
+  return (firstArg as TSESTree.ObjectExpression).properties.some((p) => {
+    if (p.type !== 'Property') return false;
+    const prop = p as TSESTree.Property;
+    return isIdentifier(prop.key) && (prop.key as TSESTree.Identifier).name === 'where';
+  });
+}
+
 function containsRawReqInput(node: TSESTree.Node): boolean {
   if (isReqInput(node)) return true;
   if (node.type === 'CallExpression') return false;
@@ -74,6 +84,7 @@ const rule: Rule = {
         if (!isIdentifier(method.property)) return;
         const methodName = (method.property as TSESTree.Identifier).name;
         if (!MONGO_QUERY_METHODS.has(methodName)) return;
+        if (isSequelizeCall(node)) return;
 
         for (const arg of node.arguments) {
           if (containsRawReqInput(arg as TSESTree.Node)) {

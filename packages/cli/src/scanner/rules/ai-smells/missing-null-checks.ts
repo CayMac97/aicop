@@ -286,6 +286,69 @@ function checkJsonParseResult(ast: ParsedAST, source: string, filePath: string):
   return findings;
 }
 
+function isJsonParseCall(node: TSESTree.CallExpression): boolean {
+  if (!isMemberExpression(node.callee)) return false;
+  const me = node.callee as TSESTree.MemberExpression;
+  return isIdentifier(me.object) &&
+    (me.object as TSESTree.Identifier).name === 'JSON' &&
+    isIdentifier(me.property) &&
+    (me.property as TSESTree.Identifier).name === 'parse';
+}
+
+function isInsideTryBlock(node: TSESTree.Node, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  let current: TSESTree.Node = node;
+  for (let depth = 0; depth < 50; depth++) {
+    const parent = parentMap.get(current);
+    if (!parent) return false;
+    if (parent.type === 'TryStatement') {
+      const tryStat = parent as TSESTree.TryStatement;
+      // Make sure we're in the try block, not the catch/finally
+      if (tryStat.block === current) return true;
+    }
+    current = parent;
+  }
+  return false;
+}
+
+function buildParentMap(ast: ParsedAST): Map<TSESTree.Node, TSESTree.Node> {
+  const map = new Map<TSESTree.Node, TSESTree.Node>();
+  walk(ast, {
+    enter(node, parent) {
+      if (parent) map.set(node, parent);
+    },
+  });
+  return map;
+}
+
+function checkJsonParseWithoutTryCatch(ast: ParsedAST, source: string, filePath: string): Finding[] {
+  const findings: Finding[] = [];
+  const parentMap = buildParentMap(ast);
+
+  walk(ast, {
+    CallExpression(rawNode) {
+      const node = rawNode as TSESTree.CallExpression;
+      if (!isJsonParseCall(node)) return;
+      const arg = node.arguments[0];
+      if (!arg) return;
+      // String literals can't throw SyntaxError (they're always valid JSON if syntactically valid)
+      if (arg.type === 'Literal' && typeof (arg as TSESTree.Literal).value === 'string') return;
+      if (isInsideTryBlock(node, parentMap)) return;
+      findings.push({
+        ruleId: 'ai-smell/missing-null-checks',
+        severity: 'warn',
+        message: 'JSON.parse() without try/catch — throws SyntaxError on invalid input',
+        file: filePath,
+        line: getLine(node),
+        column: getColumn(node),
+        snippet: extractSnippet(source, getLine(node)),
+        fix: 'Wrap in try/catch: try { const data = JSON.parse(str); } catch (e) { /* handle invalid JSON */ }',
+      });
+    },
+  });
+
+  return findings;
+}
+
 const rule: Rule = {
   id: 'ai-smell/missing-null-checks',
   name: 'Missing Null Checks',
@@ -322,6 +385,7 @@ const rule: Rule = {
 
     findings.push(...checkDbResultAccess(ast, source, filePath));
     findings.push(...checkJsonParseResult(ast, source, filePath));
+    findings.push(...checkJsonParseWithoutTryCatch(ast, source, filePath));
 
     return findings;
   },

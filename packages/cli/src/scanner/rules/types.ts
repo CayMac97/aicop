@@ -63,6 +63,7 @@ export interface ScanResult {
   filesWithIssues: number;
   topIssues: Array<{ ruleId: string; fileCount: number }>;
   skippedVendorFiles: number;
+  parseErrors: number;
 }
 
 /** Threshold configuration */

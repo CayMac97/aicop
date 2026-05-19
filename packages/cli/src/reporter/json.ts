@@ -1,8 +1,8 @@
 import { ScanResult, FileScanResult, Finding } from '../scanner/rules/types.js';
 
-export function formatJson(result: ScanResult): string {
+export function formatJson(result: ScanResult, version: string): string {
   const output = {
-    version: '1.0.0',
+    version,
     scannedAt: new Date().toISOString(),
     summary: {
       filesScanned: result.filesScanned,
@@ -11,6 +11,7 @@ export function formatJson(result: ScanResult): string {
       errors: result.errorCount,
       warnings: result.warnCount,
       info: result.infoCount,
+      parseErrors: result.parseErrors,
       vibeScore: result.vibeScore,
       scanDurationMs: result.scanDurationMs,
     },

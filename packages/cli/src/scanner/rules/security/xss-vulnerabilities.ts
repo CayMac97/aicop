@@ -6,6 +6,49 @@ import { isStringLiteral, getLine, getColumn, isMemberExpression, isIdentifier, 
 
 const USER_INPUT_PROPS = new Set(['body', 'query', 'params', 'headers']);
 
+const SANITIZER_NAMES = new Set([
+  'sanitize', 'sanitizeHtml', 'xss', 'escape', 'encode', 'escapeHtml',
+]);
+const SANITIZER_OBJECTS = new Set(['DOMPurify', 'he', 'entities', 'validator']);
+
+function getSanitizerCallName(node: TSESTree.CallExpression): string | null {
+  if (!isMemberExpression(node.callee)) {
+    if (isIdentifier(node.callee)) return (node.callee as TSESTree.Identifier).name;
+    return null;
+  }
+  const me = node.callee as TSESTree.MemberExpression;
+  if (!isIdentifier(me.property)) return null;
+  const method = (me.property as TSESTree.Identifier).name;
+  if (isIdentifier(me.object)) {
+    const obj = (me.object as TSESTree.Identifier).name;
+    if (SANITIZER_OBJECTS.has(obj) && SANITIZER_NAMES.has(method)) return `${obj}.${method}`;
+  }
+  return SANITIZER_NAMES.has(method) ? method : null;
+}
+
+function buildSanitizedVarsMap(ast: ParsedAST): Set<string> {
+  const sanitized = new Set<string>();
+  walk(ast, {
+    VariableDeclarator(rawNode) {
+      const node = rawNode as TSESTree.VariableDeclarator;
+      if (!node.init || node.init.type !== 'CallExpression') return;
+      if (node.id.type !== 'Identifier') return;
+      const callName = getSanitizerCallName(node.init as TSESTree.CallExpression);
+      if (callName) sanitized.add((node.id as TSESTree.Identifier).name);
+    },
+  });
+  return sanitized;
+}
+
+function isSanitizedNode(node: TSESTree.Node, sanitizedVars: Set<string>): boolean {
+  if (node.type === 'Identifier') return sanitizedVars.has((node as TSESTree.Identifier).name);
+  if (node.type === 'CallExpression') {
+    const name = getSanitizerCallName(node as TSESTree.CallExpression);
+    return name !== null;
+  }
+  return false;
+}
+
 function isUserInput(node: TSESTree.Node): boolean {
   if (isMemberExpression(node)) {
     const me = node as TSESTree.MemberExpression;
@@ -55,9 +98,10 @@ function isInnerHTMLAssign(node: TSESTree.AssignmentExpression): boolean {
   return prop === 'innerHTML' || prop === 'outerHTML';
 }
 
-function checkInnerHTML(node: TSESTree.AssignmentExpression, source: string, filePath: string): Finding | null {
+function checkInnerHTML(node: TSESTree.AssignmentExpression, source: string, filePath: string, sanitizedVars: Set<string>): Finding | null {
   if (!isInnerHTMLAssign(node)) return null;
   if (isStaticString(node.right)) return null;
+  if (isSanitizedNode(node.right, sanitizedVars)) return null;
   return {
     ruleId: 'security/xss-vulnerabilities',
     severity: 'error',
@@ -172,37 +216,6 @@ function checkResSend(node: TSESTree.CallExpression, source: string, filePath: s
   };
 }
 
-function checkResRender(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
-  if (!isMemberExpression(node.callee)) return null;
-  const me = node.callee as TSESTree.MemberExpression;
-  if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
-  if ((me.object as TSESTree.Identifier).name !== 'res') return null;
-  if ((me.property as TSESTree.Identifier).name !== 'render') return null;
-
-  const localsArg = node.arguments[1];
-  if (!localsArg || localsArg.type !== 'ObjectExpression') return null;
-
-  const obj = localsArg as TSESTree.ObjectExpression;
-  const hasDirectUserInput = obj.properties.some((prop) => {
-    if (prop.type !== 'Property') return false;
-    const p = prop as TSESTree.Property;
-    return isUserInput(p.value as TSESTree.Node);
-  });
-
-  if (!hasDirectUserInput) return null;
-
-  return {
-    ruleId: 'security/xss-vulnerabilities',
-    severity: 'warn',
-    message: 'user input passed directly to template — verify escaping',
-    file: filePath,
-    line: getLine(node),
-    column: getColumn(node),
-    snippet: extractSnippet(source, getLine(node)),
-    fix: 'Ensure template engine escapes output. Use <%= %> not <%- %> in EJS for user-provided values.',
-  };
-}
-
 const rule: Rule = {
   id: 'security/xss-vulnerabilities',
   name: 'XSS Vulnerabilities',
@@ -217,10 +230,11 @@ const rule: Rule = {
     let hasHtmlContentType = false;
     const dynamicSendNodes: TSESTree.CallExpression[] = [];
     const flaggedLines = new Set<number>();
+    const sanitizedVars = buildSanitizedVarsMap(ast);
 
     walk(ast, {
       AssignmentExpression(rawNode) {
-        const finding = checkInnerHTML(rawNode as TSESTree.AssignmentExpression, source, filePath);
+        const finding = checkInnerHTML(rawNode as TSESTree.AssignmentExpression, source, filePath, sanitizedVars);
         if (finding) findings.push(finding);
       },
       CallExpression(rawNode) {
@@ -245,8 +259,7 @@ const rule: Rule = {
           dynamicSendNodes.push(node);
         }
 
-        const resRender = checkResRender(node, source, filePath);
-        if (resRender) findings.push(resRender);
+        // res.render() uses template engines that auto-escape by default — not flagged
       },
       JSXAttribute(rawNode) {
         if (!isCallExpression) return;

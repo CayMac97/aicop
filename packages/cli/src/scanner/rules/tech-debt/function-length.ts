@@ -4,8 +4,8 @@ import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn } from '../../../utils/ast-helpers.js';
 
-const WARN_LINE_LIMIT = 120;
-const ERROR_LINE_LIMIT = 200;
+const WARN_LINE_LIMIT = 60;
+const ERROR_LINE_LIMIT = 100;
 
 function countFunctionLines(funcNode: TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression): number {
   const body = funcNode.body;
@@ -51,7 +51,7 @@ const rule: Rule = {
         findings.push({
           ruleId: 'tech-debt/function-length',
           severity,
-          message: `Function "${funcName}" is ${lines} lines (limit: ${ERROR_LINE_LIMIT} error, ${WARN_LINE_LIMIT} warn)`,
+          message: `Function "${funcName}" is ${lines} lines (warn >${WARN_LINE_LIMIT}, error >${ERROR_LINE_LIMIT})`,
           file: filePath,
           line: getLine(funcNode),
           column: getColumn(funcNode),

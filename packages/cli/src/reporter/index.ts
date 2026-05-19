@@ -19,7 +19,7 @@ export async function report(result: ScanResult, options: ReporterOptions): Prom
   const { format, ci, outputPath, version } = options;
   try {
     if (format === 'json') {
-      const json = formatJson(result);
+      const json = formatJson(result, version);
       if (outputPath) {
         await writeFile(outputPath, json);
         logger.info(`JSON report written to ${outputPath}`);

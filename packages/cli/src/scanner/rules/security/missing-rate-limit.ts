@@ -15,10 +15,6 @@ function isAuthRoute(pathValue: string): boolean {
   return AUTH_ROUTE_PATTERNS.some((p) => p.test(pathValue));
 }
 
-function sourceHasRateLimiting(source: string): boolean {
-  return RATE_LIMIT_IDENTIFIERS.test(source);
-}
-
 function isRouteDefinition(node: TSESTree.CallExpression): string | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
@@ -73,7 +69,6 @@ app.post('/forgot-password', authLimiter, async (req, res) => { ... });`,
     const findings: Finding[] = [];
 
     if (/[/\\](?:test|tests|spec|__tests__)[/\\]|\.(?:test|spec|cy)\.[jt]sx?$/i.test(filePath)) return findings;
-    if (sourceHasRateLimiting(source)) return findings;
 
     const seenEndpoints = new Set<string>();
 

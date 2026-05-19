@@ -3,6 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { isStringLiteral, getLine, getColumn, isMemberExpression, isIdentifier } from '../../../utils/ast-helpers.js';
+import { buildTaintMap } from '../../../utils/taint-tracker.js';
 
 const SQL_VERB_PATTERN = /\b(SELECT|INSERT\s+INTO|UPDATE\s+\w|DELETE\s+FROM|DROP\s+TABLE|CREATE\s+TABLE|ALTER\s+TABLE|EXEC(?:UTE)?)\b/i;
 const HTML_TAG_PATTERN = /<(?:select|table|input|form|option|textarea)\b/i;
@@ -37,11 +38,12 @@ function templateHasUserInput(node: TSESTree.TemplateLiteral): boolean {
   });
 }
 
-function concatHasUserInput(node: TSESTree.BinaryExpression): boolean {
+function concatHasUserInput(node: TSESTree.BinaryExpression, tainted: Set<string>): boolean {
   if (node.operator !== '+') return false;
   if (!isExpressionNode(node.left) || !isExpressionNode(node.right)) return false;
-  return isUserInputExpression(node.right) || isUserInputExpression(node.left) ||
-    (isIdentifier(node.right) || isIdentifier(node.left));
+  const isDynamic = (n: TSESTree.Expression): boolean =>
+    isUserInputExpression(n) || (isIdentifier(n) && tainted.has((n as TSESTree.Identifier).name));
+  return isDynamic(node.left) || isDynamic(node.right);
 }
 
 function looksLikeSQL(text: string): boolean {
@@ -160,6 +162,7 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
     const findings: Finding[] = [];
     const parentMap = buildParentMap(ast);
     const dbCallVars = collectDbCallVars(ast);
+    const tainted = buildTaintMap(ast);
 
     function tryFlag(node: TSESTree.Node, message: string, fixMsg: string): void {
       const line = getLine(node);
@@ -193,7 +196,7 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
         const node = rawNode as TSESTree.BinaryExpression;
         if (node.operator !== '+') return;
         const leftStr = isStringLiteral(node.left) ? String((node.left as TSESTree.StringLiteral).value) : '';
-        if (!looksLikeSQL(leftStr) || !concatHasUserInput(node)) return;
+        if (!looksLikeSQL(leftStr) || !concatHasUserInput(node, tainted)) return;
         tryFlag(node, 'SQL string concat with user input — injection risk',
           'Use parameterized queries or a query builder like Prisma, Knex, or TypeORM');
       },

@@ -3,10 +3,12 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral } from '../../../utils/ast-helpers.js';
+import { buildTaintMap, isTaintedNode } from '../../../utils/taint-tracker.js';
 
 const USER_INPUT_PROPS = new Set(['query', 'body', 'params', 'headers']);
 
-function isUserInput(node: TSESTree.Node): boolean {
+function isUserInput(node: TSESTree.Node, tainted: Set<string>): boolean {
+  if (isTaintedNode(node, tainted)) return true;
   if (isMemberExpression(node)) {
     const me = node as TSESTree.MemberExpression;
     if (isMemberExpression(me.object)) {
@@ -19,12 +21,12 @@ function isUserInput(node: TSESTree.Node): boolean {
     }
   }
   if (node.type === 'TemplateLiteral') {
-    return (node as TSESTree.TemplateLiteral).expressions.some((e) => isUserInput(e));
+    return (node as TSESTree.TemplateLiteral).expressions.some((e) => isUserInput(e, tainted));
   }
   if (node.type === 'BinaryExpression') {
     const be = node as TSESTree.BinaryExpression;
     if (be.operator !== '+') return false;
-    return isUserInput(be.left) || isUserInput(be.right);
+    return isUserInput(be.left, tainted) || isUserInput(be.right, tainted);
   }
   return false;
 }
@@ -40,7 +42,7 @@ function isStatusCode(node: TSESTree.Node): boolean {
   return typeof (node as TSESTree.Literal).value === 'number';
 }
 
-function checkResRedirect(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+function checkResRedirect(node: TSESTree.CallExpression, source: string, filePath: string, tainted: Set<string>): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
@@ -53,7 +55,7 @@ function checkResRedirect(node: TSESTree.CallExpression, source: string, filePat
   const urlArg = args.length >= 2 && isStatusCode(args[0]) ? args[1] : args[0];
 
   if (isStaticUrl(urlArg)) return null;
-  if (!isUserInput(urlArg)) return null;
+  if (!isUserInput(urlArg, tainted)) return null;
 
   return {
     ruleId: 'security/open-redirect',
@@ -78,10 +80,11 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
+    const tainted = buildTaintMap(ast);
 
     walk(ast, {
       CallExpression(rawNode) {
-        const f = checkResRedirect(rawNode as TSESTree.CallExpression, source, filePath);
+        const f = checkResRedirect(rawNode as TSESTree.CallExpression, source, filePath, tainted);
         if (f) findings.push(f);
       },
     });

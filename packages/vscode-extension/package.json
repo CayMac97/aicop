@@ -2,7 +2,7 @@
   "name": "aicop",
   "displayName": "AICop — AI Code Scanner",
   "description": "Detects security holes, AI-generated anti-patterns, and tech debt in JS/TS code",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "publisher": "aicop",
   "license": "MIT",
   "icon": "icon.png",
@@ -101,7 +101,7 @@
     "package": "npm run compile && vsce package --no-dependencies"
   },
   "dependencies": {
-    "aicop": "^1.0.1"
+    "aicop": "^1.0.3"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

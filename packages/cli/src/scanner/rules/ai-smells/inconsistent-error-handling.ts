@@ -98,6 +98,7 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
+    const seenKeys = new Set<string>();
     const funcTypes = ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'];
 
     walk(ast, {
@@ -110,14 +111,20 @@ const rule: Rule = {
           parentNode?.type === 'Property'
         ) return;
         const info = collectFunctionInfo(funcNode, source);
+        const push = (msg: string): void => {
+          const key = `${getLine(info.node)}:${getColumn(info.node)}:${msg}`;
+          if (seenKeys.has(key)) return;
+          seenKeys.add(key);
+          findings.push(buildFinding(info, msg, source, filePath));
+        };
         if (info.hasEmptyCatch) {
-          findings.push(buildFinding(info, 'Async function has an empty catch block — errors are silently swallowed', source, filePath));
+          push('Async function has an empty catch block — errors are silently swallowed');
         }
         if (info.hasAwait && info.hasThen) {
-          findings.push(buildFinding(info, 'Async function mixes await and .then() — pick one pattern', source, filePath));
+          push('Async function mixes await and .then() — pick one pattern');
         }
         if (info.hasAwait && info.hasDotCatch) {
-          findings.push(buildFinding(info, 'Async function mixes await with .catch() — use try/catch instead', source, filePath));
+          push('Async function mixes await with .catch() — use try/catch instead');
         }
       },
     });

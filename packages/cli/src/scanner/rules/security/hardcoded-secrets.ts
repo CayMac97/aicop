@@ -19,14 +19,14 @@ function isDocumentationString(value: string): boolean {
 
 const SECRET_VALUE_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /AKIA[0-9A-Z]{16}/, label: 'AWS Access Key ID' },
-  { pattern: /sk-[a-zA-Z0-9]{20,}/, label: 'OpenAI API Key' },
+  { pattern: /sk-(?:proj-[a-zA-Z0-9_-]{10,}|[a-zA-Z0-9]{20,})/, label: 'OpenAI API Key' },
   { pattern: /(?:mongodb|postgres|mysql):\/\/[^:]+:[^@]+@/, label: 'Database URL with credentials' },
   { pattern: /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/, label: 'Private key' },
   { pattern: /ghp_[a-zA-Z0-9]{36}/, label: 'GitHub Personal Access Token' },
   { pattern: /xoxb-[0-9]+-[a-zA-Z0-9]+/, label: 'Slack Bot Token' },
 ];
 
-const SECRET_NAME_PATTERNS = /(?:api[_-]?key|apikey|jwt[_-]?secret|secret[_-]?key|[a-z_-]+secret|secret[a-z_-]+|password|passwd|pwd|auth[_-]?token|access[_-]?token|private[_-]?key)/i;
+const SECRET_NAME_PATTERNS = /(?:^(?:secret|token)$|api[_-]?key|apikey|jwt[_-]?secret|secret[_-]?key|[a-z_-]+secret|secret[a-z_-]+|password|passwd|pwd|auth[_-]?token|access[_-]?token|private[_-]?key)/i;
 const SECRET_OBJ_KEYS = /^(?:secret|password|passwd|pwd|token|apikey|api[_-]?key|authtoken|auth[_-]?token|privatekey|private[_-]?key|accesskey|access[_-]?key|clientsecret|client[_-]?secret|jwtsecret|jwt[_-]?secret|encryptionkey|encryption[_-]?key)$/i;
 const SAFE_PLACEHOLDER_PATTERN = /(?:example|placeholder|test|fake|dummy|sample|mock|todo|changeme|your[_-\s]?)/i;
 const PLACEHOLDER_VALUES = /(?:example|placeholder|test|fake|dummy|your[_\-\s]?|<.*?>|xxx)/i;

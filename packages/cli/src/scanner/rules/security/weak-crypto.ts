@@ -25,10 +25,15 @@ function checkCreateHash(node: TSESTree.CallExpression, source: string, filePath
   const alg = String((algArg as TSESTree.StringLiteral).value).toLowerCase();
   if (!BROKEN_HASH_ALGORITHMS.has(alg)) return null;
   const passwordContext = isPasswordContext(source, getLine(node));
+  const isMd5OrSha1 = alg === 'md5' || alg === 'sha1' || alg === 'sha-1';
+  const severity = (isMd5OrSha1 && !passwordContext) ? 'warn' : 'error';
+  const message = isMd5OrSha1 && !passwordContext
+    ? `"${alg}" is cryptographically broken — acceptable for checksums/ETags but not for security`
+    : `"${alg}" is a broken hash algorithm`;
   return {
     ruleId: 'security/weak-crypto',
-    severity: 'error',
-    message: `"${alg}" is a broken hash algorithm`,
+    severity,
+    message,
     file: filePath,
     line: getLine(node),
     column: getColumn(node),

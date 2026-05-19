@@ -8,9 +8,10 @@ const CSRF_PACKAGES = new Set(['csurf', 'csrf-csrf', 'lusca']);
 const SESSION_PACKAGES = new Set(['express-session', 'cookie-session']);
 const EXPRESS_PACKAGES = new Set(['express', 'express-router']);
 const HTTP_CLIENT_OBJECTS = new Set(['axios', 'got', 'request', 'supertest', 'http', 'https', 'fetch']);
+const CSRF_IDENTIFIER_RE = /^(?:csrf|csrfProtection|csrfMiddleware|csrfToken|doubleCsrf|csurfProtection|lusca)/i;
 
 function getRequireArg(node: TSESTree.CallExpression): string | null {
-  if (!isIdentifier(node.callee) || node.callee.name !== 'require') return null;
+  if (!isIdentifier(node.callee) || (node.callee as TSESTree.Identifier).name !== 'require') return null;
   const arg = node.arguments[0];
   if (!arg || !isStringLiteral(arg as TSESTree.Expression)) return null;
   return String((arg as TSESTree.StringLiteral).value);
@@ -19,11 +20,9 @@ function getRequireArg(node: TSESTree.CallExpression): string | null {
 function isHttpClientCall(node: TSESTree.CallExpression): boolean {
   if (!isMemberExpression(node.callee)) return false;
   const me = node.callee as TSESTree.MemberExpression;
-  // Direct: axios.post(), http.request(), etc.
   if (isIdentifier(me.object)) {
     return HTTP_CLIENT_OBJECTS.has((me.object as TSESTree.Identifier).name.toLowerCase());
   }
-  // Chained: supertest(app).post(), got(url).post()
   if (me.object.type === 'CallExpression') {
     const innerCallee = (me.object as TSESTree.CallExpression).callee;
     if (isIdentifier(innerCallee)) {
@@ -40,6 +39,30 @@ function isExpressPostRoute(node: TSESTree.CallExpression): boolean {
   return isIdentifier(me.property) && (me.property as TSESTree.Identifier).name === 'post';
 }
 
+function isCsrfArg(arg: TSESTree.Node): boolean {
+  if (isIdentifier(arg)) return CSRF_IDENTIFIER_RE.test((arg as TSESTree.Identifier).name);
+  if (arg.type === 'CallExpression') {
+    const ce = arg as TSESTree.CallExpression;
+    if (isIdentifier(ce.callee)) return CSRF_IDENTIFIER_RE.test((ce.callee as TSESTree.Identifier).name);
+    if (isMemberExpression(ce.callee)) {
+      const me = ce.callee as TSESTree.MemberExpression;
+      if (isIdentifier(me.property)) return CSRF_IDENTIFIER_RE.test((me.property as TSESTree.Identifier).name);
+    }
+  }
+  return false;
+}
+
+function routeHasCsrfMiddleware(node: TSESTree.CallExpression): boolean {
+  return node.arguments.slice(1).some((arg) => isCsrfArg(arg));
+}
+
+function isGlobalUseWithCsrf(node: TSESTree.CallExpression): boolean {
+  if (!isMemberExpression(node.callee)) return false;
+  const me = node.callee as TSESTree.MemberExpression;
+  if (!isIdentifier(me.property) || (me.property as TSESTree.Identifier).name !== 'use') return false;
+  return node.arguments.some((arg) => isCsrfArg(arg));
+}
+
 const rule: Rule = {
   id: 'security/csrf-missing',
   name: 'CSRF Protection Missing',
@@ -52,40 +75,41 @@ const rule: Rule = {
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
 
-    let hasCsrf = false;
     let hasExpressImport = false;
     let hasSession = false;
-    let firstPostRouteNode: TSESTree.CallExpression | null = null;
-    let firstSessionNode: TSESTree.CallExpression | null = null;
+    let hasGlobalCsrf = false;
+    const unprotectedPostRoutes: TSESTree.CallExpression[] = [];
 
     walk(ast, {
       CallExpression(rawNode) {
         const node = rawNode as TSESTree.CallExpression;
         const pkg = getRequireArg(node);
         if (pkg) {
-          if (CSRF_PACKAGES.has(pkg)) hasCsrf = true;
-          if (SESSION_PACKAGES.has(pkg) && !firstSessionNode) firstSessionNode = node;
+          if (CSRF_PACKAGES.has(pkg)) return; // import alone doesn't protect; we track usage
+          if (SESSION_PACKAGES.has(pkg)) hasSession = true;
           if (EXPRESS_PACKAGES.has(pkg)) hasExpressImport = true;
           return;
         }
-        if (isExpressPostRoute(node) && !firstPostRouteNode) firstPostRouteNode = node;
+        if (isGlobalUseWithCsrf(node)) { hasGlobalCsrf = true; return; }
+        if (isExpressPostRoute(node) && !routeHasCsrfMiddleware(node)) {
+          unprotectedPostRoutes.push(node);
+        }
       },
       ImportDeclaration(rawNode) {
         const decl = rawNode as TSESTree.ImportDeclaration;
         const src = String(decl.source.value);
-        if (CSRF_PACKAGES.has(src)) hasCsrf = true;
         if (SESSION_PACKAGES.has(src)) hasSession = true;
         if (EXPRESS_PACKAGES.has(src)) hasExpressImport = true;
+        // CSRF package import alone doesn't guarantee protection — track usage above
       },
     });
 
-    if (hasCsrf) return findings;
-    // Only flag files that are actually Express servers (import express) or use session middleware
+    if (hasGlobalCsrf) return findings;
     if (!hasExpressImport && !hasSession) return findings;
+    if (unprotectedPostRoutes.length === 0) return findings;
 
-    const triggerNode = firstPostRouteNode ?? firstSessionNode;
-    if (!triggerNode) return findings;
-
+    // Report the first unprotected POST route
+    const triggerNode = unprotectedPostRoutes[0];
     findings.push({
       ruleId: 'security/csrf-missing',
       severity: 'warn',

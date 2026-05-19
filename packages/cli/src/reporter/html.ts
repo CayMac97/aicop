@@ -1,8 +1,8 @@
 import { ScanResult, FileScanResult, Finding, Severity } from '../scanner/rules/types.js';
 import { getScoreLabel, getScoreEmoji } from '../scanner/rules/ai-smells/ai-confidence-scorer.js';
 
-function escapeHtml(str: string): string {
-  return str
+function escapeHtml(str: string | null | undefined): string {
+  return (str ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

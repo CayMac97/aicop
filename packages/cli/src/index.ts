@@ -253,10 +253,9 @@ program
   });
 
 function getBadgeColor(score: number): string {
-  if (score >= 90) return 'brightgreen';
-  if (score >= 70) return 'green';
-  if (score >= 50) return 'yellow';
-  if (score >= 30) return 'orange';
+  if (score >= 85) return 'brightgreen';
+  if (score >= 70) return 'yellow';
+  if (score >= 50) return 'orange';
   return 'red';
 }
 

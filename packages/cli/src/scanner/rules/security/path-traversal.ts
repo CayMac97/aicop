@@ -3,6 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral } from '../../../utils/ast-helpers.js';
+import { buildTaintMap, isTaintedNode } from '../../../utils/taint-tracker.js';
 
 const FS_DANGER_METHODS = new Set([
   'readFile', 'readFileSync', 'writeFile', 'writeFileSync',
@@ -26,20 +27,21 @@ function isDirectUserInput(node: TSESTree.Node): boolean {
   return false;
 }
 
-function isUserInputExpr(node: TSESTree.Node): boolean {
+function isUserInputExpr(node: TSESTree.Node, tainted: Set<string> = new Set()): boolean {
+  if (isTaintedNode(node, tainted)) return true;
   if (isDirectUserInput(node)) return true;
   if (node.type === 'BinaryExpression') {
     const be = node as TSESTree.BinaryExpression;
     if (be.operator !== '+') return false;
-    return isUserInputExpr(be.left) || isUserInputExpr(be.right);
+    return isUserInputExpr(be.left, tainted) || isUserInputExpr(be.right, tainted);
   }
   if (node.type === 'TemplateLiteral') {
-    return (node as TSESTree.TemplateLiteral).expressions.some((e) => isUserInputExpr(e));
+    return (node as TSESTree.TemplateLiteral).expressions.some((e) => isUserInputExpr(e, tainted));
   }
   return false;
 }
 
-function checkFsCall(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+function checkFsCall(node: TSESTree.CallExpression, source: string, filePath: string, tainted: Set<string>): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
@@ -50,7 +52,7 @@ function checkFsCall(node: TSESTree.CallExpression, source: string, filePath: st
   const pathArg = node.arguments[0];
   if (!pathArg) return null;
   if (isStringLiteral(pathArg as TSESTree.Expression)) return null;
-  if (!isUserInputExpr(pathArg)) return null;
+  if (!isUserInputExpr(pathArg, tainted)) return null;
   return {
     ruleId: 'security/path-traversal',
     severity: 'error',
@@ -63,14 +65,14 @@ function checkFsCall(node: TSESTree.CallExpression, source: string, filePath: st
   };
 }
 
-function checkPathJoin(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+function checkPathJoin(node: TSESTree.CallExpression, source: string, filePath: string, tainted: Set<string>): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
   if ((me.object as TSESTree.Identifier).name !== 'path') return null;
   const method = (me.property as TSESTree.Identifier).name;
   if (method !== 'join' && method !== 'resolve') return null;
-  const hasUserInput = node.arguments.some((arg) => isUserInputExpr(arg));
+  const hasUserInput = node.arguments.some((arg) => isUserInputExpr(arg, tainted));
   if (!hasUserInput) return null;
   const contextAfter = extractSnippet(source, getLine(node) + 1, 2);
   if (contextAfter.includes('.startsWith(')) return null;
@@ -97,13 +99,13 @@ function isDirnameOrRelPath(node: TSESTree.Node): boolean {
   return isPathLikeString(node);
 }
 
-function checkPathConcatBinary(node: TSESTree.BinaryExpression, source: string, filePath: string): Finding | null {
+function checkPathConcatBinary(node: TSESTree.BinaryExpression, source: string, filePath: string, tainted: Set<string>): Finding | null {
   if (node.operator !== '+') return null;
 
   const left = node.left;
   const right = node.right;
-  const leftHasUser = isUserInputExpr(left);
-  const rightHasUser = isUserInputExpr(right);
+  const leftHasUser = isUserInputExpr(left, tainted);
+  const rightHasUser = isUserInputExpr(right, tainted);
 
   if (!leftHasUser && !rightHasUser) return null;
 
@@ -133,17 +135,18 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
+    const tainted = buildTaintMap(ast);
 
     walk(ast, {
       CallExpression(rawNode) {
         const node = rawNode as TSESTree.CallExpression;
-        const fsF = checkFsCall(node, source, filePath);
+        const fsF = checkFsCall(node, source, filePath, tainted);
         if (fsF) { findings.push(fsF); return; }
-        const pathF = checkPathJoin(node, source, filePath);
+        const pathF = checkPathJoin(node, source, filePath, tainted);
         if (pathF) findings.push(pathF);
       },
       BinaryExpression(rawNode) {
-        const finding = checkPathConcatBinary(rawNode as TSESTree.BinaryExpression, source, filePath);
+        const finding = checkPathConcatBinary(rawNode as TSESTree.BinaryExpression, source, filePath, tainted);
         if (finding) findings.push(finding);
       },
     });
