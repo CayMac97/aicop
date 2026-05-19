@@ -19,8 +19,13 @@ export const DEFAULT_CONFIG: VibescanConfig = {
   ],
   rules: {
     'security/hardcoded-secrets': 'error',
+    'security/command-injection': 'error',
+    'security/code-injection': 'error',
     'security/sql-injection': 'error',
     'security/xss-vulnerabilities': 'error',
+    'security/open-redirect': 'error',
+    'security/insecure-deserialization': 'error',
+    'security/xxe-injection': 'error',
     'security/eval-usage': 'error',
     'security/weak-crypto': 'error',
     'security/jwt-no-expiry': 'error',

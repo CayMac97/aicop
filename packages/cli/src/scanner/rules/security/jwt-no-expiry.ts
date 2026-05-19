@@ -9,8 +9,10 @@ function isJwtSignCall(node: TSESTree.CallExpression): boolean {
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.property)) return false;
   const methodName = (me.property as TSESTree.Identifier).name;
-  // Only flag sign() — verify(), decode(), etc. are out of scope for this rule
-  return methodName === 'sign';
+  if (methodName !== 'sign') return false;
+  if (!isIdentifier(me.object)) return false;
+  const objName = (me.object as TSESTree.Identifier).name.toLowerCase();
+  return objName === 'jwt' || objName === 'jsonwebtoken';
 }
 
 function hasExpiryInOptions(optionsNode: TSESTree.SpreadElement | TSESTree.Expression): boolean {

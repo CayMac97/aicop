@@ -67,9 +67,7 @@ function checkTsIgnore(source: string, filePath: string): Finding[] {
 }
 
 function checkAsAnyAssertions(node: TSESTree.TSTypeAssertion | TSESTree.TSAsExpression, source: string, filePath: string): Finding | null {
-  const typeRef = node.type === 'TSAsExpression'
-    ? (node as TSESTree.TSAsExpression).typeAnnotation
-    : (node as TSESTree.TSTypeAssertion).typeAnnotation;
+  const typeRef = node.typeAnnotation;
   if (!typeRef || typeRef.type !== 'TSAnyKeyword') return null;
   return {
     ruleId: 'tech-debt/missing-types',

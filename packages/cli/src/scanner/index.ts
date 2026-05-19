@@ -50,7 +50,11 @@ function applyIgnoreComments(findings: Finding[], source: string): Finding[] {
   return findings.filter((f) => {
     const lineIdx = f.line - 1;
     const sameLine = lines[lineIdx] ?? '';
-    if (/\/\/\s*aicop-ignore\b/.test(sameLine)) return false;
+    const sameLineMatch = sameLine.match(/\/\/\s*aicop-ignore(?:\s+(\S+))?/);
+    if (sameLineMatch) {
+      const specifiedRule = sameLineMatch[1];
+      if (!specifiedRule || specifiedRule === f.ruleId) return false;
+    }
     const prevLine = lineIdx > 0 ? (lines[lineIdx - 1] ?? '').trim() : '';
     if (prevLine === '// aicop-ignore') return false;
     if (prevLine === `// aicop-ignore ${f.ruleId}`) return false;
@@ -97,11 +101,12 @@ function scanFile(
   config: VibescanConfig,
   minSeverity: Severity,
   noAiScore: boolean,
+  preloadedSource?: string,
 ): FileScanResult {
   const relativePath = getRelativePath(filePath, basePath);
   let source = '';
   try {
-    source = readFileContent(filePath);
+    source = preloadedSource ?? readFileContent(filePath);
   } catch (err) {
     logger.warn(`Could not read file ${relativePath}: ${String(err)}`);
     return { filePath, relativePath, findings: [], aiScore: 0, parseError: String(err) };
@@ -224,12 +229,13 @@ export async function scan(options: ScanOptions, onProgress?: (file: string) => 
     let skippedVendorFiles = 0;
 
     for (const filePath of files) {
+      let preloadedSource: string | undefined;
       if (!includeVendor) {
         const sizeBytes = getFileSizeBytes(filePath);
-        const source = sizeBytes < MEDIUM_FILE_BYTES
-          ? (() => { try { return readFileContent(filePath); } catch { return ''; } })()
-          : '';
-        if (isVendorFile(filePath, source, sizeBytes)) {
+        if (sizeBytes < MEDIUM_FILE_BYTES) {
+          try { preloadedSource = readFileContent(filePath); } catch { preloadedSource = undefined; }
+        }
+        if (isVendorFile(filePath, preloadedSource ?? '', sizeBytes)) {
           skippedVendorFiles++;
           logger.debug(`Skipping vendor file: ${getRelativePath(filePath, basePath)}`);
           continue;
@@ -239,7 +245,7 @@ export async function scan(options: ScanOptions, onProgress?: (file: string) => 
       onProgress?.(getRelativePath(filePath, basePath));
       // Always collect at 'info' so all findings are in the result;
       // display-layer filtering happens in buildDisplayResult.
-      const result = scanFile(filePath, basePath, enabledRules, config, 'info', noAiScore);
+      const result = scanFile(filePath, basePath, enabledRules, config, 'info', noAiScore, preloadedSource);
       fileResults.push(result);
     }
 

@@ -2,7 +2,7 @@ import { TSESTree } from '@typescript-eslint/typescript-estree';
 import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
-import { getLine, getColumn, isStringLiteral } from '../../../utils/ast-helpers.js';
+import { getLine, getColumn, isStringLiteral, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
 import { isConfigFile, isTestFile } from '../../../utils/file-utils.js';
 
 const PORT_PATTERN = /^(?:PORT|port|Port)$/;
@@ -68,7 +68,22 @@ function checkVariableDeclarator(node: TSESTree.VariableDeclarator, source: stri
   return null;
 }
 
+function isLoggingCall(node: TSESTree.CallExpression): boolean {
+  if (isMemberExpression(node.callee)) {
+    const me = node.callee as TSESTree.MemberExpression;
+    if (!isIdentifier(me.object)) return false;
+    const obj = (me.object as TSESTree.Identifier).name;
+    return obj === 'console' || obj === 'logger' || obj === 'log';
+  }
+  if (isIdentifier(node.callee)) {
+    const name = (node.callee as TSESTree.Identifier).name;
+    return name === 'log' || name === 'warn' || name === 'error' || name === 'info' || name === 'debug';
+  }
+  return false;
+}
+
 function checkDbConnectionString(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+  if (isLoggingCall(node)) return null;
   const firstArg = node.arguments[0];
   if (!firstArg || !isStringLiteral(firstArg as TSESTree.Expression)) return null;
   const val = String((firstArg as TSESTree.StringLiteral).value);

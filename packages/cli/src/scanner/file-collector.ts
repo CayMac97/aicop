@@ -31,9 +31,9 @@ const LARGE_NONTS_BYTES = 200 * 1024;
 const BABEL_MIN_BYTES = 50 * 1024;
 
 const VENDOR_DIRS = new Set([
-  'vendor', 'vendors', 'lib', 'libs', 'third-party', 'thirdparty',
+  'vendor', 'vendors', 'libs', 'third-party', 'thirdparty',
   'bower_components', 'jspm_packages', 'external', 'extern',
-  'modules', 'themes',
+  'themes',
 ]);
 
 const VENDOR_LIBS = new Set([
@@ -123,7 +123,7 @@ function isDefinitelyBundle(snippet: string): boolean {
 function isBabelBundle(snippet: string): boolean {
   if (!snippet) return false;
   const trimmed = snippet.trimStart();
-  return trimmed.startsWith('[function(') || trimmed.includes('!function(');
+  return trimmed.startsWith('[function(') || trimmed.startsWith('(function(') || trimmed.includes('!function(');
 }
 
 function readFirstBytes(filePath: string, n: number): string {

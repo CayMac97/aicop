@@ -262,7 +262,6 @@ const rule: Rule = {
         // res.render() uses template engines that auto-escape by default — not flagged
       },
       JSXAttribute(rawNode) {
-        if (!isCallExpression) return;
         const finding = checkDangerouslySetInnerHTML(rawNode as TSESTree.JSXAttribute, source, filePath);
         if (finding) findings.push(finding);
       },

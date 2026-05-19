@@ -155,7 +155,9 @@ function hasSplitAssignment(source: string, varName: string, line: number): bool
 }
 
 function hasPriorNullGuard(source: string, varName: string, line: number): boolean {
-  const priorSource = source.split('\n').slice(0, line).join('\n');
+  const allLines = source.split('\n');
+  const windowStart = Math.max(0, line - 50);
+  const priorSource = allLines.slice(windowStart, line).join('\n');
   return (
     priorSource.includes(`!${varName}`) ||
     priorSource.includes(`if (${varName})`) ||
