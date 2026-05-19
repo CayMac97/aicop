@@ -23,7 +23,7 @@
     "./lib": "./dist/lib.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "license": "MIT",
   "scripts": {

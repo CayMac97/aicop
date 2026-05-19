@@ -6,7 +6,7 @@ export default defineConfig([
     // ── CLI entry (shebang + commander) ──────────────────────────────────
     entry: ['src/index.ts'],
     format: ['cjs'],
-    target: 'node18',
+    target: 'node20',
     platform: 'node',
     clean: true,
     sourcemap: false,
@@ -28,7 +28,7 @@ export default defineConfig([
     // ── Library entry (no shebang — used by VSCode extension) ────────────
     entry: { lib: 'src/lib.ts' },
     format: ['cjs'],
-    target: 'node18',
+    target: 'node20',
     platform: 'node',
     clean: false, // do not wipe the CLI output built above
     sourcemap: false,
