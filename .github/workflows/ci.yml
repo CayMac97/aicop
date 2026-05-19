@@ -78,7 +78,7 @@ jobs:
 
       - name: Assert AIScore ≥ 90
         run: |
-          SCORE=$(node -e "const r=require('./aicop-result.json');console.log(r.summary.vibeScore)")
+          SCORE=$(node -e "const r=require('./aicop-result.json');console.log(r.summary.aiScore)")
           echo "AIScore: $SCORE"
           if [ "$SCORE" -lt 90 ]; then
             echo "❌ AIScore $SCORE is below the required 90 threshold"

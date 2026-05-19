@@ -40,7 +40,7 @@ describe('clean fixture (should-not-flag/clean-express-api.ts)', () => {
 
   it('achieves AIScore 100 when there are no warn/error findings', async () => {
     const result = await scan(makeScanOpts(CLEAN));
-    expect(result.vibeScore).toBe(100);
+    expect(result.aiScore).toBe(100);
   });
 
   it('scans exactly 1 file', async () => {
