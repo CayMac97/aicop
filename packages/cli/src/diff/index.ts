@@ -30,7 +30,7 @@ export async function scanDiff(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.warn(`Git diff failed: ${message}`);
-    logger.warn('Falling back to full scan');
+    process.stderr.write(`⚠ Could not diff against '${ref}' — running full scan instead. Use 'aicop diff --ref <branch>' to specify a branch.\n`);
     const result = await scan(options, onProgress);
     return { result, diffHeader: `Could not compute diff from ${ref}` };
   }

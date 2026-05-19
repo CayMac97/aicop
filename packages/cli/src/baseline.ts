@@ -8,7 +8,7 @@ const BASELINE_FILE = '.aicop-baseline.json';
 export interface BaselineData {
   version: string;
   savedAt: string;
-  vibeScore: number;
+  aiScore: number;
   errorCount: number;
   warnCount: number;
   infoCount: number;
@@ -33,7 +33,7 @@ export function saveBaseline(result: ScanResult, version: string, cwd: string = 
   const data: BaselineData = {
     version,
     savedAt: new Date().toISOString(),
-    vibeScore: result.vibeScore,
+    aiScore: result.aiScore,
     errorCount: result.errorCount,
     warnCount: result.warnCount,
     infoCount: result.infoCount,
@@ -53,16 +53,16 @@ export function clearBaseline(cwd: string = process.cwd()): boolean {
 }
 
 export function formatBaselineDelta(current: number, baseline: BaselineData): string {
-  const delta = current - baseline.vibeScore;
+  const delta = current - baseline.aiScore;
   const savedDate = new Date(baseline.savedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
   if (delta === 0) {
-    return chalk.dim(`   Baseline: no change (${baseline.vibeScore}/100 on ${savedDate})`);
+    return chalk.dim(`   Baseline: no change (${baseline.aiScore}/100 on ${savedDate})`);
   }
   if (delta < 0) {
     // Score went down = improvement
-    return chalk.green(`   Baseline: ↓ ${Math.abs(delta)} pts better than baseline (was ${baseline.vibeScore}/100 on ${savedDate})`);
+    return chalk.green(`   Baseline: ↓ ${Math.abs(delta)} pts better than baseline (was ${baseline.aiScore}/100 on ${savedDate})`);
   }
   // Score went up = regression
-  return chalk.red(`   Baseline: ↑ +${delta} pts worse than baseline (was ${baseline.vibeScore}/100 on ${savedDate})`);
+  return chalk.red(`   Baseline: ↑ +${delta} pts worse than baseline (was ${baseline.aiScore}/100 on ${savedDate})`);
 }

@@ -180,17 +180,19 @@ export function buildScanOptions(targetPath: string, config: VibescanConfig, opt
 
 export function buildDisplayResult(result: ScanResult, displaySeverity: Severity): { displayResult: ScanResult; hiddenInfoCount: number } {
   const sevOrder: Record<Severity, number> = { error: 0, warn: 1, info: 2 };
+  const maxSev = sevOrder[displaySeverity];
   // hiddenInfoCount drives the hint "run with --severity info to see per-file locations"
-  const hiddenInfoCount = sevOrder[displaySeverity] < sevOrder['info'] ? result.infoCount : 0;
-  if (hiddenInfoCount === 0) return { displayResult: result, hiddenInfoCount: 0 };
+  const hiddenInfoCount = maxSev < sevOrder['info'] ? result.infoCount : 0;
+  const needsFiltering = hiddenInfoCount > 0 || (maxSev < sevOrder['warn'] && result.warnCount > 0);
+  if (!needsFiltering) return { displayResult: result, hiddenInfoCount: 0 };
   const displayResult: ScanResult = {
     ...result,
-    // Filter per-file listings to the requested display severity, but keep
-    // infoCount so the summary always reflects the real number of info findings.
     files: result.files.map((f) => ({
       ...f,
-      findings: f.findings.filter((x) => sevOrder[x.severity] <= sevOrder[displaySeverity]),
+      findings: f.findings.filter((x) => sevOrder[x.severity] <= maxSev),
     })),
+    warnCount: maxSev >= sevOrder['warn'] ? result.warnCount : 0,
+    infoCount: maxSev >= sevOrder['info'] ? result.infoCount : 0,
   };
   return { displayResult, hiddenInfoCount };
 }

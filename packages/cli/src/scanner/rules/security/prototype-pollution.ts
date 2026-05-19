@@ -3,6 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
+import { buildTaintMap } from '../../../utils/taint-tracker.js';
 
 const MERGE_FUNCTIONS = new Set(['merge', 'deepMerge', 'assign', 'extend', 'defaults', 'defaultsDeep']);
 const USER_INPUT_PROPS = new Set(['params', 'body', 'query', 'headers']);
@@ -17,21 +18,53 @@ function isReqBody(node: TSESTree.Node): boolean {
     USER_INPUT_PROPS.has((me.property as TSESTree.Identifier).name);
 }
 
-function isUserInputArg(node: TSESTree.Node): boolean {
+function isUserInputArg(node: TSESTree.Node, tainted: Set<string> = new Set()): boolean {
   if (isReqBody(node)) return true;
+  if (isIdentifier(node) && tainted.has((node as TSESTree.Identifier).name)) return true;
   if (node.type === 'SpreadElement') {
     return isReqBody((node as TSESTree.SpreadElement).argument);
   }
   return false;
 }
 
-function checkObjectAssign(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+function checkForInLoop(node: TSESTree.ForInStatement, source: string, filePath: string): Finding | null {
+  const body = node.body;
+  const stmts = body.type === 'BlockStatement'
+    ? (body as TSESTree.BlockStatement).body
+    : [body];
+  const hasProtoGuard = stmts.some((s) => {
+    const src = extractSnippet(source, getLine(s as TSESTree.Node));
+    return src.includes('hasOwnProperty') || src.includes('__proto__') || src.includes('Object.prototype');
+  });
+  if (hasProtoGuard) return null;
+  const hasObjKeyAssign = stmts.some((s) => {
+    if (s.type !== 'ExpressionStatement') return false;
+    const expr = (s as TSESTree.ExpressionStatement).expression;
+    if (expr.type !== 'AssignmentExpression') return false;
+    const assign = expr as TSESTree.AssignmentExpression;
+    if (assign.left.type !== 'MemberExpression') return false;
+    return (assign.left as TSESTree.MemberExpression).computed;
+  });
+  if (!hasObjKeyAssign) return null;
+  return {
+    ruleId: 'security/prototype-pollution',
+    severity: 'error',
+    message: 'for...in loop assigns obj[key] without hasOwnProperty check — prototype pollution risk',
+    file: filePath,
+    line: getLine(node),
+    column: getColumn(node),
+    snippet: extractSnippet(source, getLine(node)),
+    fix: 'Add guard: if (!Object.prototype.hasOwnProperty.call(src, key)) continue; — or use Object.entries() instead of for...in.',
+  };
+}
+
+function checkObjectAssign(node: TSESTree.CallExpression, source: string, filePath: string, tainted: Set<string>): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
   if ((me.object as TSESTree.Identifier).name !== 'Object') return null;
   if ((me.property as TSESTree.Identifier).name !== 'assign') return null;
-  if (!node.arguments.some((arg) => isUserInputArg(arg))) return null;
+  if (!node.arguments.some((arg) => isUserInputArg(arg, tainted))) return null;
   return {
     ruleId: 'security/prototype-pollution',
     severity: 'error',
@@ -44,7 +77,7 @@ function checkObjectAssign(node: TSESTree.CallExpression, source: string, filePa
   };
 }
 
-function checkMergeFunctionCall(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+function checkMergeFunctionCall(node: TSESTree.CallExpression, source: string, filePath: string, tainted: Set<string>): Finding | null {
   let funcName = '';
   if (isIdentifier(node.callee)) {
     funcName = (node.callee as TSESTree.Identifier).name;
@@ -53,7 +86,7 @@ function checkMergeFunctionCall(node: TSESTree.CallExpression, source: string, f
     if (isIdentifier(me.property)) funcName = (me.property as TSESTree.Identifier).name;
   }
   if (!MERGE_FUNCTIONS.has(funcName)) return null;
-  if (!node.arguments.some((arg) => isUserInputArg(arg))) return null;
+  if (!node.arguments.some((arg) => isUserInputArg(arg, tainted))) return null;
   return {
     ruleId: 'security/prototype-pollution',
     severity: 'error',
@@ -94,17 +127,22 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
+    const tainted = buildTaintMap(ast);
 
     walk(ast, {
       CallExpression(rawNode) {
         const node = rawNode as TSESTree.CallExpression;
-        const assignF = checkObjectAssign(node, source, filePath);
+        const assignF = checkObjectAssign(node, source, filePath, tainted);
         if (assignF) { findings.push(assignF); return; }
-        const mergeF = checkMergeFunctionCall(node, source, filePath);
+        const mergeF = checkMergeFunctionCall(node, source, filePath, tainted);
         if (mergeF) findings.push(mergeF);
       },
       AssignmentExpression(rawNode) {
         const finding = checkDynamicPropertyAssign(rawNode as TSESTree.AssignmentExpression, source, filePath);
+        if (finding) findings.push(finding);
+      },
+      ForInStatement(rawNode) {
+        const finding = checkForInLoop(rawNode as TSESTree.ForInStatement, source, filePath);
         if (finding) findings.push(finding);
       },
     });

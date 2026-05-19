@@ -143,7 +143,13 @@ const rule: Rule = {
         const fsF = checkFsCall(node, source, filePath, tainted);
         if (fsF) { findings.push(fsF); return; }
         const pathF = checkPathJoin(node, source, filePath, tainted);
-        if (pathF) findings.push(pathF);
+        if (pathF) {
+          // Suppress if the result is assigned to a var that will be used in an fs.* call
+          // (the fs.* call emits its own finding). Check next 5 lines for an fs.* usage.
+          const afterSnippet = extractSnippet(source, pathF.line + 1, 5);
+          const isFsUsed = afterSnippet.includes('fs.') || afterSnippet.includes('fse.');
+          if (!isFsUsed) findings.push(pathF);
+        }
       },
       BinaryExpression(rawNode) {
         const finding = checkPathConcatBinary(rawNode as TSESTree.BinaryExpression, source, filePath, tainted);

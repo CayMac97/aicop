@@ -152,7 +152,7 @@ export function formatHtml(result: ScanResult, version: string): string {
       <h1>🛡️ AICop Scan Report</h1>
       <p style="color:var(--muted);margin-bottom:1rem">Scanned ${result.filesScanned} files on ${scanDate} in ${result.scanDurationMs}ms · v${version}</p>
       <div class="stats">
-        <div class="stat-item"><span class="stat-label">AIScore™</span><span class="stat-value" style="color:#7c3aed">${result.vibeScore}/100</span></div>
+        <div class="stat-item"><span class="stat-label">AIScore™</span><span class="stat-value" style="color:#7c3aed">${result.aiScore}/100</span></div>
         <div class="stat-item"><span class="stat-label">🔴 Errors</span><span class="stat-value" style="color:#ef4444">${result.errorCount}</span></div>
         <div class="stat-item"><span class="stat-label">🟡 Warnings</span><span class="stat-value" style="color:#f59e0b">${result.warnCount}</span></div>
         <div class="stat-item"><span class="stat-label">🔵 Info</span><span class="stat-value" style="color:#3b82f6">${result.infoCount}</span></div>

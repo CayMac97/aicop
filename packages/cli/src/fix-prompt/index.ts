@@ -85,7 +85,7 @@ export function generateFixPrompt(scanResult: ScanResult, options: FixPromptOpti
       'No issues found.',
       '',
       `AICop scanned ${scanResult.filesScanned} file${scanResult.filesScanned !== 1 ? 's' : ''}.`,
-      `AIScore: ${scanResult.vibeScore}/100`,
+      `AIScore: ${scanResult.aiScore}/100`,
     ].join('\n');
   }
 
@@ -121,7 +121,7 @@ export function generateFixPrompt(scanResult: ScanResult, options: FixPromptOpti
   }
 
   lines.push('OVERVIEW');
-  lines.push(`Total issues: ${filtered.length}`);
+  lines.push(`Total issues: ${allFindings.length}`);
   lines.push(`Files affected: ${affectedFiles}`);
   if (errorCount > 0) lines.push(`Critical errors: ${errorCount}`);
   if (warnCount > 0) lines.push(`Warnings: ${warnCount}`);

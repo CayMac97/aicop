@@ -38,12 +38,26 @@ function templateHasUserInput(node: TSESTree.TemplateLiteral): boolean {
   });
 }
 
+function isDynamicExpr(n: TSESTree.Expression, tainted: Set<string>): boolean {
+  if (isUserInputExpression(n)) return true;
+  if (isIdentifier(n) && tainted.has((n as TSESTree.Identifier).name)) return true;
+  if (n.type === 'TemplateLiteral') {
+    return (n as TSESTree.TemplateLiteral).expressions.some(
+      (e) => isDynamicExpr(e as TSESTree.Expression, tainted)
+    );
+  }
+  if (n.type === 'BinaryExpression' && (n as TSESTree.BinaryExpression).operator === '+') {
+    const be = n as TSESTree.BinaryExpression;
+    return isDynamicExpr(be.left as TSESTree.Expression, tainted) ||
+           isDynamicExpr(be.right as TSESTree.Expression, tainted);
+  }
+  return false;
+}
+
 function concatHasUserInput(node: TSESTree.BinaryExpression, tainted: Set<string>): boolean {
   if (node.operator !== '+') return false;
   if (!isExpressionNode(node.left) || !isExpressionNode(node.right)) return false;
-  const isDynamic = (n: TSESTree.Expression): boolean =>
-    isUserInputExpression(n) || (isIdentifier(n) && tainted.has((n as TSESTree.Identifier).name));
-  return isDynamic(node.left) || isDynamic(node.right);
+  return isDynamicExpr(node.left, tainted) || isDynamicExpr(node.right, tainted);
 }
 
 function looksLikeSQL(text: string): boolean {

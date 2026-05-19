@@ -12,7 +12,7 @@ export function formatJson(result: ScanResult, version: string): string {
       warnings: result.warnCount,
       info: result.infoCount,
       parseErrors: result.parseErrors,
-      vibeScore: result.vibeScore,
+      aiScore: result.aiScore,
       scanDurationMs: result.scanDurationMs,
     },
     topIssues: result.topIssues,

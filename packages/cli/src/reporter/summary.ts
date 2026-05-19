@@ -8,7 +8,7 @@ import { ScanResult } from '../scanner/rules/types.js';
 const BASELINE_FILE = '.aicop-baseline.json';
 
 export interface BaselineData {
-  vibeScore: number;
+  aiScore: number;
   errorCount: number;
   warnCount: number;
   filesScanned: number;
@@ -26,7 +26,7 @@ export function readBaseline(cwd: string): BaselineData | null {
 
 export function writeBaseline(cwd: string, result: ScanResult): void {
   const data: BaselineData = {
-    vibeScore: result.vibeScore,
+    aiScore: result.aiScore,
     errorCount: result.errorCount,
     warnCount: result.warnCount,
     filesScanned: result.filesScanned,
@@ -47,7 +47,7 @@ function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function vibeScoreLabel(score: number): string {
+function aiScoreLabel(score: number): string {
   if (score >= 85) return 'Production ready';
   if (score >= 65) return 'Mostly clean';
   if (score >= 40) return 'Needs attention';
@@ -55,7 +55,7 @@ function vibeScoreLabel(score: number): string {
   return 'Needs rewrite';
 }
 
-function vibeScoreEmoji(score: number): string {
+function aiScoreEmoji(score: number): string {
   if (score >= 85) return '🟢';
   if (score >= 65) return '🟡';
   if (score >= 40) return '🟠';
@@ -99,15 +99,15 @@ function buildSummaryContent(result: ScanResult): string {
     lines.push('   ' + chalk.dim('─'.repeat(32)));
   }
 
-  const score = result.vibeScore;
-  const label = vibeScoreLabel(score);
-  const emoji = vibeScoreEmoji(score);
+  const score = result.aiScore;
+  const label = aiScoreLabel(score);
+  const emoji = aiScoreEmoji(score);
   const colorFn = scoreColor(score);
   lines.push(`   Overall AIScore™: ${colorFn(`${score}/100`)}  ${emoji}  "${label}"`);
 
   const baseline = readBaseline(process.cwd());
   if (baseline) {
-    lines.push(formatScoreDelta(score, baseline.vibeScore));
+    lines.push(formatScoreDelta(score, baseline.aiScore));
   }
   lines.push('');
 
@@ -133,7 +133,7 @@ function buildCiSummary(result: ScanResult): string {
     `Files scanned: ${result.filesScanned}  Time: ${formatDuration(result.scanDurationMs)}`,
     `Files with issues: ${result.filesWithIssues}`,
     `Errors: ${result.errorCount}  Warnings: ${result.warnCount}  Info: ${result.infoCount}${result.parseErrors > 0 ? `  Parse errors: ${result.parseErrors}` : ''}`,
-    `AIScore: ${result.vibeScore}/100 (${vibeScoreLabel(result.vibeScore)})`,
+    `AIScore: ${result.aiScore}/100 (${aiScoreLabel(result.aiScore)})`,
     ...(result.categoryScores ? [
       `Security Score: ${result.categoryScores.security}/100`,
       `AI-Smell Score: ${result.categoryScores.aiSmell}/100`,
@@ -179,7 +179,8 @@ export function renderHeader(fileCount: number, ruleCount: number, version: stri
 }
 
 export function renderFixPromptHint(targetArg: string): string {
-  const t = targetArg === '.' || targetArg === '' ? '.' : path.basename(targetArg);
+  const rel = path.relative(process.cwd(), targetArg);
+  const t = rel === '' ? '.' : rel;
   const content =
     chalk.bold('💡 Run ') +
     chalk.cyan.bold(`aicop fix-prompt ${t}`) +

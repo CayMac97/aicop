@@ -27,9 +27,33 @@ function hasExpiryInOptions(optionsNode: TSESTree.SpreadElement | TSESTree.Expre
   });
 }
 
+function hasNoneAlgorithm(optionsNode: TSESTree.SpreadElement | TSESTree.Expression): boolean {
+  if (optionsNode.type !== 'ObjectExpression') return false;
+  const obj = optionsNode as TSESTree.ObjectExpression;
+  return obj.properties.some((prop) => {
+    if (prop.type !== 'Property') return false;
+    const p = prop as TSESTree.Property;
+    if (!isIdentifier(p.key)) return false;
+    if ((p.key as TSESTree.Identifier).name !== 'algorithm') return false;
+    return p.value.type === 'Literal' && (p.value as TSESTree.Literal).value === 'none';
+  });
+}
+
 function checkJwtSign(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
   if (!isJwtSignCall(node)) return null;
   const args = node.arguments;
+  if (args.length >= 3 && hasNoneAlgorithm(args[2])) {
+    return {
+      ruleId: 'security/jwt-no-expiry',
+      severity: 'error',
+      message: "jwt.sign() using algorithm 'none' — signature verification is disabled",
+      file: filePath,
+      line: getLine(node),
+      column: getColumn(node),
+      snippet: extractSnippet(source, getLine(node)),
+      fix: "Remove algorithm: 'none'. Use a secure algorithm like 'HS256' or 'RS256'.",
+    };
+  }
   if (args.length < 2) return null;
   if (args.length < 3) {
     return {

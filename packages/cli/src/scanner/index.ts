@@ -171,13 +171,13 @@ function computeTopIssues(files: FileScanResult[]): Array<{ ruleId: string; file
     .slice(0, 5);
 }
 
-interface VibeScoreResult {
-  vibeScore: number;
+interface AIScoreResult {
+  aiScore: number;
   categoryScores: { security: number; aiSmell: number; techDebt: number };
 }
 
-function computeVibeScore(files: FileScanResult[]): VibeScoreResult {
-  const perfect = { vibeScore: 100, categoryScores: { security: 100, aiSmell: 100, techDebt: 100 } };
+function computeAIScore(files: FileScanResult[]): AIScoreResult {
+  const perfect = { aiScore: 100, categoryScores: { security: 100, aiSmell: 100, techDebt: 100 } };
   if (files.length === 0) return perfect;
   if (files.filter((f) => !f.parseError).length === 0) return perfect;
 
@@ -198,15 +198,15 @@ function computeVibeScore(files: FileScanResult[]): VibeScoreResult {
   const techDebtPenalty = Math.min(techDebtCount * 0.5, 10);
 
   const total = secErrPenalty + secWarnPenalty + aiSmellPenalty + techDebtPenalty;
-  const vibeScore = Math.max(0, Math.round(100 - total));
+  const aiScore = Math.max(0, Math.round(100 - total));
 
   const secScore = Math.max(0, Math.round(100 - secErrCount * 5 - secWarnCount * 2.5));
-  const aiScore = Math.max(0, Math.round(100 - aiSmellCount * 2));   // aiSmellCount already excludes info
+  const aiSmellScore = Math.max(0, Math.round(100 - aiSmellCount * 2));   // aiSmellCount already excludes info
   const techScore = Math.max(0, Math.round(100 - techDebtCount * 1)); // techDebtCount already excludes info
 
   return {
-    vibeScore,
-    categoryScores: { security: secScore, aiSmell: aiScore, techDebt: techScore },
+    aiScore,
+    categoryScores: { security: secScore, aiSmell: aiSmellScore, techDebt: techScore },
   };
 }
 
@@ -252,7 +252,7 @@ export async function scan(options: ScanOptions, onProgress?: (file: string) => 
     const allFindings = fileResults.flatMap((f) => f.findings);
     const filesWithIssues = fileResults.filter((f) => f.findings.length > 0).length;
     const parseErrors = fileResults.filter((f) => f.parseError != null).length;
-    const { vibeScore, categoryScores } = computeVibeScore(fileResults);
+    const { aiScore, categoryScores } = computeAIScore(fileResults);
 
     return {
       files: fileResults,
@@ -260,7 +260,7 @@ export async function scan(options: ScanOptions, onProgress?: (file: string) => 
       errorCount: allFindings.filter((f) => f.severity === 'error').length,
       warnCount: allFindings.filter((f) => f.severity === 'warn').length,
       infoCount: allFindings.filter((f) => f.severity === 'info').length,
-      vibeScore,
+      aiScore,
       categoryScores,
       scanDurationMs: Date.now() - startTime,
       filesScanned: fileResults.length,

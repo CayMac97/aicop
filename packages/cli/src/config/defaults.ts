@@ -30,7 +30,7 @@ export const DEFAULT_CONFIG: VibescanConfig = {
     'security/weak-crypto': 'error',
     'security/jwt-no-expiry': 'error',
     'security/jwt-unsafe-verify': 'error',
-    'security/missing-rate-limit': 'error',
+    'security/missing-rate-limit': 'warn',
     'security/path-traversal': 'error',
     'security/ssrf-risk': 'error',
     'security/cors-misconfiguration': 'error',

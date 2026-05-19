@@ -59,7 +59,7 @@ program
     await wf(configPath, JSON.stringify(DEFAULT_CONFIG, null, 2));
     process.stdout.write(chalk.green('✓') + ` .aicoprc.json created at ${configPath}\n`);
     process.stdout.write(chalk.dim('Edit this file to customize rules, thresholds, and output settings.\n'));
-    process.stdout.write(chalk.dim('Tip: .aicoprc.json is also supported for backwards compatibility.\n'));
+    process.stdout.write(chalk.dim('Tip: aicop also auto-discovers .aicoprc.js, aicop.config.js, or an "aicop" key in package.json\n'));
   });
 
 program
@@ -84,7 +84,7 @@ program
       spinner.stop();
       writeBaseline(process.cwd(), result);
       process.stdout.write(
-        chalk.green('✓') + ` Baseline saved: AIScore™ ${chalk.bold(String(result.vibeScore))}/100 ` +
+        chalk.green('✓') + ` Baseline saved: AIScore™ ${chalk.bold(String(result.aiScore))}/100 ` +
         chalk.dim(`(${result.errorCount} errors, ${result.warnCount} warnings, ${result.filesScanned} files)\n`) +
         chalk.dim('  Every future scan will show the delta against this baseline.\n')
       );
@@ -97,16 +97,28 @@ program
     }
   });
 
+async function detectDefaultBranch(): Promise<string> {
+  try {
+    const git = (await import('simple-git')).default(process.cwd());
+    const result = await git.raw(['symbolic-ref', 'refs/remotes/origin/HEAD']);
+    const trimmed = result.trim();
+    const parts = trimmed.split('/');
+    return parts[parts.length - 1] || 'HEAD~1';
+  } catch {
+    return 'HEAD~1';
+  }
+}
+
 program
   .command('diff [ref]')
-  .description('Scan only files changed since <ref> (default: main)')
+  .description('Scan only files changed since <ref> (default: auto-detected default branch)')
   .option('--ci', 'CI mode')
   .option('--format <format>', 'Output format', 'terminal')
   .option('--output <path>', 'Write report to file')
   .option('--severity <level>', 'Minimum severity', 'info')
   .option('--config <path>', 'Config file path')
   .action(async (ref: string | undefined, opts: Partial<CliOptions>) => {
-    const gitRef = ref ?? 'main';
+    const gitRef = ref ?? await detectDefaultBranch();
     const config = await loadConfig(process.cwd(), opts.config);
     const ci = Boolean(opts.ci);
     if (ci) setCiMode(true);
@@ -133,7 +145,7 @@ program
         outputPath: opts.output,
         version: VERSION,
       });
-      process.exit(exitCode(result));
+      process.exit(exitCode(result, ci));
     } catch (err) {
       spinner?.fail('Diff scan failed');
       process.stderr.write(String(err) + '\n');
@@ -293,9 +305,9 @@ program
         watch: false,
       });
       spinner.succeed(chalk.green(`Scanned ${result.filesScanned} files`));
-      const score = result.vibeScore;
+      const score = result.aiScore;
       const color = getBadgeColor(score);
-      const badgeUrl = `https://img.shields.io/badge/AIScore-${score}%2F100-${color}?style=${opts.style}`;
+      const badgeUrl = `https://img.shields.io/badge/aicop-${score}%2F100-${color}?style=${opts.style}`;
       const markdown = `![AIScore](${badgeUrl})`;
       const scoreEmoji = getScoreEmoji(score);
       const W = 63;
@@ -374,7 +386,7 @@ async function handleScanResult(result: ScanResult, opts: CliOptions, ci: boolea
     if (hiddenInfoCount > 0 && !ci && !opts.output) {
       process.stdout.write(chalk.blue(`\nℹ  ${hiddenInfoCount} info finding${hiddenInfoCount === 1 ? '' : 's'} — run with --severity info to see per-file locations\n`));
     }
-    const code = exitCode(displayResult);
+    const code = exitCode(displayResult, ci);
     if (ci && code !== 0) {
       process.stderr.write(`\nThreshold exceeded — exit code ${code}\n`);
     }
@@ -403,14 +415,15 @@ async function runScan(targetPath: string, opts: CliOptions): Promise<void> {
   const displaySeverity: Severity = (opts.severity as Severity) ?? 'warn';
   const scanOptions = buildScanOptions(resolvedTarget, config, opts, displaySeverity);
 
-  const spinner = ci ? null : ora(chalk.dim('Collecting files...')).start();
+  const isFileFormat = (opts.format as string) === 'json' || (opts.format as string) === 'html';
+  const spinner = (ci || isFileFormat) ? null : ora(chalk.dim('Collecting files...')).start();
   const ruleCount = getRuleCount();
 
   const onProgress = (file: string): void => {
     if (spinner) spinner.text = chalk.dim(`Scanning… ${path.basename(file)}`);
   };
 
-  if (!ci) {
+  if (!ci && !isFileFormat) {
     spinner?.stop();
     printHeader(0, ruleCount, VERSION, ci);
     spinner?.start(chalk.dim('Collecting files...'));
@@ -421,10 +434,14 @@ async function runScan(targetPath: string, opts: CliOptions): Promise<void> {
     if (result.filesScanned === 0) {
       spinner?.fail(chalk.yellow('No scannable files found'));
       const target = path.resolve(targetPath);
-      process.stdout.write(
+      const noFilesMsg =
         chalk.yellow('\n  ⚠  No JS/TS files found in ') + chalk.bold(target) + '\n' +
-        chalk.dim('     AICop scans: .ts .tsx .js .jsx .mjs .cjs .mts .cts\n\n')
-      );
+        chalk.dim('     AICop scans: .ts .tsx .js .jsx .mjs .cjs .mts .cts\n\n');
+      if (isFileFormat) {
+        process.stderr.write(noFilesMsg);
+      } else {
+        process.stdout.write(noFilesMsg);
+      }
       process.exit(0);
     }
     spinner?.succeed(chalk.green(`Scanned ${result.filesScanned} files in ${result.scanDurationMs}ms`));
@@ -436,7 +453,8 @@ async function runScan(targetPath: string, opts: CliOptions): Promise<void> {
   }
 }
 
-function exitCode(result: { errorCount: number; warnCount: number; vibeScore: number }): number {
+function exitCode(result: { errorCount: number; warnCount: number; aiScore: number }, ci: boolean): number {
+  if (!ci) return 0;
   if (result.errorCount > 0) return 1;
   return 0;
 }

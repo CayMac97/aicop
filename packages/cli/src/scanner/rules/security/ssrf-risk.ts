@@ -30,8 +30,13 @@ function isUserControlledArg(node: TSESTree.Node): boolean {
   return false;
 }
 
-function isFetchCall(node: TSESTree.CallExpression): boolean {
-  return isIdentifier(node.callee) && (node.callee as TSESTree.Identifier).name === 'fetch';
+const DIRECT_HTTP_CLIENTS = new Set(['got', 'request', 'needle', 'nodeFetch', 'superagent']);
+
+function isDirectHttpClientCall(node: TSESTree.CallExpression): string | null {
+  if (!isIdentifier(node.callee)) return null;
+  const name = (node.callee as TSESTree.Identifier).name;
+  if (name === 'fetch' || DIRECT_HTTP_CLIENTS.has(name)) return name;
+  return null;
 }
 
 function isHttpClientMethodCall(node: TSESTree.CallExpression): string | null {
@@ -48,8 +53,9 @@ function isHttpClientMethodCall(node: TSESTree.CallExpression): string | null {
 
 function checkHttpCall(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
   let clientName = '';
-  if (isFetchCall(node)) {
-    clientName = 'fetch';
+  const directName = isDirectHttpClientCall(node);
+  if (directName) {
+    clientName = directName;
   } else {
     const methodName = isHttpClientMethodCall(node);
     if (!methodName) return null;

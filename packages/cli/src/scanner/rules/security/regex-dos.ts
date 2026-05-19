@@ -2,7 +2,7 @@ import { TSESTree } from '@typescript-eslint/typescript-estree';
 import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
-import { getLine, getColumn, isStringLiteral, isIdentifier } from '../../../utils/ast-helpers.js';
+import { getLine, getColumn, isStringLiteral, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
 
 const NESTED_QUANTIFIER = /(\([^)]*[+*][^)]*\)[+*]|\([^)]*\)[+*][+*])/;;
 const OVERLAPPING_ALTERNATION = /\(([^|)]+\|[^)]+)\)[+*]/;
@@ -40,12 +40,23 @@ function checkRegexLiteral(node: RegexLiteral, source: string, filePath: string)
   };
 }
 
-const USER_INPUT_RE = /\breq\s*\.\s*(?:body|params|query|headers|cookies)\b/;
+const USER_INPUT_PROPS_REGEX = new Set(['params', 'body', 'query', 'headers', 'cookies']);
 
-function isUserControlledArg(arg: TSESTree.Node, source: string): boolean {
-  const line = (arg.loc?.start.line ?? 1) - 1;
-  const lineText = source.split('\n')[line] ?? '';
-  return USER_INPUT_RE.test(lineText);
+function isUserControlledArg(arg: TSESTree.Node): boolean {
+  if (arg.type === 'TemplateLiteral') {
+    return (arg as TSESTree.TemplateLiteral).expressions.some((e) => isUserControlledArg(e));
+  }
+  if (!isMemberExpression(arg)) return false;
+  const me = arg as TSESTree.MemberExpression;
+  if (isMemberExpression(me.object)) {
+    const parent = me.object as TSESTree.MemberExpression;
+    if (isIdentifier(parent.object) && (parent.object as TSESTree.Identifier).name === 'req') {
+      if (isIdentifier(parent.property) && USER_INPUT_PROPS_REGEX.has((parent.property as TSESTree.Identifier).name)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function checkNewRegExp(node: TSESTree.NewExpression, source: string, filePath: string): Finding | null {
@@ -54,7 +65,7 @@ function checkNewRegExp(node: TSESTree.NewExpression, source: string, filePath: 
   const patternArg = node.arguments[0];
   if (!patternArg) return null;
   if (!isStringLiteral(patternArg as TSESTree.Expression)) {
-    const severity = isUserControlledArg(patternArg, source) ? 'error' : 'warn';
+    const severity = isUserControlledArg(patternArg) ? 'error' : 'warn';
     return {
       ruleId: 'security/regex-dos',
       severity,

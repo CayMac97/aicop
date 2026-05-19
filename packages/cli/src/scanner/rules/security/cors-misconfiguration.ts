@@ -31,10 +31,64 @@ function getObjectPropValue(obj: TSESTree.ObjectExpression, propName: string): T
   return null;
 }
 
+function isOriginReflectCallback(node: TSESTree.Expression): boolean {
+  if (node.type !== 'ArrowFunctionExpression' && node.type !== 'FunctionExpression') return false;
+  const fn = node as TSESTree.ArrowFunctionExpression | TSESTree.FunctionExpression;
+  if (fn.params.length < 2) return false;
+  const originParam = fn.params[0];
+  const callbackParam = fn.params[1];
+  if (!isIdentifier(originParam) || !isIdentifier(callbackParam)) return false;
+  const originName = (originParam as TSESTree.Identifier).name;
+  const cbName = (callbackParam as TSESTree.Identifier).name;
+  const body = fn.body;
+  if (body.type === 'BlockStatement') {
+    const stmts = (body as TSESTree.BlockStatement).body;
+    if (stmts.length === 1 && stmts[0].type === 'ExpressionStatement') {
+      const expr = (stmts[0] as TSESTree.ExpressionStatement).expression;
+      if (expr.type === 'CallExpression') {
+        const call = expr as TSESTree.CallExpression;
+        if (isIdentifier(call.callee) && (call.callee as TSESTree.Identifier).name === cbName) {
+          const args = call.arguments;
+          if (args.length >= 2 && args[1] && isIdentifier(args[1]) && (args[1] as TSESTree.Identifier).name === originName) {
+            return true;
+          }
+        }
+      }
+    }
+  } else if (body.type === 'CallExpression') {
+    const call = body as TSESTree.CallExpression;
+    if (isIdentifier(call.callee) && (call.callee as TSESTree.Identifier).name === cbName) {
+      const args = call.arguments;
+      if (args.length >= 2 && args[1] && isIdentifier(args[1]) && (args[1] as TSESTree.Identifier).name === originName) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function checkCorsObjectMisconfiguration(obj: TSESTree.ObjectExpression, node: TSESTree.Node, source: string, filePath: string): Finding | null {
   const origin = getObjectPropValue(obj, 'origin');
   const credentials = getObjectPropValue(obj, 'credentials');
-  if (!origin || !credentials) return null;
+  if (!origin) return null;
+
+  if (isOriginReflectCallback(origin)) {
+    const credIsTrue = credentials?.type === 'Literal' && (credentials as TSESTree.Literal).value === true;
+    return {
+      ruleId: 'security/cors-misconfiguration',
+      severity: 'error',
+      message: credIsTrue
+        ? 'CORS origin callback unconditionally reflects any origin with credentials: true — credential theft risk'
+        : 'CORS origin callback unconditionally reflects any origin — cross-origin access risk',
+      file: filePath,
+      line: getLine(node),
+      column: getColumn(node),
+      snippet: extractSnippet(source, getLine(node)),
+      fix: 'Validate origin against an allowlist: if (!ALLOWED_ORIGINS.includes(origin)) return callback(new Error("Not allowed"))',
+    };
+  }
+
+  if (!credentials) return null;
   const credIsTrue = credentials.type === 'Literal' && (credentials as TSESTree.Literal).value === true;
   if (!credIsTrue) return null;
   if (isWildcardOrigin(origin)) {

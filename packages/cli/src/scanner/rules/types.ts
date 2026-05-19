@@ -52,7 +52,7 @@ export interface ScanResult {
   errorCount: number;
   warnCount: number;
   infoCount: number;
-  vibeScore: number;
+  aiScore: number;
   categoryScores?: {
     security: number;
     aiSmell: number;
