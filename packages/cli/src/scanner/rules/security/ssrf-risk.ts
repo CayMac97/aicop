@@ -3,19 +3,21 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
+import { buildTaintMap, isTaintedNode } from '../../../utils/taint-tracker.js';
 
 const HTTP_CLIENTS = new Set(['fetch', 'axios', 'got', 'request', 'superagent', 'undici']);
 const AXIOS_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'request']);
 const USER_INPUT_PROPS = new Set(['params', 'body', 'query', 'headers']);
 
-function isUserControlledArg(node: TSESTree.Node): boolean {
+function isUserControlledArg(node: TSESTree.Node, tainted: Set<string>): boolean {
+  if (isTaintedNode(node, tainted)) return true;
   if (node.type === 'TemplateLiteral') {
     const tl = node as TSESTree.TemplateLiteral;
-    return tl.expressions.some((e) => isUserControlledArg(e));
+    return tl.expressions.some((e) => isUserControlledArg(e, tainted));
   }
   if (node.type === 'BinaryExpression') {
     const be = node as TSESTree.BinaryExpression;
-    return isUserControlledArg(be.left) || isUserControlledArg(be.right);
+    return isUserControlledArg(be.left, tainted) || isUserControlledArg(be.right, tainted);
   }
   if (!isMemberExpression(node)) return false;
   const me = node as TSESTree.MemberExpression;
@@ -51,7 +53,7 @@ function isHttpClientMethodCall(node: TSESTree.CallExpression): string | null {
   return isValid ? `${obj}.${method}` : null;
 }
 
-function checkHttpCall(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+function checkHttpCall(node: TSESTree.CallExpression, source: string, filePath: string, tainted: Set<string>): Finding | null {
   let clientName = '';
   const directName = isDirectHttpClientCall(node);
   if (directName) {
@@ -62,7 +64,7 @@ function checkHttpCall(node: TSESTree.CallExpression, source: string, filePath: 
     clientName = methodName;
   }
   const urlArg = node.arguments[0];
-  if (!urlArg || !isUserControlledArg(urlArg)) return null;
+  if (!urlArg || !isUserControlledArg(urlArg, tainted)) return null;
   return {
     ruleId: 'security/ssrf-risk',
     severity: 'error',
@@ -86,10 +88,11 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
+    const tainted = buildTaintMap(ast);
 
     walk(ast, {
       CallExpression(rawNode) {
-        const finding = checkHttpCall(rawNode as TSESTree.CallExpression, source, filePath);
+        const finding = checkHttpCall(rawNode as TSESTree.CallExpression, source, filePath, tainted);
         if (finding) findings.push(finding);
       },
     });

@@ -65,13 +65,11 @@ function checkNewRegExp(node: TSESTree.NewExpression, source: string, filePath: 
   const patternArg = node.arguments[0];
   if (!patternArg) return null;
   if (!isStringLiteral(patternArg as TSESTree.Expression)) {
-    const severity = isUserControlledArg(patternArg) ? 'error' : 'warn';
+    if (!isUserControlledArg(patternArg)) return null;
     return {
       ruleId: 'security/regex-dos',
-      severity,
-      message: severity === 'error'
-        ? 'new RegExp() with user-controlled input — direct ReDoS risk'
-        : 'new RegExp() with dynamic pattern — ensure pattern is not user-controlled',
+      severity: 'error',
+      message: 'new RegExp() with user-controlled input — direct ReDoS risk',
       file: filePath,
       line: getLine(node),
       column: getColumn(node),

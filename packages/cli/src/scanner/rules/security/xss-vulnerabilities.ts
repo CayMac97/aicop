@@ -3,6 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { isStringLiteral, getLine, getColumn, isMemberExpression, isIdentifier, isCallExpression } from '../../../utils/ast-helpers.js';
+import { buildTaintMap, isTaintedNode } from '../../../utils/taint-tracker.js';
 
 const USER_INPUT_PROPS = new Set(['body', 'query', 'params', 'headers']);
 
@@ -49,7 +50,8 @@ function isSanitizedNode(node: TSESTree.Node, sanitizedVars: Set<string>): boole
   return false;
 }
 
-function isUserInput(node: TSESTree.Node): boolean {
+function isUserInput(node: TSESTree.Node, tainted: Set<string> = new Set()): boolean {
+  if (isTaintedNode(node, tainted)) return true;
   if (isMemberExpression(node)) {
     const me = node as TSESTree.MemberExpression;
     if (isMemberExpression(me.object)) {
@@ -62,12 +64,12 @@ function isUserInput(node: TSESTree.Node): boolean {
     }
   }
   if (node.type === 'TemplateLiteral') {
-    return (node as TSESTree.TemplateLiteral).expressions.some((e) => isUserInput(e));
+    return (node as TSESTree.TemplateLiteral).expressions.some((e) => isUserInput(e, tainted));
   }
   if (node.type === 'BinaryExpression') {
     const be = node as TSESTree.BinaryExpression;
     if (be.operator !== '+') return false;
-    return isUserInput(be.left) || isUserInput(be.right);
+    return isUserInput(be.left, tainted) || isUserInput(be.right, tainted);
   }
   return false;
 }
@@ -98,14 +100,15 @@ function isInnerHTMLAssign(node: TSESTree.AssignmentExpression): boolean {
   return prop === 'innerHTML' || prop === 'outerHTML';
 }
 
-function checkInnerHTML(node: TSESTree.AssignmentExpression, source: string, filePath: string, sanitizedVars: Set<string>): Finding | null {
+function checkInnerHTML(node: TSESTree.AssignmentExpression, source: string, filePath: string, sanitizedVars: Set<string>, tainted: Set<string>): Finding | null {
   if (!isInnerHTMLAssign(node)) return null;
   if (isStaticString(node.right)) return null;
   if (isSanitizedNode(node.right, sanitizedVars)) return null;
+  if (!isUserInput(node.right, tainted)) return null;
   return {
     ruleId: 'security/xss-vulnerabilities',
     severity: 'error',
-    message: 'innerHTML assigned with a non-static value — potential XSS',
+    message: 'innerHTML assigned with user-controlled value — XSS risk',
     file: filePath,
     line: getLine(node),
     column: getColumn(node),
@@ -114,7 +117,7 @@ function checkInnerHTML(node: TSESTree.AssignmentExpression, source: string, fil
   };
 }
 
-function checkDocumentWrite(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+function checkDocumentWrite(node: TSESTree.CallExpression, source: string, filePath: string, tainted: Set<string>): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
@@ -123,10 +126,11 @@ function checkDocumentWrite(node: TSESTree.CallExpression, source: string, fileP
   if (method !== 'write' && method !== 'writeln') return null;
   const arg = node.arguments[0];
   if (!arg || isStaticString(arg as TSESTree.Expression)) return null;
+  if (!isUserInput(arg, tainted)) return null;
   return {
     ruleId: 'security/xss-vulnerabilities',
     severity: 'error',
-    message: 'document.write() with dynamic value — XSS risk',
+    message: 'document.write() with user-controlled value — XSS risk',
     file: filePath,
     line: getLine(node),
     column: getColumn(node),
@@ -135,17 +139,18 @@ function checkDocumentWrite(node: TSESTree.CallExpression, source: string, fileP
   };
 }
 
-function checkInsertAdjacentHTML(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+function checkInsertAdjacentHTML(node: TSESTree.CallExpression, source: string, filePath: string, tainted: Set<string>): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.property)) return null;
   if ((me.property as TSESTree.Identifier).name !== 'insertAdjacentHTML') return null;
   const htmlArg = node.arguments[1];
   if (!htmlArg || isStaticString(htmlArg as TSESTree.Expression)) return null;
+  if (!isUserInput(htmlArg, tainted)) return null;
   return {
     ruleId: 'security/xss-vulnerabilities',
     severity: 'error',
-    message: 'insertAdjacentHTML() with dynamic value — XSS risk',
+    message: 'insertAdjacentHTML() with user-controlled value — XSS risk',
     file: filePath,
     line: getLine(node),
     column: getColumn(node),
@@ -247,10 +252,11 @@ const rule: Rule = {
     const dynamicSendNodes: TSESTree.CallExpression[] = [];
     const flaggedLines = new Set<number>();
     const sanitizedVars = buildSanitizedVarsMap(ast);
+    const tainted = buildTaintMap(ast);
 
     walk(ast, {
       AssignmentExpression(rawNode) {
-        const finding = checkInnerHTML(rawNode as TSESTree.AssignmentExpression, source, filePath, sanitizedVars);
+        const finding = checkInnerHTML(rawNode as TSESTree.AssignmentExpression, source, filePath, sanitizedVars, tainted);
         if (finding) findings.push(finding);
       },
       CallExpression(rawNode) {
@@ -261,10 +267,10 @@ const rule: Rule = {
           return;
         }
 
-        const docWrite = checkDocumentWrite(node, source, filePath);
+        const docWrite = checkDocumentWrite(node, source, filePath, tainted);
         if (docWrite) { findings.push(docWrite); return; }
 
-        const adjHtml = checkInsertAdjacentHTML(node, source, filePath);
+        const adjHtml = checkInsertAdjacentHTML(node, source, filePath, tainted);
         if (adjHtml) { findings.push(adjHtml); return; }
 
         const resSend = checkResSend(node, source, filePath);

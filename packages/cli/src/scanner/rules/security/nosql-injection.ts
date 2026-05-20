@@ -3,6 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
+import { buildTaintMap } from '../../../utils/taint-tracker.js';
 
 const MONGO_QUERY_METHODS = new Set([
   'find',
@@ -47,17 +48,18 @@ function isSequelizeCall(node: TSESTree.CallExpression): boolean {
   });
 }
 
-function containsRawReqInput(node: TSESTree.Node): boolean {
+function containsRawReqInput(node: TSESTree.Node, tainted: Set<string>): boolean {
   if (isReqInput(node)) return true;
+  if (isIdentifier(node) && tainted.has((node as TSESTree.Identifier).name)) return true;
   if (node.type === 'CallExpression') return false;
   if (node.type === 'ObjectExpression') {
     return (node as TSESTree.ObjectExpression).properties.some(
-      (p) => p.type === 'Property' && containsRawReqInput((p as TSESTree.Property).value),
+      (p) => p.type === 'Property' && containsRawReqInput((p as TSESTree.Property).value, tainted),
     );
   }
   if (node.type === 'ArrayExpression') {
     return (node as TSESTree.ArrayExpression).elements.some(
-      (e) => e !== null && containsRawReqInput(e as TSESTree.Node),
+      (e) => e !== null && containsRawReqInput(e as TSESTree.Node, tainted),
     );
   }
   return false;
@@ -74,6 +76,7 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
+    const tainted = buildTaintMap(ast);
 
     walk(ast, {
       CallExpression(rawNode) {
@@ -87,7 +90,7 @@ const rule: Rule = {
         if (isSequelizeCall(node)) return;
 
         for (const arg of node.arguments) {
-          if (containsRawReqInput(arg as TSESTree.Node)) {
+          if (containsRawReqInput(arg as TSESTree.Node, tainted)) {
             findings.push({
               ruleId: 'security/nosql-injection',
               severity: 'error',

@@ -9,7 +9,7 @@ const AUTH_ROUTE_PATTERNS = [
   /\/forgot[-_]?password/i, /\/reset[-_]?password/i, /\/auth/i,
 ];
 const RATE_LIMIT_IDENTIFIERS = /rateLimit|rateLimiter|limitRate|throttle|slowDown|expressRateLimit/i;
-const HTTP_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete', 'all', 'use']);
+const HTTP_METHODS = new Set(['post', 'put', 'patch', 'delete']);
 
 function isAuthRoute(pathValue: string): boolean {
   return AUTH_ROUTE_PATTERNS.some((p) => p.test(pathValue));

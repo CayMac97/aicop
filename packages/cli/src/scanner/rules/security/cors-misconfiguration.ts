@@ -111,6 +111,22 @@ function checkCorsObjectMisconfiguration(obj: TSESTree.ObjectExpression, node: T
   return null;
 }
 
+function hasAllowlistValidation(source: string, varName: string, line: number): boolean {
+  const priorLines = source.split('\n').slice(Math.max(0, line - 15), line).join('\n');
+  // Match prefix only (no closing paren) so 'includes(origin as string)' also works
+  return priorLines.includes(`includes(${varName}`) ||
+    priorLines.includes(`indexOf(${varName}`) ||
+    priorLines.includes(`.has(${varName}`);
+}
+
+function unwrapTypeAssertion(node: TSESTree.Expression): TSESTree.Expression {
+  const t = node.type;
+  if (t === 'TSAsExpression' || t === 'TSTypeAssertion') {
+    return unwrapTypeAssertion((node as unknown as { expression: TSESTree.Expression }).expression);
+  }
+  return node;
+}
+
 function checkResHeaderMisconfiguration(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
@@ -124,6 +140,11 @@ function checkResHeaderMisconfiguration(node: TSESTree.CallExpression, source: s
   const headerName = String((keyArg as TSESTree.StringLiteral).value);
   if (headerName !== 'Access-Control-Allow-Origin') return null;
   if (isStringLiteral(valArg as TSESTree.Expression)) return null;
+  const innerVal = unwrapTypeAssertion(valArg as TSESTree.Expression);
+  if (isIdentifier(innerVal)) {
+    const varName = (innerVal as TSESTree.Identifier).name;
+    if (hasAllowlistValidation(source, varName, getLine(node))) return null;
+  }
   return {
     ruleId: 'security/cors-misconfiguration',
     severity: 'error',
