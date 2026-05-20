@@ -30,10 +30,10 @@ function isUserInputExpression(node: TSESTree.Expression): boolean {
   return objName === 'req' && USER_INPUT_SOURCES.has(propName);
 }
 
-function templateHasUserInput(node: TSESTree.TemplateLiteral): boolean {
+function templateHasUserInput(node: TSESTree.TemplateLiteral, tainted: Set<string>): boolean {
   return node.expressions.some((expr) => {
     if (isUserInputExpression(expr)) return true;
-    if (isIdentifier(expr)) return true;
+    if (isIdentifier(expr) && tainted.has((expr as TSESTree.Identifier).name)) return true;
     return false;
   });
 }
@@ -203,7 +203,7 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
       TemplateLiteral(rawNode) {
         const node = rawNode as TSESTree.TemplateLiteral;
         const raw = node.quasis.map((q) => q.value.raw).join('');
-        if (!looksLikeSQL(raw) || !templateHasUserInput(node)) return;
+        if (!looksLikeSQL(raw) || !templateHasUserInput(node, tainted)) return;
         tryFlag(node, 'SQL template literal with user input — injection risk',
           'Use parameterized queries: db.query("SELECT * FROM users WHERE id = ?", [id])');
       },

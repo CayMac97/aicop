@@ -32,6 +32,14 @@ const SAFE_PLACEHOLDER_PATTERN = /(?:example|placeholder|test|fake|dummy|sample|
 const PLACEHOLDER_VALUES = /(?:example|placeholder|test|fake|dummy|your[_\-\s]?|<.*?>|xxx)/i;
 // Public keys that are designed to be embedded in client-side code
 const PUBLIC_KEY_PATTERN = /^(?:AIzaSy|pk_(?:test|live)_)/;
+// Values that are references/names, not actual secrets
+const ENV_VAR_NAME_RE = /^[A-Z][A-Z0-9_]{2,}$/;                // JWT_SECRET, API_KEY
+const HTTP_HEADER_VALUE_RE = /^(?:authorization|x-[\w-]{1,40}|bearer|content-type|user-agent|set-cookie)$/i;
+// Values that are themselves secret-concept names (field names, not actual secret values)
+const SECRET_CONCEPT_NAME_RE = /^(?:password|passwd|pwd|secret|token|jwt|apikey|api[_\-]?key|auth[_\-]?token|access[_\-]?token|private[_\-]?key|client[_\-]?secret|refresh[_\-]?token|session[_\-]?secret|bearer)$/i;
+// Column/field descriptor: 2-3 word parts only (1-2 separators), all lowercase, no digits
+// e.g. 'user_password', 'api_key_field' — but NOT 'super_secret_jwt_key_do_not_share'
+const FIELD_DESCRIPTOR_RE = /^[a-z][a-z]*(?:[_-][a-z][a-z]*){1,2}$/;
 const MIN_SECRET_VALUE_LENGTH = 8;
 
 function isProcessEnv(node: TSESTree.Node): boolean {
@@ -72,6 +80,15 @@ function looksLikeNaturalLanguage(value: string): boolean {
   return false;
 }
 
+function looksLikeKeyNameNotValue(value: string): boolean {
+  if (ENV_VAR_NAME_RE.test(value)) return true;         // JWT_SECRET, SESSION_SECRET
+  if (HTTP_HEADER_VALUE_RE.test(value)) return true;    // Authorization, X-Api-Key
+  if (SECRET_CONCEPT_NAME_RE.test(value)) return true;  // 'password', 'client_secret'
+  // 'user_password', 'api_key_field' — pure lowercase snake/kebab with separator → column name
+  if (FIELD_DESCRIPTOR_RE.test(value) && SECRET_NAME_PATTERNS.test(value)) return true;
+  return false;
+}
+
 function checkVariableNamePattern(name: string, value: string): boolean {
   return (
     SECRET_NAME_PATTERNS.test(name) &&
@@ -79,7 +96,8 @@ function checkVariableNamePattern(name: string, value: string): boolean {
     !looksLikeNaturalLanguage(value) &&
     !SAFE_PLACEHOLDER_PATTERN.test(value) &&
     !SAFE_PLACEHOLDER_PATTERN.test(name) &&
-    !isDocumentationString(value)
+    !isDocumentationString(value) &&
+    !looksLikeKeyNameNotValue(value)
   );
 }
 
@@ -91,6 +109,7 @@ function checkObjectProperty(node: TSESTree.Property, source: string, filePath: 
   if (PLACEHOLDER_VALUES.test(value)) return null;
   if (isDocumentationString(value)) return null;
   if (PUBLIC_KEY_PATTERN.test(value)) return null;
+  if (looksLikeKeyNameNotValue(value)) return null;
 
   let keyName: string | null = null;
   if (isIdentifier(node.key)) {

@@ -154,9 +154,25 @@ function checkInsertAdjacentHTML(node: TSESTree.CallExpression, source: string, 
   };
 }
 
-function checkDangerouslySetInnerHTML(node: TSESTree.JSXAttribute, source: string, filePath: string): Finding | null {
+function getHtmlPropValue(node: TSESTree.JSXAttribute): TSESTree.Node | null {
+  if (!node.value || node.value.type !== 'JSXExpressionContainer') return null;
+  const expr = (node.value as TSESTree.JSXExpressionContainer).expression;
+  if (expr.type !== 'ObjectExpression') return null;
+  for (const prop of (expr as TSESTree.ObjectExpression).properties) {
+    if (prop.type !== 'Property') continue;
+    const p = prop as TSESTree.Property;
+    if (isIdentifier(p.key) && (p.key as TSESTree.Identifier).name === '__html') {
+      return p.value as TSESTree.Node;
+    }
+  }
+  return null;
+}
+
+function checkDangerouslySetInnerHTML(node: TSESTree.JSXAttribute, source: string, filePath: string, sanitizedVars: Set<string>): Finding | null {
   if (node.name.type !== 'JSXIdentifier') return null;
   if ((node.name as TSESTree.JSXIdentifier).name !== 'dangerouslySetInnerHTML') return null;
+  const htmlVal = getHtmlPropValue(node);
+  if (htmlVal && isSanitizedNode(htmlVal, sanitizedVars)) return null;
   return {
     ruleId: 'security/xss-vulnerabilities',
     severity: 'error',
@@ -262,7 +278,7 @@ const rule: Rule = {
         // res.render() uses template engines that auto-escape by default — not flagged
       },
       JSXAttribute(rawNode) {
-        const finding = checkDangerouslySetInnerHTML(rawNode as TSESTree.JSXAttribute, source, filePath);
+        const finding = checkDangerouslySetInnerHTML(rawNode as TSESTree.JSXAttribute, source, filePath, sanitizedVars);
         if (finding) findings.push(finding);
       },
     });
