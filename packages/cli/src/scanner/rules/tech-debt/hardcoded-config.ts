@@ -39,6 +39,8 @@ function looksLikeBaseUrl(value: string): boolean {
   if (value.includes('0.0.0.0')) return false;
   if (value.includes('127.0.0.1')) return false;
   if (value.includes('example.com')) return false;
+  if (value.includes('example.org')) return false;
+  if (value.includes('placeholder.com')) return false;
   if (value.includes('your-')) return false;
   if (value.endsWith('.git')) return false;
   if (KNOWN_PUBLIC_HOSTS.test(value)) return false;

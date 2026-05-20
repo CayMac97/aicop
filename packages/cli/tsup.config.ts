@@ -18,7 +18,7 @@ export default defineConfig([
       js: '#!/usr/bin/env node',
     },
     define: {
-      __VIBESCAN_VERSION__: JSON.stringify(pkg.version),
+      __AISCOP_VERSION__: JSON.stringify(pkg.version),
     },
     esbuildOptions(options) {
       options.conditions = ['node'];
@@ -37,7 +37,7 @@ export default defineConfig([
     splitting: false,
     bundle: true,
     define: {
-      __VIBESCAN_VERSION__: JSON.stringify(pkg.version),
+      __AISCOP_VERSION__: JSON.stringify(pkg.version),
     },
     esbuildOptions(options) {
       options.conditions = ['node'];

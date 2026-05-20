@@ -79,13 +79,9 @@ function buildSummaryContent(result: ScanResult): string {
   lines.push(pad('Files with issues:', `${result.filesWithIssues}`));
   lines.push('');
 
-  const errLine = `   🔴 Errors:   ${String(result.errorCount).padStart(4)}   ${chalk.red('(must fix before production)')}`;
-  const warnLine = `   🟡 Warnings: ${String(result.warnCount).padStart(4)}   ${chalk.yellow('(should fix)')}`;
-  const infoLine = `   🔵 Info:     ${String(result.infoCount).padStart(4)}   ${chalk.blue('(consider fixing)')}`;
-
-  lines.push(errLine);
-  lines.push(warnLine);
-  lines.push(infoLine);
+  lines.push(`   🔴 Errors:   ${String(result.errorCount).padStart(4)}   ${chalk.red('(must fix before production)')}`);
+  if (result.warnCount > 0) lines.push(`   🟡 Warnings: ${String(result.warnCount).padStart(4)}   ${chalk.yellow('(should fix)')}`);
+  if (result.infoCount > 0) lines.push(`   🔵 Info:     ${String(result.infoCount).padStart(4)}   ${chalk.blue('(consider fixing)')}`);
   if (result.parseErrors > 0) {
     lines.push(`   ⚠  Parse errors: ${result.parseErrors} ${result.parseErrors === 1 ? 'file' : 'files'} could not be parsed (excluded from score)`);
   }
@@ -132,7 +128,12 @@ function buildCiSummary(result: ScanResult): string {
     '=== SCAN COMPLETE ===',
     `Files scanned: ${result.filesScanned}  Time: ${formatDuration(result.scanDurationMs)}`,
     `Files with issues: ${result.filesWithIssues}`,
-    `Errors: ${result.errorCount}  Warnings: ${result.warnCount}  Info: ${result.infoCount}${result.parseErrors > 0 ? `  Parse errors: ${result.parseErrors}` : ''}`,
+    [
+      `Errors: ${result.errorCount}`,
+      result.warnCount > 0 ? `Warnings: ${result.warnCount}` : null,
+      result.infoCount > 0 ? `Info: ${result.infoCount}` : null,
+      result.parseErrors > 0 ? `Parse errors: ${result.parseErrors}` : null,
+    ].filter(Boolean).join('  '),
     `AIScore: ${result.aiScore}/100 (${aiScoreLabel(result.aiScore)})`,
     ...(result.categoryScores ? [
       `Security Score: ${result.categoryScores.security}/100`,

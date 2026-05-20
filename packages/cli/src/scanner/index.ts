@@ -31,10 +31,20 @@ function getEnabledRules(config: VibescanConfig, ruleId?: string): Rule[] {
 
 const TEST_FILE_RE = /[/\\](?:test|tests|spec|__tests__|e2e|mocks?|__mocks__)[/\\](?!fixtures[/\\])|\.(?:test|spec|e2e-spec|fixture)\.[jt]sx?$/i;
 
+const SEV_ORDER: Record<string, number> = { error: 0, warn: 1, info: 2 };
+const SEV_BY_ORDER = ['error', 'warn', 'info'] as const;
+
 function applyConfigSeverity(finding: Finding, config: VibescanConfig): Finding {
   const configured = config.rules[finding.ruleId];
   if (!configured || configured === 'off') return finding;
-  return { ...finding, severity: configured as Severity };
+  // Config can downgrade findings (e.g. error→warn to suppress) but rules that
+  // compute context-sensitive severity (e.g. MD5 for checksums = warn vs
+  // MD5 for passwords = error) should not be upgraded beyond what the rule says.
+  // Take the MOST LENIENT between the config severity and the finding severity.
+  const configLevel = SEV_ORDER[configured] ?? 1;
+  const findingLevel = SEV_ORDER[finding.severity] ?? 1;
+  const finalLevel = Math.max(configLevel, findingLevel);
+  return { ...finding, severity: SEV_BY_ORDER[finalLevel] ?? finding.severity };
 }
 
 function downgradeInTestFile(finding: Finding, filePath: string): Finding {

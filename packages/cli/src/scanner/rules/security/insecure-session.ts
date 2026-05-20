@@ -106,7 +106,7 @@ const rule: Rule = {
   id: 'security/insecure-session',
   name: 'Insecure Session Configuration',
   category: 'security',
-  severity: 'error',
+  severity: 'warn',
   description: 'Detects insecure express-session configurations including weak secrets and unsafe cookie options',
   why: 'Weak session secrets allow session forgery. httpOnly:false exposes cookies to XSS. secure:false transmits session cookies over HTTP, enabling interception.',
   fix: 'Use a strong random secret from process.env, set httpOnly:true and secure:true on cookies',

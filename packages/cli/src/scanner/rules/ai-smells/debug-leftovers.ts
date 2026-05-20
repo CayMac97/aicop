@@ -15,6 +15,45 @@ function buildParentMap(ast: ParsedAST): Map<TSESTree.Node, TSESTree.Node> {
   return map;
 }
 
+const LIFECYCLE_EVENTS = new Set(['uncaughtException', 'unhandledRejection', 'SIGINT', 'SIGTERM', 'exit', 'beforeExit']);
+
+function isProcessOnLifecycleCallback(node: TSESTree.Node, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  let current: TSESTree.Node = node;
+  for (let i = 0; i < 10; i++) {
+    const parent = parentMap.get(current);
+    if (!parent) return false;
+    if (parent.type === 'CallExpression') {
+      const call = parent as TSESTree.CallExpression;
+      if (isMemberExpression(call.callee)) {
+        const me = call.callee as TSESTree.MemberExpression;
+        if (isIdentifier(me.object) && (me.object as TSESTree.Identifier).name === 'process') {
+          if (isIdentifier(me.property) && (me.property as TSESTree.Identifier).name === 'on') {
+            const eventArg = call.arguments[0];
+            if (eventArg?.type === 'Literal' && LIFECYCLE_EVENTS.has(String((eventArg as TSESTree.Literal).value))) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+    current = parent;
+  }
+  return false;
+}
+
+function isConsoleAsObjectPropertyValue(node: TSESTree.Node, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  const parent = parentMap.get(node);
+  if (!parent) return false;
+  // console.log used as a property value in an object: { info: (...args) => console.log(...args) }
+  if (parent.type === 'ArrowFunctionExpression' || parent.type === 'FunctionExpression') {
+    const grandParent = parentMap.get(parent);
+    if (grandParent?.type === 'Property') return true;
+  }
+  // Direct: { info: console.log }
+  if (parent.type === 'Property') return true;
+  return false;
+}
+
 function isInsideErrorHandler(node: TSESTree.Node, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
   let current: TSESTree.Node = node;
   for (let i = 0; i < 20; i++) {
@@ -50,6 +89,8 @@ function checkConsoleCall(
   const method = (me.property as TSESTree.Identifier).name;
   if (!CONSOLE_METHODS.has(method)) return null;
   if (isInsideErrorHandler(node, parentMap)) return null;
+  if (isConsoleAsObjectPropertyValue(node, parentMap)) return null;
+  if (isProcessOnLifecycleCallback(node, parentMap)) return null;
   return {
     ruleId: 'ai-smell/debug-leftovers',
     severity: 'info',
