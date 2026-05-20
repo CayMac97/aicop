@@ -11,6 +11,17 @@ const COMPLEXITY_INCREMENTORS = new Set([
 
 const LOGICAL_OPERATORS = new Set(['&&', '||', '??']);
 
+// A lookup switch: every case has only return/throw/break with no nested logic.
+function isLookupSwitch(node: TSESTree.SwitchStatement): boolean {
+  return node.cases.every((c) => {
+    if (c.consequent.length === 0) return true; // fallthrough
+    if (c.consequent.length > 1) return false;
+    const stmt = c.consequent[0];
+    if (stmt.type === 'ReturnStatement' || stmt.type === 'ThrowStatement' || stmt.type === 'BreakStatement') return true;
+    return false;
+  });
+}
+
 function getFunctionName(node: TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression): string {
   if (node.type === 'FunctionDeclaration' && node.id) return node.id.name;
   if (node.type === 'FunctionExpression' && node.id) return node.id.name;
@@ -20,12 +31,17 @@ function getFunctionName(node: TSESTree.FunctionDeclaration | TSESTree.FunctionE
 function calculateComplexity(funcNode: TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression): number {
   let complexity = 1;
   let nestedFuncDepth = 0;
+  const lookupSwitchNodes = new Set<TSESTree.Node>();
 
   walk(funcNode, {
     enter(node) {
       if (node !== funcNode && isFunctionNode(node)) { nestedFuncDepth++; return; }
       if (nestedFuncDepth > 0) return;
-      if (COMPLEXITY_INCREMENTORS.has(node.type)) complexity++;
+      if (node.type === 'SwitchStatement' && isLookupSwitch(node as TSESTree.SwitchStatement)) {
+        for (const c of (node as TSESTree.SwitchStatement).cases) lookupSwitchNodes.add(c);
+        return; // count as 1 (the SwitchStatement itself) via the base path
+      }
+      if (COMPLEXITY_INCREMENTORS.has(node.type) && !lookupSwitchNodes.has(node)) complexity++;
     },
     LogicalExpression(rawNode) {
       if (nestedFuncDepth > 0) return;

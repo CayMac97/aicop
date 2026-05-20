@@ -233,7 +233,7 @@ const rule: Rule = {
       enter(rawNode) {
         if (rawNode.type !== 'ClassDeclaration' && rawNode.type !== 'ClassExpression') return;
         const cls = rawNode as TSESTree.ClassDeclaration | TSESTree.ClassExpression;
-        if (cls.implements && cls.implements.length > 0 && cls.range) {
+        if ((cls.implements && cls.implements.length > 0 || cls.superClass) && cls.range) {
           implementingClassRanges.push([cls.range[0], cls.range[1]]);
         }
       },

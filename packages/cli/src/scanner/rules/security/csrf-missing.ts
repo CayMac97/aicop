@@ -33,8 +33,17 @@ function isHttpClientCall(node: TSESTree.CallExpression): boolean {
   return false;
 }
 
+const WEBHOOK_PATH_RE = /\/webhook(?:s)?(?:\/|$)/i;
+
+function isWebhookRoute(node: TSESTree.CallExpression): boolean {
+  const firstArg = node.arguments[0];
+  if (!firstArg || !isStringLiteral(firstArg as TSESTree.Expression)) return false;
+  return WEBHOOK_PATH_RE.test(String((firstArg as TSESTree.StringLiteral).value));
+}
+
 function isExpressPostRoute(node: TSESTree.CallExpression): boolean {
   if (isHttpClientCall(node)) return false;
+  if (isWebhookRoute(node)) return false;
   if (!isMemberExpression(node.callee)) return false;
   const me = node.callee as TSESTree.MemberExpression;
   return isIdentifier(me.property) && (me.property as TSESTree.Identifier).name === 'post';
