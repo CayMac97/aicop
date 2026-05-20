@@ -17,25 +17,23 @@ function buildParentMap(ast: ParsedAST): Map<TSESTree.Node, TSESTree.Node> {
 
 const LIFECYCLE_EVENTS = new Set(['uncaughtException', 'unhandledRejection', 'SIGINT', 'SIGTERM', 'exit', 'beforeExit']);
 
+function isProcessOnCall(node: TSESTree.Node): boolean {
+  if (node.type !== 'CallExpression') return false;
+  const call = node as TSESTree.CallExpression;
+  if (!isMemberExpression(call.callee)) return false;
+  const me = call.callee as TSESTree.MemberExpression;
+  if (!isIdentifier(me.object) || (me.object as TSESTree.Identifier).name !== 'process') return false;
+  if (!isIdentifier(me.property) || (me.property as TSESTree.Identifier).name !== 'on') return false;
+  const eventArg = call.arguments[0];
+  return eventArg?.type === 'Literal' && LIFECYCLE_EVENTS.has(String((eventArg as TSESTree.Literal).value));
+}
+
 function isProcessOnLifecycleCallback(node: TSESTree.Node, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
   let current: TSESTree.Node = node;
   for (let i = 0; i < 10; i++) {
     const parent = parentMap.get(current);
     if (!parent) return false;
-    if (parent.type === 'CallExpression') {
-      const call = parent as TSESTree.CallExpression;
-      if (isMemberExpression(call.callee)) {
-        const me = call.callee as TSESTree.MemberExpression;
-        if (isIdentifier(me.object) && (me.object as TSESTree.Identifier).name === 'process') {
-          if (isIdentifier(me.property) && (me.property as TSESTree.Identifier).name === 'on') {
-            const eventArg = call.arguments[0];
-            if (eventArg?.type === 'Literal' && LIFECYCLE_EVENTS.has(String((eventArg as TSESTree.Literal).value))) {
-              return true;
-            }
-          }
-        }
-      }
-    }
+    if (isProcessOnCall(parent)) return true;
     current = parent;
   }
   return false;

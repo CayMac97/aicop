@@ -26,7 +26,26 @@ function isRouteDefinition(node: TSESTree.CallExpression): string | null {
   return String((pathArg as TSESTree.StringLiteral).value);
 }
 
-function middlewareIncludesRateLimit(args: Array<TSESTree.Expression | TSESTree.SpreadElement>): boolean {
+function collectRateLimitVars(ast: ParsedAST): Set<string> {
+  const vars = new Set<string>();
+  walk(ast, {
+    VariableDeclarator(rawNode) {
+      const node = rawNode as TSESTree.VariableDeclarator;
+      if (!node.init || node.init.type !== 'CallExpression') return;
+      const call = node.init as TSESTree.CallExpression;
+      if (!isIdentifier(call.callee)) return;
+      if (!RATE_LIMIT_IDENTIFIERS.test((call.callee as TSESTree.Identifier).name)) return;
+      if (node.id.type !== 'Identifier') return;
+      vars.add((node.id as TSESTree.Identifier).name);
+    },
+  });
+  return vars;
+}
+
+function middlewareIncludesRateLimit(
+  args: Array<TSESTree.Expression | TSESTree.SpreadElement>,
+  rateLimitVars: Set<string>,
+): boolean {
   for (const arg of args) {
     if (arg.type === 'CallExpression') {
       const ce = arg as TSESTree.CallExpression;
@@ -35,7 +54,8 @@ function middlewareIncludesRateLimit(args: Array<TSESTree.Expression | TSESTree.
       }
     }
     if (isIdentifier(arg)) {
-      if (RATE_LIMIT_IDENTIFIERS.test((arg as TSESTree.Identifier).name)) return true;
+      const name = (arg as TSESTree.Identifier).name;
+      if (RATE_LIMIT_IDENTIFIERS.test(name) || rateLimitVars.has(name)) return true;
     }
   }
   return false;
@@ -70,6 +90,7 @@ app.post('/forgot-password', authLimiter, async (req, res) => { ... });`,
 
     if (/[/\\](?:test|tests|spec|__tests__)[/\\]|\.(?:test|spec|cy)\.[jt]sx?$/i.test(filePath)) return findings;
 
+    const rateLimitVars = collectRateLimitVars(ast);
     const seenEndpoints = new Set<string>();
 
     walk(ast, {
@@ -78,7 +99,7 @@ app.post('/forgot-password', authLimiter, async (req, res) => { ... });`,
         const routePath = isRouteDefinition(node);
         if (!routePath) return;
         if (!isAuthRoute(routePath)) return;
-        if (middlewareIncludesRateLimit(node.arguments)) return;
+        if (middlewareIncludesRateLimit(node.arguments, rateLimitVars)) return;
         if (seenEndpoints.has(routePath)) return;
         seenEndpoints.add(routePath);
         findings.push({

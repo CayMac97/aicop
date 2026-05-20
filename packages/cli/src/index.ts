@@ -182,9 +182,15 @@ program
   .action(async (opts: { input: string; format: string; output?: string }) => {
     const { readFileContent } = await import('./utils/file-utils.js');
     const raw = await readFileContent(opts.input);
-    const parsed = JSON.parse(raw);
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      process.stderr.write(chalk.red(`\nInvalid JSON in ${opts.input}\n`));
+      process.exit(1);
+    }
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    await report(parsed.files ? parsed : { ...parsed, files: parsed.files ?? [] }, {
+    await report(parsed.files ? parsed as never : { ...parsed, files: [] } as never, {
       format: opts.format as OutputFormat,
       ci: false,
       outputPath: opts.output,

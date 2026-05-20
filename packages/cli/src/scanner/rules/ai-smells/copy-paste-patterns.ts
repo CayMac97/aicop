@@ -11,7 +11,7 @@ interface FunctionBody {
   startLine: number;
 }
 
-const MIN_STMTS_FOR_DUPLICATE = 3;
+const MIN_STMTS_FOR_DUPLICATE = 5;
 const TEST_FILE_RE = /\.(test|spec)\.[jt]sx?$/i;
 
 function getFunctionName(node: TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression): string {

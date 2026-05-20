@@ -30,7 +30,7 @@ function isUserControlledArg(node: TSESTree.Node): boolean {
   return false;
 }
 
-const DIRECT_HTTP_CLIENTS = new Set(['got', 'request', 'needle', 'nodeFetch', 'superagent']);
+const DIRECT_HTTP_CLIENTS = new Set(['got', 'request', 'needle', 'nodeFetch', 'superagent', 'axios']);
 
 function isDirectHttpClientCall(node: TSESTree.CallExpression): string | null {
   if (!isIdentifier(node.callee)) return null;
