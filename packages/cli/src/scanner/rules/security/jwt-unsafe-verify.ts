@@ -4,17 +4,24 @@ import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
 
+function chainContainsJwt(node: TSESTree.Expression | TSESTree.PrivateIdentifier): boolean {
+  if (isIdentifier(node)) {
+    const name = (node as TSESTree.Identifier).name.toLowerCase();
+    return name.includes('jwt') || name === 'jsonwebtoken';
+  }
+  if (isMemberExpression(node)) {
+    return chainContainsJwt((node as TSESTree.MemberExpression).object as TSESTree.Expression);
+  }
+  return false;
+}
+
 function isJwtVerifyCall(node: TSESTree.CallExpression): boolean {
   if (!isMemberExpression(node.callee)) return false;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.property)) return false;
   if ((me.property as TSESTree.Identifier).name !== 'verify') return false;
   if (node.arguments.length < 2) return false;
-  if (isIdentifier(me.object)) {
-    const objName = (me.object as TSESTree.Identifier).name.toLowerCase();
-    return objName.includes('jwt') || objName === 'jsonwebtoken';
-  }
-  return true;
+  return chainContainsJwt(me.object as TSESTree.Expression);
 }
 
 function hasCallback(node: TSESTree.CallExpression): boolean {
@@ -26,7 +33,8 @@ function isChecked(parent: TSESTree.Node | null): boolean {
   if (!parent) return false;
   return parent.type === 'VariableDeclarator' ||
     parent.type === 'AssignmentExpression' ||
-    parent.type === 'ReturnStatement';
+    parent.type === 'ReturnStatement' ||
+    parent.type === 'AwaitExpression';
 }
 
 const rule: Rule = {

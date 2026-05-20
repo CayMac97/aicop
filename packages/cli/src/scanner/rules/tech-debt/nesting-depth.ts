@@ -13,6 +13,7 @@ const WARN_DEPTH = 4;
 const ERROR_DEPTH = 6;
 
 interface NestingContext {
+  rootFunc: TSESTree.Node;
   depth: number;
   maxDepth: number;
   deepestNode: TSESTree.Node | null;
@@ -37,6 +38,8 @@ function walkChildren(root: TSESTree.Node, ctx: NestingContext): void {
 }
 
 function walkWithDepth(root: TSESTree.Node, ctx: NestingContext): void {
+  // Stop at nested function scopes — each function is analyzed independently
+  if (root !== ctx.rootFunc && isFunctionNode(root)) return;
   const isNesting = NESTING_NODES.has(root.type);
   if (isNesting) {
     ctx.depth++;
@@ -70,7 +73,7 @@ const rule: Rule = {
     walk(ast, {
       enter(rawNode) {
         if (!isFunctionNode(rawNode)) return;
-        const ctx: NestingContext = { depth: 0, maxDepth: 0, deepestNode: null };
+        const ctx: NestingContext = { rootFunc: rawNode, depth: 0, maxDepth: 0, deepestNode: null };
         walkWithDepth(rawNode, ctx);
         if (ctx.maxDepth <= WARN_DEPTH) return;
         if (!ctx.deepestNode) return;

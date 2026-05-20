@@ -35,6 +35,8 @@ function handleCallExpressionForAsync(ce: TSESTree.CallExpression, info: Functio
   if (name === 'then') info.hasThen = true;
 }
 
+const FUNC_TYPES = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression']);
+
 function collectFunctionInfo(funcNode: TSESTree.Node, source: string): FunctionInfo {
   const info: FunctionInfo = {
     node: funcNode,
@@ -47,9 +49,14 @@ function collectFunctionInfo(funcNode: TSESTree.Node, source: string): FunctionI
   };
   let insideTry = 0;
   let insideAwait = 0;
+  let nestedFuncDepth = 0;
 
   walk(funcNode as TSESTree.Program, {
     enter(node) {
+      // Track nested function scopes so their patterns don't bleed into the outer function
+      if (node !== funcNode && FUNC_TYPES.has(node.type)) { nestedFuncDepth++; return; }
+      if (nestedFuncDepth > 0) return;
+
       if (node.type === 'TryStatement') { insideTry++; info.hasTryCatch = true; return; }
       if (node.type === 'AwaitExpression') {
         insideAwait++;
@@ -66,6 +73,8 @@ function collectFunctionInfo(funcNode: TSESTree.Node, source: string): FunctionI
       }
     },
     exit(node) {
+      if (node !== funcNode && FUNC_TYPES.has(node.type)) { nestedFuncDepth--; return; }
+      if (nestedFuncDepth > 0) return;
       if (node.type === 'TryStatement') insideTry--;
       if (node.type === 'AwaitExpression') insideAwait--;
     },
