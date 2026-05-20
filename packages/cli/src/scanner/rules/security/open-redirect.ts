@@ -56,6 +56,10 @@ function checkResRedirect(node: TSESTree.CallExpression, source: string, filePat
   const urlArg = args.length >= 2 && isStatusCode(args[0]) ? args[1] : args[0];
 
   if (isStaticUrl(urlArg)) return null;
+  if (urlArg.type === 'TemplateLiteral') {
+    const firstRaw = (urlArg as TSESTree.TemplateLiteral).quasis[0]?.value.raw ?? '';
+    if (firstRaw.startsWith('/') && !firstRaw.startsWith('//')) return null;
+  }
   if (!isUserInput(urlArg, tainted)) return null;
 
   return {

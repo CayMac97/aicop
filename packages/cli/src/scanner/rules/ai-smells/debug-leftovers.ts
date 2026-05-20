@@ -137,7 +137,6 @@ function checkHardcodedTestData(source: string, filePath: string): Finding[] {
   const patterns: Array<{ re: RegExp; label: string }> = [
     { re: /["']test@example\.com["']/gi, label: 'hardcoded test email' },
     { re: /["']password123["']/gi, label: 'hardcoded test password' },
-    { re: /["']admin["']\s*[,)]/gi, label: 'hardcoded "admin" value' },
   ];
   const lines = source.split('\n');
   lines.forEach((line, idx) => {

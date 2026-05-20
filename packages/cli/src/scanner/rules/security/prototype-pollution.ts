@@ -27,7 +27,21 @@ function isUserInputArg(node: TSESTree.Node, tainted: Set<string> = new Set()): 
   return false;
 }
 
-function checkForInLoop(node: TSESTree.ForInStatement, source: string, filePath: string): Finding | null {
+function collectLocalObjectVars(ast: ParsedAST): Set<string> {
+  const vars = new Set<string>();
+  walk(ast, {
+    VariableDeclarator(rawNode) {
+      const node = rawNode as TSESTree.VariableDeclarator;
+      if (!node.init || node.init.type !== 'ObjectExpression') return;
+      if (node.id.type !== 'Identifier') return;
+      vars.add((node.id as TSESTree.Identifier).name);
+    },
+  });
+  return vars;
+}
+
+function checkForInLoop(node: TSESTree.ForInStatement, source: string, filePath: string, localObjectVars: Set<string>): Finding | null {
+  if (node.right.type === 'Identifier' && localObjectVars.has((node.right as TSESTree.Identifier).name)) return null;
   const body = node.body;
   const stmts = body.type === 'BlockStatement'
     ? (body as TSESTree.BlockStatement).body
@@ -128,6 +142,7 @@ const rule: Rule = {
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
     const tainted = buildTaintMap(ast);
+    const localObjectVars = collectLocalObjectVars(ast);
 
     walk(ast, {
       CallExpression(rawNode) {
@@ -142,7 +157,7 @@ const rule: Rule = {
         if (finding) findings.push(finding);
       },
       ForInStatement(rawNode) {
-        const finding = checkForInLoop(rawNode as TSESTree.ForInStatement, source, filePath);
+        const finding = checkForInLoop(rawNode as TSESTree.ForInStatement, source, filePath, localObjectVars);
         if (finding) findings.push(finding);
       },
     });

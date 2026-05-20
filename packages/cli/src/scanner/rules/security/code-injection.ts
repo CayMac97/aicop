@@ -8,20 +8,34 @@ const VM_METHODS = new Set(['runInNewContext', 'runInThisContext']);
 const MATH_EVAL_METHODS = new Set(['eval', 'evaluate']);
 const MATH_OBJ_NAMES = new Set(['mathjs', 'math', 'Math']);
 
-function argIsDynamic(arg: TSESTree.Node): boolean {
+function collectStringConstVars(ast: ParsedAST): Set<string> {
+  const vars = new Set<string>();
+  walk(ast, {
+    VariableDeclarator(rawNode) {
+      const node = rawNode as TSESTree.VariableDeclarator;
+      if (!node.init || !isStringLiteral(node.init as TSESTree.Expression)) return;
+      if (node.id.type !== 'Identifier') return;
+      vars.add((node.id as TSESTree.Identifier).name);
+    },
+  });
+  return vars;
+}
+
+function argIsDynamic(arg: TSESTree.Node, stringConsts: Set<string>): boolean {
   if (isStringLiteral(arg)) return false;
   if (arg.type === 'Literal') return false;
+  if (isIdentifier(arg) && stringConsts.has((arg as TSESTree.Identifier).name)) return false;
   return true;
 }
 
-function checkVmRun(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+function checkVmRun(node: TSESTree.CallExpression, source: string, filePath: string, stringConsts: Set<string>): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
   if ((me.object as TSESTree.Identifier).name !== 'vm') return null;
   if (!VM_METHODS.has((me.property as TSESTree.Identifier).name)) return null;
   const arg = node.arguments[0];
-  if (!arg || !argIsDynamic(arg)) return null;
+  if (!arg || !argIsDynamic(arg, stringConsts)) return null;
   return {
     ruleId: 'security/code-injection',
     severity: 'error',
@@ -34,7 +48,7 @@ function checkVmRun(node: TSESTree.CallExpression, source: string, filePath: str
   };
 }
 
-function checkMathEval(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+function checkMathEval(node: TSESTree.CallExpression, source: string, filePath: string, stringConsts: Set<string>): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
@@ -44,7 +58,7 @@ function checkMathEval(node: TSESTree.CallExpression, source: string, filePath: 
   if (!MATH_EVAL_METHODS.has(method)) return null;
   if (obj === 'Math') return null;
   const arg = node.arguments[0];
-  if (!arg || !argIsDynamic(arg)) return null;
+  if (!arg || !argIsDynamic(arg, stringConsts)) return null;
   return {
     ruleId: 'security/code-injection',
     severity: 'error',
@@ -68,13 +82,14 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
+    const stringConsts = collectStringConstVars(ast);
 
     walk(ast, {
       CallExpression(rawNode) {
         const node = rawNode as TSESTree.CallExpression;
-        const vmF = checkVmRun(node, source, filePath);
+        const vmF = checkVmRun(node, source, filePath, stringConsts);
         if (vmF) { findings.push(vmF); return; }
-        const mathF = checkMathEval(node, source, filePath);
+        const mathF = checkMathEval(node, source, filePath, stringConsts);
         if (mathF) findings.push(mathF);
       },
     });

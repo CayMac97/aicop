@@ -29,12 +29,18 @@ function hasCallback(node: TSESTree.CallExpression): boolean {
   return callback?.type === 'ArrowFunctionExpression' || callback?.type === 'FunctionExpression';
 }
 
-function isChecked(parent: TSESTree.Node | null): boolean {
+function isChecked(parent: TSESTree.Node | null, source: string, line: number): boolean {
   if (!parent) return false;
-  return parent.type === 'VariableDeclarator' ||
+  if (parent.type === 'VariableDeclarator' ||
     parent.type === 'AssignmentExpression' ||
     parent.type === 'ReturnStatement' ||
-    parent.type === 'AwaitExpression';
+    parent.type === 'AwaitExpression' ||
+    parent.type === 'CallExpression') return true;
+  if (parent.type === 'ExpressionStatement') {
+    const ctx = extractSnippet(source, line, 5);
+    return ctx.includes('try {') || ctx.includes('try{');
+  }
+  return false;
 }
 
 const rule: Rule = {
@@ -55,7 +61,7 @@ const rule: Rule = {
         const node = rawNode as TSESTree.CallExpression;
         if (!isJwtVerifyCall(node)) return;
         if (hasCallback(node)) return;
-        if (isChecked(parent)) return;
+        if (isChecked(parent, source, getLine(node))) return;
         findings.push({
           ruleId: 'security/jwt-unsafe-verify',
           severity: 'error',

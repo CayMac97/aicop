@@ -74,7 +74,7 @@ function checkPathJoin(node: TSESTree.CallExpression, source: string, filePath: 
   if (method !== 'join' && method !== 'resolve') return null;
   const hasUserInput = node.arguments.some((arg) => isUserInputExpr(arg, tainted));
   if (!hasUserInput) return null;
-  const contextAfter = extractSnippet(source, getLine(node) + 1, 2);
+  const contextAfter = extractSnippet(source, getLine(node) + 1, 5);
   if (contextAfter.includes('.startsWith(')) return null;
   return {
     ruleId: 'security/path-traversal',

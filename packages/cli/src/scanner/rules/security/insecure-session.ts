@@ -86,7 +86,8 @@ function checkSessionOptions(node: TSESTree.CallExpression, source: string, file
   }
 
   const resaveProp = findProp(opts, 'resave');
-  if (!resaveProp) {
+  const hasSpread = opts.properties.some((p) => p.type === 'SpreadElement');
+  if (!resaveProp && !hasSpread) {
     findings.push({
       ruleId: 'security/insecure-session',
       severity: 'warn',

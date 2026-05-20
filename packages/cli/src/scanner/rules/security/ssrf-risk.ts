@@ -53,6 +53,14 @@ function isHttpClientMethodCall(node: TSESTree.CallExpression): string | null {
   return isValid ? `${obj}.${method}` : null;
 }
 
+function hasUrlAllowlistValidation(source: string, varName: string, line: number): boolean {
+  const priorLines = source.split('\n').slice(Math.max(0, line - 20), line).join('\n');
+  return (
+    priorLines.includes(`new URL(${varName})`) &&
+    (priorLines.includes('.hostname') || priorLines.includes('.origin'))
+  );
+}
+
 function checkHttpCall(node: TSESTree.CallExpression, source: string, filePath: string, tainted: Set<string>): Finding | null {
   let clientName = '';
   const directName = isDirectHttpClientCall(node);
@@ -65,6 +73,10 @@ function checkHttpCall(node: TSESTree.CallExpression, source: string, filePath: 
   }
   const urlArg = node.arguments[0];
   if (!urlArg || !isUserControlledArg(urlArg, tainted)) return null;
+  if (isIdentifier(urlArg)) {
+    const varName = (urlArg as TSESTree.Identifier).name;
+    if (hasUrlAllowlistValidation(source, varName, getLine(node))) return null;
+  }
   return {
     ruleId: 'security/ssrf-risk',
     severity: 'error',

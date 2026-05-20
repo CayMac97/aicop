@@ -114,9 +114,13 @@ function checkCorsObjectMisconfiguration(obj: TSESTree.ObjectExpression, node: T
 function hasAllowlistValidation(source: string, varName: string, line: number): boolean {
   const priorLines = source.split('\n').slice(Math.max(0, line - 15), line).join('\n');
   // Match prefix only (no closing paren) so 'includes(origin as string)' also works
-  return priorLines.includes(`includes(${varName}`) ||
+  if (priorLines.includes(`includes(${varName}`) ||
     priorLines.includes(`indexOf(${varName}`) ||
-    priorLines.includes(`.has(${varName}`);
+    priorLines.includes(`.has(${varName}`)) return true;
+  // Also match: const varName = allowlist.includes(...) ? ... : ... (ternary guard)
+  // aicop-ignore security/regex-dos
+  const ternaryRe = new RegExp(`\\b${varName}\\b[^=\\n]*=.*\\.includes\\(`);
+  return ternaryRe.test(priorLines);
 }
 
 function unwrapTypeAssertion(node: TSESTree.Expression): TSESTree.Expression {

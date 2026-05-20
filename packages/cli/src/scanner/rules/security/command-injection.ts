@@ -17,18 +17,11 @@ function isReqPropUserInput(node: TSESTree.MemberExpression): boolean {
     && USER_INPUT_PROPS.has((parent.property as TSESTree.Identifier).name);
 }
 
-function isDirectPropUserInput(node: TSESTree.MemberExpression): boolean {
-  return isIdentifier(node.object)
-    && isIdentifier(node.property)
-    && USER_INPUT_PROPS.has((node.property as TSESTree.Identifier).name);
-}
-
 function isUserInput(node: TSESTree.Node, tainted: Set<string> = new Set()): boolean {
   if (isTaintedNode(node, tainted)) return true;
   if (isMemberExpression(node)) {
     const me = node as TSESTree.MemberExpression;
     if (isReqPropUserInput(me)) return true;
-    if (isDirectPropUserInput(me)) return true;
   }
   if (node.type === 'TemplateLiteral') {
     return (node as TSESTree.TemplateLiteral).expressions.some((e) => isUserInput(e, tainted));
