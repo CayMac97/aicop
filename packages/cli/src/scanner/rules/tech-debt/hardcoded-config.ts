@@ -31,7 +31,7 @@ function isPortNumber(value: unknown): boolean {
   return true;
 }
 
-const KNOWN_PUBLIC_HOSTS = /\b(github\.com|gitlab\.com|npmjs\.com|cdnjs\.cloudflare\.com|unpkg\.com|cdn\.jsdelivr\.net|docs\.|api\.github\.com)\b/;
+const KNOWN_PUBLIC_HOSTS = /\b(github\.com|gitlab\.com|npmjs\.com|cdnjs\.cloudflare\.com|unpkg\.com|cdn\.jsdelivr\.net|api\.github\.com|docs\.|js\.stripe\.com|stripe\.com|braintree\.com|paypal\.com|sentry\.io|bugsnag\.com|rollbar\.com|fonts\.googleapis\.com|fonts\.gstatic\.com|fonts\.bunny\.net|use\.typekit\.net|gravatar\.com|googleapis\.com|gstatic\.com|cloudflare\.com|fastly\.net|akamaiedge\.net)\b/;
 
 function looksLikeBaseUrl(value: string): boolean {
   if (!URL_PATTERN.test(value)) return false;

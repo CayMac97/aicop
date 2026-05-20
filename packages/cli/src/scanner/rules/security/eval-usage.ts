@@ -27,6 +27,8 @@ function checkNewFunction(node: TSESTree.NewExpression, source: string, filePath
   if ((node.callee as TSESTree.Identifier).name !== 'Function') return null;
   const args = node.arguments;
   if (args.length === 0) return null;
+  // new Function('static', 'strings') — no dynamic input, not a code injection vector
+  if (args.every((a) => isStringLiteral(a as TSESTree.Expression))) return null;
   return {
     ruleId: 'security/eval-usage',
     severity: 'error',
