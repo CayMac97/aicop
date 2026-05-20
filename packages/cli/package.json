@@ -1,6 +1,6 @@
 {
   "name": "aicop",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "CLI security and quality scanner for AI-generated code",
   "keywords": [
     "security",
