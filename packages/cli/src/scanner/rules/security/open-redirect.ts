@@ -43,6 +43,23 @@ function isStatusCode(node: TSESTree.Node): boolean {
   return typeof (node as TSESTree.Literal).value === 'number';
 }
 
+const REDIRECT_VALIDATION_FN_RE = /(?:is)?(?:allowed|valid|safe|permit|whitelist|sanitize|check|verify|trusted)/i;
+
+function hasRedirectValidation(source: string, varName: string, line: number): boolean {
+  const priorLines = source.split('\n').slice(Math.max(0, line - 15), line).join('\n');
+  // Allowlist check: ALLOWED.includes(varName) or ALLOWED.has(varName)
+  if (priorLines.includes(`.includes(${varName}`) || priorLines.includes(`.has(${varName}`)) return true;
+  // Path-only validation: both startsWith('/') AND startsWith('//') present = protocol-relative handled
+  if (
+    (priorLines.includes(`${varName}.startsWith('/')`) || priorLines.includes(`${varName}.startsWith("/")`)) &&
+    (priorLines.includes(`${varName}.startsWith('//')`) || priorLines.includes(`${varName}.startsWith("//")`))
+  ) return true;
+  // Custom validation function: isAllowedUrl(varName), validateRedirect(varName), etc.
+  const customValidationRe = new RegExp(`${REDIRECT_VALIDATION_FN_RE.source}[\\w]*\\(${varName}\\)`, 'i');
+  if (customValidationRe.test(priorLines)) return true;
+  return false;
+}
+
 function checkResRedirect(node: TSESTree.CallExpression, source: string, filePath: string, tainted: Set<string>): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
@@ -61,6 +78,10 @@ function checkResRedirect(node: TSESTree.CallExpression, source: string, filePat
     if (firstRaw.startsWith('/') && !firstRaw.startsWith('//')) return null;
   }
   if (!isUserInput(urlArg, tainted)) return null;
+  if (isIdentifier(urlArg)) {
+    const varName = (urlArg as TSESTree.Identifier).name;
+    if (hasRedirectValidation(source, varName, getLine(node))) return null;
+  }
 
   return {
     ruleId: 'security/open-redirect',

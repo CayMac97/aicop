@@ -42,14 +42,17 @@ function analyzeFunctionAsync(funcNode: TSESTree.FunctionDeclaration | TSESTree.
     ForOfStatement(rawNode) {
       if ((rawNode as unknown as { await: boolean }).await) info.hasAwait = true;
     },
-    CallExpression(rawNode) {
+    CallExpression(rawNode, parent) {
       if (insideAwait > 0) return;
       const node = rawNode as TSESTree.CallExpression;
       if (node.callee.type !== 'MemberExpression') return;
       const me = node.callee as TSESTree.MemberExpression;
       if (!isIdentifier(me.property)) return;
       const methodName = (me.property as TSESTree.Identifier).name;
-      if (methodName === 'then' || methodName === 'catch') info.hasThenCatch = true;
+      // Fire-and-forget: somePromise.catch/then(fn) as standalone statement is intentional
+      if ((methodName === 'then' || methodName === 'catch') && parent?.type !== 'ExpressionStatement') {
+        info.hasThenCatch = true;
+      }
     },
   });
 

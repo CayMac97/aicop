@@ -48,6 +48,11 @@ function checkVmRun(node: TSESTree.CallExpression, source: string, filePath: str
   };
 }
 
+function hasAllowlistCheck(source: string, varName: string, line: number): boolean {
+  const priorLines = source.split('\n').slice(Math.max(0, line - 10), line).join('\n');
+  return priorLines.includes(`.includes(${varName}`) || priorLines.includes(`.has(${varName}`);
+}
+
 function checkMathEval(node: TSESTree.CallExpression, source: string, filePath: string, stringConsts: Set<string>): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
@@ -59,6 +64,9 @@ function checkMathEval(node: TSESTree.CallExpression, source: string, filePath: 
   if (obj === 'Math') return null;
   const arg = node.arguments[0];
   if (!arg || !argIsDynamic(arg, stringConsts)) return null;
+  if (isIdentifier(arg)) {
+    if (hasAllowlistCheck(source, (arg as TSESTree.Identifier).name, getLine(node))) return null;
+  }
   return {
     ruleId: 'security/code-injection',
     severity: 'error',

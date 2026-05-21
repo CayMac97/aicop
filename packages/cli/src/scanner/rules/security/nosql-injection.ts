@@ -65,6 +65,26 @@ function containsRawReqInput(node: TSESTree.Node, tainted: Set<string>): boolean
   return false;
 }
 
+function hasTaintedVarNames(source: string, tainted: Set<string>, line: number): string[] {
+  const priorLines = source.split('\n').slice(Math.max(0, line - 20), line);
+  return Array.from(tainted).filter((name) =>
+    priorLines.some((l) => l.includes(name)),
+  );
+}
+
+function hasTypeOrPatternValidation(source: string, varNames: string[], line: number): boolean {
+  const priorLines = source.split('\n').slice(Math.max(0, line - 20), line).join('\n');
+  if (varNames.some((n) => priorLines.includes(`typeof ${n}`))) return true;
+  if (varNames.some((n) => priorLines.includes(`.test(${n})`))) return true;
+  // validate/sanitize/check function call with error check in the same context
+  const hasValidateFn =
+    /\b(?:validate|sanitize|check|clean)[A-Za-z]*\s*\(/.test(priorLines) &&
+    varNames.some((n) => priorLines.includes(n));
+  const hasErrorCheck = /if\s*\(\s*errors\b/.test(priorLines);
+  if (hasValidateFn && hasErrorCheck) return true;
+  return false;
+}
+
 const rule: Rule = {
   id: 'security/nosql-injection',
   name: 'NoSQL Injection',
@@ -91,6 +111,8 @@ const rule: Rule = {
 
         for (const arg of node.arguments) {
           if (containsRawReqInput(arg as TSESTree.Node, tainted)) {
+            const taintedNamesHere = hasTaintedVarNames(source, tainted, getLine(node));
+            if (hasTypeOrPatternValidation(source, taintedNamesHere, getLine(node))) break;
             findings.push({
               ruleId: 'security/nosql-injection',
               severity: 'error',

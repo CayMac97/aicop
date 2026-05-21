@@ -35,7 +35,9 @@ function isChecked(parent: TSESTree.Node | null, source: string, line: number): 
     parent.type === 'AssignmentExpression' ||
     parent.type === 'ReturnStatement' ||
     parent.type === 'AwaitExpression' ||
-    parent.type === 'CallExpression') return true;
+    parent.type === 'CallExpression' ||
+    parent.type === 'TSAsExpression' ||
+    parent.type === 'TSNonNullExpression') return true;
   if (parent.type === 'ExpressionStatement') {
     const ctx = extractSnippet(source, line, 5);
     return ctx.includes('try {') || ctx.includes('try{');

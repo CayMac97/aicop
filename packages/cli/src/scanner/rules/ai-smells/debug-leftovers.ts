@@ -135,8 +135,8 @@ function checkProcessExit(node: TSESTree.CallExpression, source: string, filePat
 function checkHardcodedTestData(source: string, filePath: string): Finding[] {
   const findings: Finding[] = [];
   const patterns: Array<{ re: RegExp; label: string }> = [
-    { re: /["']test@example\.com["']/gi, label: 'hardcoded test email' },
-    { re: /["']password123["']/gi, label: 'hardcoded test password' },
+    { re: /["']test@example\.com["']/i, label: 'hardcoded test email' },
+    { re: /["']password123["']/i, label: 'hardcoded test password' },
   ];
   const lines = source.split('\n');
   lines.forEach((line, idx) => {

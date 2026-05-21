@@ -6,6 +6,10 @@ import { isIdentifier, isMemberExpression } from './ast-helpers.js';
 const REQ_USER_INPUT_PROPS = new Set(['body', 'query', 'params', 'headers', 'cookies']);
 
 function isDirectUserInputExpr(node: TSESTree.Node): boolean {
+  // Unwrap TypeScript casts: (expr as T) or (expr!)
+  if (node.type === 'TSAsExpression' || node.type === 'TSNonNullExpression') {
+    return isDirectUserInputExpr((node as TSESTree.TSAsExpression | TSESTree.TSNonNullExpression).expression);
+  }
   if (!isMemberExpression(node)) return false;
   const me = node as TSESTree.MemberExpression;
 
@@ -34,9 +38,13 @@ export function buildTaintMap(ast: ParsedAST): Set<string> {
 
   walk(ast, {
     // aicop-ignore tech-debt/cyclomatic-complexity
-    VariableDeclarator(rawNode) {
+    VariableDeclarator(rawNode, parentNode) {
       const node = rawNode as TSESTree.VariableDeclarator;
       if (!node.init) return;
+
+      const isConst =
+        parentNode?.type === 'VariableDeclaration' &&
+        (parentNode as TSESTree.VariableDeclaration).kind === 'const';
 
       if (node.id.type === 'Identifier') {
         const name = (node.id as TSESTree.Identifier).name;
@@ -44,6 +52,11 @@ export function buildTaintMap(ast: ParsedAST): Set<string> {
           tainted.add(name);
         } else if (isIdentifier(node.init) && tainted.has((node.init as TSESTree.Identifier).name)) {
           tainted.add(name);
+        } else if (isConst && tainted.has(name)) {
+          // TypeScript forbids same-scope const redeclaration, so seeing
+          // `const x = <non-user-input>` when x is already tainted means
+          // we are in a different function scope where x is locally safe.
+          tainted.delete(name);
         }
         return;
       }
@@ -80,5 +93,9 @@ export function buildTaintMap(ast: ParsedAST): Set<string> {
 }
 
 export function isTaintedNode(node: TSESTree.Node, tainted: Set<string>): boolean {
+  // Unwrap TypeScript casts: (expr as T) or (expr!)
+  if (node.type === 'TSAsExpression' || node.type === 'TSNonNullExpression') {
+    return isTaintedNode((node as TSESTree.TSAsExpression | TSESTree.TSNonNullExpression).expression, tainted);
+  }
   return isIdentifier(node) && tainted.has((node as TSESTree.Identifier).name);
 }

@@ -41,6 +41,9 @@ const SECRET_CONCEPT_NAME_RE = /^(?:password|passwd|pwd|secret|token|jwt|apikey|
 // e.g. 'user_password', 'api_key_field' — but NOT 'super_secret_jwt_key_do_not_share'
 const FIELD_DESCRIPTOR_RE = /^[a-z][a-z]*(?:[_-][a-z][a-z]*){1,2}$/;
 const MIN_SECRET_VALUE_LENGTH = 8;
+// Primitive type names and common validation rule keywords (pipe/colon separated)
+const PRIMITIVE_TYPE_RE = /^(?:string|number|boolean|integer|float|null|undefined|any|unknown|object|array|void|never|bigint|symbol|required|optional|nullable|uuid|email|url|date|regex|numeric|alpha)$/i;
+const COLON_CONSTRAINT_RE = /^(?:min|max|minlength|maxlength|between|size|digits):[0-9,]+$/i;
 
 function isProcessEnv(node: TSESTree.Node): boolean {
   if (node.type !== 'MemberExpression') return false;
@@ -75,7 +78,7 @@ function checkLiteralForSecrets(node: TSESTree.Literal, source: string, filePath
 const ERROR_MESSAGE_WORDS = /\b(invalid|incorrect|wrong|failed|error|denied|unauthorized|forbidden|not found|missing|required|expired|bad|no |please|must|cannot|can't|don't|doesn't|enter|provide)\b/i;
 
 function looksLikeNaturalLanguage(value: string): boolean {
-  if (value.split(' ').length > 3) return true;
+  if (value.split(' ').length >= 3) return true;
   if (value.split(' ').length >= 2 && ERROR_MESSAGE_WORDS.test(value)) return true;
   return false;
 }
@@ -87,6 +90,14 @@ function looksLikeKeyNameNotValue(value: string): boolean {
   // 'user_password', 'api_key_field' — pure lowercase snake/kebab with separator → column name
   if (FIELD_DESCRIPTOR_RE.test(value) && SECRET_NAME_PATTERNS.test(value)) return true;
   return false;
+}
+
+function looksLikeValidationOrTypeRule(value: string): boolean {
+  // e.g. 'required|string', 'string|null', 'number|null', 'minlength:8'
+  const parts = value.split('|');
+  return parts.length >= 1 && parts.every(
+    (p) => PRIMITIVE_TYPE_RE.test(p.trim()) || COLON_CONSTRAINT_RE.test(p.trim()),
+  );
 }
 
 function checkVariableNamePattern(name: string, value: string): boolean {
@@ -111,6 +122,7 @@ function checkObjectProperty(node: TSESTree.Property, source: string, filePath: 
   if (PUBLIC_KEY_PATTERN.test(value)) return null;
   if (looksLikeKeyNameNotValue(value)) return null;
   if (looksLikeNaturalLanguage(value)) return null;
+  if (looksLikeValidationOrTypeRule(value)) return null;
   if (value.startsWith('/')) return null;
 
   let keyName: string | null = null;

@@ -11,8 +11,14 @@ const PASSWORD_CONTEXT = /\b(password|passwd|pwd)\b/i;
 const BCRYPT_FIX_SNIPPET = 'Use bcrypt or argon2 for passwords — never SHA-256:\nconst hash = await bcrypt.hash(password, 12)';
 const HASH_FIX_CODE = 'Use crypto.createHash("sha256") or crypto.randomBytes() for tokens';
 
+const NON_SECURITY_HASH_CONTEXT = /\b(etag|e-tag|gravatar|checksum|fingerprint|cache.?key|content.?hash|dedup|integrity)\b/i;
+
 function isPasswordContext(source: string, line: number): boolean {
   return PASSWORD_CONTEXT.test(extractSnippet(source, line, 2));
+}
+
+function isNonSecurityHashContext(source: string, line: number): boolean {
+  return NON_SECURITY_HASH_CONTEXT.test(extractSnippet(source, line, 3));
 }
 
 function checkCreateHash(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
@@ -26,6 +32,7 @@ function checkCreateHash(node: TSESTree.CallExpression, source: string, filePath
   if (!BROKEN_HASH_ALGORITHMS.has(alg)) return null;
   const passwordContext = isPasswordContext(source, getLine(node));
   const isMd5OrSha1 = alg === 'md5' || alg === 'sha1' || alg === 'sha-1';
+  if (isMd5OrSha1 && !passwordContext && isNonSecurityHashContext(source, getLine(node))) return null;
   const severity = (isMd5OrSha1 && !passwordContext) ? 'warn' : 'error';
   const message = isMd5OrSha1 && !passwordContext
     ? `"${alg}" is cryptographically broken — acceptable for checksums/ETags but not for security`

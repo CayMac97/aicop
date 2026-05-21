@@ -26,13 +26,15 @@ function handleCatchClause(clause: TSESTree.CatchClause, info: FunctionInfo, sou
   }
 }
 
-function handleCallExpressionForAsync(ce: TSESTree.CallExpression, info: FunctionInfo): void {
+function handleCallExpressionForAsync(ce: TSESTree.CallExpression, info: FunctionInfo, parent: TSESTree.Node | null): void {
   if (ce.callee.type !== 'MemberExpression') return;
   const me = ce.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.property)) return;
   const name = (me.property as TSESTree.Identifier).name;
-  if (name === 'catch') info.hasDotCatch = true;
-  if (name === 'then') info.hasThen = true;
+  // Fire-and-forget: somePromise.catch/then(fn) as a standalone expression — intentional, not a mixing smell
+  const isFireAndForget = parent?.type === 'ExpressionStatement';
+  if (name === 'catch' && !isFireAndForget) info.hasDotCatch = true;
+  if (name === 'then' && !isFireAndForget) info.hasThen = true;
 }
 
 const FUNC_TYPES = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression']);
@@ -52,7 +54,7 @@ function collectFunctionInfo(funcNode: TSESTree.Node, source: string): FunctionI
   let nestedFuncDepth = 0;
 
   walk(funcNode as TSESTree.Program, {
-    enter(node) {
+    enter(node, parent) {
       // Track nested function scopes so their patterns don't bleed into the outer function
       if (node !== funcNode && FUNC_TYPES.has(node.type)) { nestedFuncDepth++; return; }
       if (nestedFuncDepth > 0) return;
@@ -69,7 +71,7 @@ function collectFunctionInfo(funcNode: TSESTree.Node, source: string): FunctionI
         return;
       }
       if (node.type === 'CallExpression' && insideAwait === 0) {
-        handleCallExpressionForAsync(node as TSESTree.CallExpression, info);
+        handleCallExpressionForAsync(node as TSESTree.CallExpression, info, parent);
       }
     },
     exit(node) {

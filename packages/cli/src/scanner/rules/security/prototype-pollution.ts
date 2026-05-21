@@ -72,13 +72,19 @@ function checkForInLoop(node: TSESTree.ForInStatement, source: string, filePath:
   };
 }
 
-function checkObjectAssign(node: TSESTree.CallExpression, source: string, filePath: string, tainted: Set<string>): Finding | null {
+function checkObjectAssign(node: TSESTree.CallExpression, source: string, filePath: string, tainted: Set<string>, parent: TSESTree.Node | null): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
   if ((me.object as TSESTree.Identifier).name !== 'Object') return null;
   if ((me.property as TSESTree.Identifier).name !== 'assign') return null;
   if (!node.arguments.some((arg) => isUserInputArg(arg, tainted))) return null;
+  // Result discarded (ExpressionStatement) with fresh {} target — no object is mutated
+  if (
+    parent?.type === 'ExpressionStatement' &&
+    node.arguments[0]?.type === 'ObjectExpression' &&
+    (node.arguments[0] as TSESTree.ObjectExpression).properties.length === 0
+  ) return null;
   return {
     ruleId: 'security/prototype-pollution',
     severity: 'error',
@@ -145,10 +151,16 @@ const rule: Rule = {
     const localObjectVars = collectLocalObjectVars(ast);
 
     walk(ast, {
-      CallExpression(rawNode) {
+      CallExpression(rawNode, parent) {
         const node = rawNode as TSESTree.CallExpression;
-        const assignF = checkObjectAssign(node, source, filePath, tainted);
+        const assignF = checkObjectAssign(node, source, filePath, tainted, parent);
         if (assignF) { findings.push(assignF); return; }
+        // Object.assign is handled exclusively by checkObjectAssign (including its suppression)
+        if (isMemberExpression(node.callee)) {
+          const me = node.callee as TSESTree.MemberExpression;
+          if (isIdentifier(me.object) && (me.object as TSESTree.Identifier).name === 'Object' &&
+              isIdentifier(me.property) && (me.property as TSESTree.Identifier).name === 'assign') return;
+        }
         const mergeF = checkMergeFunctionCall(node, source, filePath, tainted);
         if (mergeF) findings.push(mergeF);
       },

@@ -55,10 +55,16 @@ function isHttpClientMethodCall(node: TSESTree.CallExpression): string | null {
 
 function hasUrlAllowlistValidation(source: string, varName: string, line: number): boolean {
   const priorLines = source.split('\n').slice(Math.max(0, line - 20), line).join('\n');
-  return (
-    priorLines.includes(`new URL(${varName})`) &&
-    (priorLines.includes('.hostname') || priorLines.includes('.origin'))
-  );
+  // new URL() + hostname/origin check
+  if (priorLines.includes(`new URL(${varName})`) &&
+    (priorLines.includes('.hostname') || priorLines.includes('.origin'))) return true;
+  // startsWith prefix validation: url.startsWith('https://trusted.com')
+  if (priorLines.includes(`${varName}.startsWith(`)) return true;
+  // Allowlist array/set check: ALLOWED.includes(url) or ALLOWED.has(url)
+  if (priorLines.includes(`.includes(${varName}`) || priorLines.includes(`.has(${varName}`)) return true;
+  // Regex test: SAFE_RE.test(url)
+  if (priorLines.includes(`.test(${varName})`)) return true;
+  return false;
 }
 
 function checkHttpCall(node: TSESTree.CallExpression, source: string, filePath: string, tainted: Set<string>): Finding | null {

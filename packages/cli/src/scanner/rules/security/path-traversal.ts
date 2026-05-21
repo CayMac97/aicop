@@ -65,6 +65,11 @@ function checkFsCall(node: TSESTree.CallExpression, source: string, filePath: st
   };
 }
 
+function linesAfter(source: string, line: number, count: number): string {
+  const all = source.split('\n');
+  return all.slice(line, line + count).join('\n');  // line is 1-indexed; slice at index `line` = next line
+}
+
 function checkPathJoin(node: TSESTree.CallExpression, source: string, filePath: string, tainted: Set<string>): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
@@ -74,7 +79,7 @@ function checkPathJoin(node: TSESTree.CallExpression, source: string, filePath: 
   if (method !== 'join' && method !== 'resolve') return null;
   const hasUserInput = node.arguments.some((arg) => isUserInputExpr(arg, tainted));
   if (!hasUserInput) return null;
-  const contextAfter = extractSnippet(source, getLine(node) + 1, 5);
+  const contextAfter = linesAfter(source, getLine(node), 6);
   if (contextAfter.includes('.startsWith(')) return null;
   return {
     ruleId: 'security/path-traversal',
@@ -144,11 +149,13 @@ const rule: Rule = {
         if (fsF) { findings.push(fsF); return; }
         const pathF = checkPathJoin(node, source, filePath, tainted);
         if (pathF) {
-          // Suppress if the result is assigned to a var that will be used in an fs.* call
-          // (the fs.* call emits its own finding). Check next 5 lines for an fs.* usage.
-          const afterSnippet = extractSnippet(source, pathF.line + 1, 5);
-          const isFsUsed = afterSnippet.includes('fs.') || afterSnippet.includes('fse.');
-          if (!isFsUsed) findings.push(pathF);
+          const afterLines = linesAfter(source, pathF.line, 6);
+          const hasSendFile = afterLines.includes('.sendFile(') || afterLines.includes('.download(');
+          // Suppress when path is only passed to a safe string response (not file serving)
+          const hasSafeStringUse =
+            !hasSendFile &&
+            (afterLines.includes('res.send(') || afterLines.includes('res.json('));
+          if (!hasSafeStringUse) findings.push(pathF);
         }
       },
       BinaryExpression(rawNode) {
