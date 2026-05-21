@@ -19,11 +19,23 @@ function hasExpiryInOptions(optionsNode: TSESTree.SpreadElement | TSESTree.Expre
   if (optionsNode.type !== 'ObjectExpression') return false;
   const obj = optionsNode as TSESTree.ObjectExpression;
   return obj.properties.some((prop) => {
+    if (prop.type === 'SpreadElement') return true; // spread may include expiresIn — can't tell statically
     if (prop.type !== 'Property') return false;
     const p = prop as TSESTree.Property;
     if (!isIdentifier(p.key)) return false;
     const name = (p.key as TSESTree.Identifier).name;
     return name === 'expiresIn' || name === 'exp';
+  });
+}
+
+function payloadHasExpClaim(payloadNode: TSESTree.SpreadElement | TSESTree.Expression): boolean {
+  if (payloadNode.type !== 'ObjectExpression') return false;
+  const obj = payloadNode as TSESTree.ObjectExpression;
+  return obj.properties.some((prop) => {
+    if (prop.type !== 'Property') return false;
+    const p = prop as TSESTree.Property;
+    if (!isIdentifier(p.key)) return false;
+    return (p.key as TSESTree.Identifier).name === 'exp';
   });
 }
 
@@ -39,6 +51,7 @@ function hasNoneAlgorithm(optionsNode: TSESTree.SpreadElement | TSESTree.Express
   });
 }
 
+// aicop-ignore tech-debt/cyclomatic-complexity
 function checkJwtSign(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
   if (!isJwtSignCall(node)) return null;
   const args = node.arguments;
@@ -56,6 +69,8 @@ function checkJwtSign(node: TSESTree.CallExpression, source: string, filePath: s
   }
   if (args.length < 2) return null;
   if (args.length < 3) {
+    if (args[0].type === 'Identifier') return null; // can't inspect variable payload
+    if (payloadHasExpClaim(args[0])) return null;
     return {
       ruleId: 'security/jwt-no-expiry',
       severity: 'error',

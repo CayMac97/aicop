@@ -110,6 +110,8 @@ function checkObjectProperty(node: TSESTree.Property, source: string, filePath: 
   if (isDocumentationString(value)) return null;
   if (PUBLIC_KEY_PATTERN.test(value)) return null;
   if (looksLikeKeyNameNotValue(value)) return null;
+  if (looksLikeNaturalLanguage(value)) return null;
+  if (value.startsWith('/')) return null;
 
   let keyName: string | null = null;
   if (isIdentifier(node.key)) {

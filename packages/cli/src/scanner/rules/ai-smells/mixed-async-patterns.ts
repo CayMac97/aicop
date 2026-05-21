@@ -177,6 +177,7 @@ function checkCallbackStyleMixedWithAsync(
   filePath: string,
   parent: TSESTree.Node | null,
 ): Finding | null {
+  if (parent?.type !== 'CallExpression') return null;
   if (!info.isAsync || !info.hasAwait) return null;
   const params = funcNode.params;
   if (params.length === 0) return null;

@@ -32,7 +32,7 @@ function isHardcodedPlaceholderReturn(body: TSESTree.BlockStatement, funcName: s
   if (!ret.argument) return false;
   const arg = ret.argument;
   if (arg.type === 'ArrayExpression' && (arg as TSESTree.ArrayExpression).elements.length === 0) return true;
-  if (arg.type === 'ObjectExpression') return true;
+  if (arg.type === 'ObjectExpression' && (arg as TSESTree.ObjectExpression).properties.length === 0) return true;
   return false;
 }
 
