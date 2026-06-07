@@ -3,7 +3,6 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier } from '../../../utils/ast-helpers.js';
-import { isTestFile } from '../../../utils/file-utils.js';
 
 function isFunctionNode(node: TSESTree.Node): node is TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression {
   return node.type === 'FunctionDeclaration' ||

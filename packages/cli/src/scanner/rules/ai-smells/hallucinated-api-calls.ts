@@ -8,8 +8,22 @@ import { HALLUCINATED_API_MAP, HALLUCINATED_CHAIN_MAP } from './hallucinated-api
 function checkSingleLevelCall(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
-  if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
-  const objectName = (me.object as TSESTree.Identifier).name;
+  if (!isIdentifier(me.property)) return null;
+  
+  let objectName = '';
+  if (isIdentifier(me.object)) {
+    objectName = (me.object as TSESTree.Identifier).name;
+  } else if (me.object.type === 'CallExpression') {
+    const innerCall = me.object as TSESTree.CallExpression;
+    if (isIdentifier(innerCall.callee) && innerCall.callee.name === 'expect') {
+      objectName = 'expect(...)';
+    } else {
+      return null;
+    }
+  } else {
+    return null;
+  }
+  
   const methodName = (me.property as TSESTree.Identifier).name;
   const methodMap = HALLUCINATED_API_MAP.get(objectName);
   if (!methodMap) return null;

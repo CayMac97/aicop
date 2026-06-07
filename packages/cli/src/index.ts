@@ -1,3 +1,16 @@
+import { isMainThread, parentPort, workerData } from 'node:worker_threads';
+if (!isMainThread && parentPort) {
+  const { scanFile, getEnabledRules } = require('./scanner/scan-file.js') as typeof import('./scanner/scan-file.js');
+  const data = workerData as any;
+  const rules = getEnabledRules(data.config);
+  for (const file of data.files) {
+    const result = scanFile(file, data.basePath, rules, data.config, data.minSeverity, data.noAiScore, undefined, data.includeTests);
+    parentPort.postMessage({ type: 'result', result });
+  }
+  parentPort.postMessage({ type: 'done' });
+  process.exit(0);
+}
+
 import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
@@ -27,7 +40,8 @@ const program = new Command();
 function addScanOptions(cmd: Command): Command {
   return cmd
     .argument('[path]', 'Path to scan (file or directory)', '.')
-    .option('--fix', 'Auto-fix simple issues where possible (future)')
+    .option('--fix', 'Auto-fix simple issues where possible')
+    .option('--dry-run', 'Show what would be fixed without modifying files')
     .option('--watch', 'Watch for file changes and re-scan')
     .option('--ci', 'CI mode — no colors, no spinners, exit code reflects threshold status')
     .option('--format <format>', 'Output format: terminal | html | json', 'terminal')
@@ -358,6 +372,8 @@ program
   .option('--output <path>', 'Write report to file instead of stdout')
   .option('--severity <level>', 'Minimum severity to report: error | warn | info', 'warn')
   .option('--ignore <patterns...>', 'Additional glob patterns to exclude')
+  .option('--fix', 'Auto-fix simple issues where possible')
+  .option('--dry-run', 'Show what would be fixed without modifying files')
   .option('--no-ai-score', 'Omit per-file AI smell scores')
   .option('--rule <rules...>', 'Only run specific rules')
   .option('--config <path>', 'Path to config file')
@@ -440,7 +456,7 @@ async function runScan(targetPath: string, opts: CliOptions): Promise<void> {
   }
 
   try {
-    const result = await scan(scanOptions, onProgress);
+    let result = await scan(scanOptions, onProgress);
     if (result.filesScanned === 0) {
       spinner?.fail(chalk.yellow('No scannable files found'));
       const target = path.resolve(targetPath);
@@ -454,6 +470,16 @@ async function runScan(targetPath: string, opts: CliOptions): Promise<void> {
       }
       process.exit(0);
     }
+
+    if (opts.fix || opts.dryRun) {
+      const { applyFixes } = await import('./fixer/index.js');
+      await applyFixes(result, { dryRun: opts.dryRun });
+      if (!opts.dryRun) {
+         const rescanResult = await scan(scanOptions, onProgress);
+         Object.assign(result, rescanResult);
+      }
+    }
+
     spinner?.succeed(chalk.green(`Scanned ${result.filesScanned} files in ${result.scanDurationMs}ms`));
     await handleScanResult(result, opts, ci, resolvedTarget, displaySeverity);
   } catch (err) {

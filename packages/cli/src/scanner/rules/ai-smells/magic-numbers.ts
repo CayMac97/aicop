@@ -3,7 +3,6 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn } from '../../../utils/ast-helpers.js';
-import { isTestFile } from '../../../utils/file-utils.js';
 
 const ALLOWED_NUMBERS = new Set([
   0, 1, -1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 16, 20, 24, 25, 30, 32, 36, 40, 50, 60, 64, 90, 100, 120, 128, 256, 512, 1000, 1024,

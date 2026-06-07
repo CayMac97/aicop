@@ -3,7 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isStringLiteral, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
-import { isConfigFile, isTestFile } from '../../../utils/file-utils.js';
+import { isConfigFile } from '../../../utils/file-utils.js';
 
 const PORT_PATTERN = /^(?:PORT|port|Port)$/;
 const URL_PATTERN = /^https?:\/\//;

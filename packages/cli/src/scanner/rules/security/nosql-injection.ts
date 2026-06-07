@@ -3,12 +3,11 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
-import { buildTaintMap } from '../../../utils/taint-tracker.js';
+import { buildExtendedTaintMap } from '../../../utils/taint-tracker.js';
 
 const MONGO_QUERY_METHODS = new Set([
   'find',
   'findOne',
-  'findById',
   'findOneAndUpdate',
   'findOneAndDelete',
   'updateOne',
@@ -132,7 +131,10 @@ function hasTypeOrPatternValidation(source: string, varNames: string[], line: nu
     /\b(?:validate|sanitize|check|clean)[A-Za-z]*\s*\(/.test(priorLines) &&
     varNames.some((n) => priorLines.includes(n));
   const hasErrorCheck = /if\s*\(\s*errors\b/.test(priorLines);
-  if (hasValidateFn && hasErrorCheck) return true;
+  if (hasValidateFn) {
+    if (/\b(?:sanitize|clean)\b/.test(priorLines)) return true;
+    if (hasErrorCheck) return true;
+  }
   return false;
 }
 
@@ -147,7 +149,7 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
-    const tainted = buildTaintMap(ast);
+    const tainted = buildExtendedTaintMap(ast);
     const varMap = buildVarMap(ast);
 
     walk(ast, {

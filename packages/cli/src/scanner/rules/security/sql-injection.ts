@@ -3,7 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { isStringLiteral, getLine, getColumn, isMemberExpression, isIdentifier } from '../../../utils/ast-helpers.js';
-import { buildTaintMap } from '../../../utils/taint-tracker.js';
+import { buildTaintMap, buildExtendedTaintMap } from '../../../utils/taint-tracker.js';
 
 const SQL_VERB_PATTERN = /\b(SELECT|INSERT\s+INTO|UPDATE\s+\w|DELETE\s+FROM|DROP\s+TABLE|CREATE\s+TABLE|ALTER\s+TABLE|EXEC(?:UTE)?)\b/i;
 const HTML_TAG_PATTERN = /<(?:select|table|input|form|option|textarea)\b/i;
@@ -177,9 +177,9 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
     const findings: Finding[] = [];
     const parentMap = buildParentMap(ast);
     const dbCallVars = collectDbCallVars(ast);
-    const tainted = buildTaintMap(ast);
+    const tainted = buildExtendedTaintMap(ast);
 
-    function tryFlag(node: TSESTree.Node, fixMsg: string): void {
+    function tryFlag(node: TSESTree.Node, message: string, fixMsg: string): void {
       const line = getLine(node);
       if (PARAMETERIZED_PATTERN.test(extractSnippet(source, line))) return;
       const ctx = findContext(node, parentMap);
@@ -189,7 +189,7 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
         findings.push({
           ruleId: 'security/sql-injection',
           severity: 'error',
-          message: 'SQL string built via concatenation/template literal with dynamic input',
+          message,
           explain: 'SQL string built via concatenation/template — user input reaches query without parameterization',
           confidence: 'HIGH',
           file: filePath,
@@ -205,17 +205,17 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
       TemplateLiteral(rawNode) {
         const node = rawNode as TSESTree.TemplateLiteral;
         const raw = node.quasis.map((q) => q.value.raw).join('');
-        if (!looksLikeSQL(raw) || node.expressions.length === 0) return;
-        tryFlag(node, 'Use parameterized queries: db.query("SELECT * FROM users WHERE id = ?", [id])');
+        if (!looksLikeSQL(raw) || !templateHasUserInput(node, tainted)) return;
+        tryFlag(node, 'SQL template literal with user input — injection risk',
+          'Use parameterized queries: db.query("SELECT * FROM users WHERE id = ?", [id])');
       },
       BinaryExpression(rawNode) {
         const node = rawNode as TSESTree.BinaryExpression;
         if (node.operator !== '+') return;
-        if (node.left.type === 'Literal' && node.right.type === 'Literal') return;
         const leftStr = isStringLiteral(node.left) ? String((node.left as TSESTree.StringLiteral).value) : '';
-        const rightStr = isStringLiteral(node.right) ? String((node.right as TSESTree.StringLiteral).value) : '';
-        if (!looksLikeSQL(leftStr) && !looksLikeSQL(rightStr)) return;
-        tryFlag(node, 'Use parameterized queries or a query builder like Prisma, Knex, or TypeORM');
+        if (!looksLikeSQL(leftStr) || !concatHasUserInput(node, tainted)) return;
+        tryFlag(node, 'SQL string concat with user input — injection risk',
+          'Use parameterized queries or a query builder like Prisma, Knex, or TypeORM');
       },
     });
 

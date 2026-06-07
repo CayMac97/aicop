@@ -87,9 +87,6 @@ app.post('/forgot-password', authLimiter, async (req, res) => { ... });`,
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
-
-    if (/[/\\](?:test|tests|spec|__tests__)[/\\]|\.(?:test|spec|cy)\.[jt]sx?$/i.test(filePath)) return findings;
-
     const rateLimitVars = collectRateLimitVars(ast);
     const seenEndpoints = new Set<string>();
 

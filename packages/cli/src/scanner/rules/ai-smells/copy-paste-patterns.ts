@@ -13,7 +13,6 @@ interface FunctionBody {
 }
 
 const MIN_STMTS_FOR_DUPLICATE = 10;
-const TEST_FILE_RE = /\.(test|spec)\.[jt]sx?$/i;
 
 function getFunctionName(node: TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression): string {
   if (node.type === 'FunctionDeclaration' && node.id) return node.id.name;

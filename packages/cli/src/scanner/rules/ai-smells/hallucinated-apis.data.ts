@@ -30,9 +30,44 @@ export const HALLUCINATED_APIS: HallucinatedApiEntry[] = [
     realAlternative: 'Use fs.readFileSync()/fs.promises.readFile() or fs-extra equivalents',
   },
   {
+    objectName: 'prisma',
+    methods: ['findAllWhere', 'findManyWhere', 'updateMany', 'upsertMany', 'deleteMany', 'findFirst'],
+    realAlternative: 'Use prisma.model.findMany({ where: {} }) and ensure findFirst is properly parameterized',
+  },
+  {
+    objectName: 'z',
+    methods: ['validate', 'check', 'assert'],
+    realAlternative: 'Use z.string().parse(x), z.string().safeParse(x), schema.parse(x)',
+  },
+  {
+    objectName: 'params',
+    methods: ['get', 'query', 'searchParams'],
+    realAlternative: 'In Next.js App Router, use params.id directly. .get() is for searchParams.',
+  },
+  {
+    objectName: 'searchParams',
+    methods: ['query', 'getAll'],
+    realAlternative: 'Use searchParams.get("key") or searchParams["key"]',
+  },
+  {
+    objectName: 'db',
+    methods: ['findMany', 'findOne'],
+    realAlternative: 'In Drizzle ORM, use db.select().from(table).where(...) or db.query.table.findMany()',
+  },
+  {
+    objectName: 'expect(...)',
+    methods: ['toHaveBeenCalledOnce', 'toStrictDeepEqual', 'toMatchSnapshot.inline'],
+    realAlternative: 'Use .toHaveBeenCalledTimes(1), .toStrictEqual(), .toMatchInlineSnapshot()',
+  },
+  {
     objectName: 'fetch',
-    methods: ['get', 'post', 'put', 'delete', 'patch', 'head', 'options'],
+    methods: ['get', 'post', 'put', 'delete', 'patch', 'head', 'options', 'create'],
     realAlternative: 'fetch() is a function, not an object. Use fetch(url, { method: "POST", ... })',
+  },
+  {
+    objectName: 'Model',
+    methods: ['findAllById', 'updateById', 'deleteById', 'patch'],
+    realAlternative: 'Use Model.findByIdAndUpdate, Model.findByIdAndDelete',
   },
   {
     objectName: 'mongoose',
@@ -67,7 +102,8 @@ export const HALLUCINATED_APIS: HallucinatedApiEntry[] = [
     objectName: 'str',
     methods: ['capitalize', 'contains', 'reverse', 'truncate'],
     realAlternative: 'capitalize/reverse/truncate do not exist in JS | str.contains() → str.includes()',
-  },];
+  },
+];
 
 /** Lookup map for fast access: objectName -> { method -> realAlternative } */
 export const HALLUCINATED_API_MAP: Map<string, Map<string, string>> = new Map(

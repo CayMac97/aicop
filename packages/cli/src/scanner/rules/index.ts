@@ -42,6 +42,9 @@ import godFiles from './tech-debt/god-files.js';
 import hardcodedConfig from './tech-debt/hardcoded-config.js';
 import missingTypes from './tech-debt/missing-types.js';
 
+import { nextjsMissingInputValidation } from './security/nextjs-missing-input-validation.js';
+import { nextjsClientServerConfusion } from './ai-smells/nextjs-client-server-confusion.js';
+
 const ALL_RULES: Rule[] = [
   hardcodedSecrets,
   sqlInjection,
@@ -82,6 +85,8 @@ const ALL_RULES: Rule[] = [
   godFiles,
   hardcodedConfig,
   missingTypes,
+  nextjsMissingInputValidation,
+  nextjsClientServerConfusion,
 ];
 
 const RULE_REGISTRY: Map<string, Rule> = new Map(

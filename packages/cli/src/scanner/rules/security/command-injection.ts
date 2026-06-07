@@ -3,7 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral } from '../../../utils/ast-helpers.js';
-import { buildTaintMap, isTaintedNode } from '../../../utils/taint-tracker.js';
+import { buildTaintMap, isTaintedNode, buildExtendedTaintMap } from '../../../utils/taint-tracker.js';
 
 const EXEC_FUNCTIONS = new Set(['exec', 'execSync', 'spawn', 'spawnSync', 'execFile', 'execFileSync']);
 const USER_INPUT_PROPS = new Set(['body', 'query', 'params', 'headers']);
@@ -66,20 +66,40 @@ function checkExecCall(node: TSESTree.CallExpression, source: string, filePath: 
   if (!funcName) return null;
 
   const firstArg = node.arguments[0];
+  const secondArg = node.arguments[1];
+  
   if (!firstArg) return null;
-  if (!argContainsUserInput(firstArg, tainted)) return null;
-
-  // Suppress when all tainted template expressions are validated via allowlist
-  if (firstArg.type === 'TemplateLiteral') {
-    const tl = firstArg as TSESTree.TemplateLiteral;
-    const taintedExprs = tl.expressions.filter((e) => isUserInput(e, tainted));
-    if (
-      taintedExprs.length > 0 &&
-      taintedExprs.every((e) =>
-        isIdentifier(e) && hasVarAllowlistCheck(source, (e as TSESTree.Identifier).name, getLine(node)),
-      )
-    ) return null;
+  
+  let isVulnerable = false;
+  if (argContainsUserInput(firstArg, tainted)) {
+    isVulnerable = true;
+    
+    // Suppress when all tainted template expressions are validated via allowlist
+    if (firstArg.type === 'TemplateLiteral') {
+      const tl = firstArg as TSESTree.TemplateLiteral;
+      const taintedExprs = tl.expressions.filter((e) => isUserInput(e, tainted));
+      if (
+        taintedExprs.length > 0 &&
+        taintedExprs.every((e) =>
+          isIdentifier(e) && hasVarAllowlistCheck(source, (e as TSESTree.Identifier).name, getLine(node)),
+        )
+      ) {
+        isVulnerable = false;
+      }
+    }
   }
+  
+  // Also check array elements in second argument (for spawn)
+  if (!isVulnerable && secondArg && secondArg.type === 'ArrayExpression') {
+    const hasTaintedElem = (secondArg as TSESTree.ArrayExpression).elements.some(elem => 
+      elem && argContainsUserInput(elem, tainted)
+    );
+    if (hasTaintedElem) {
+       isVulnerable = true;
+    }
+  }
+
+  if (!isVulnerable) return null;
 
   return {
     ruleId: 'security/command-injection',
@@ -89,7 +109,7 @@ function checkExecCall(node: TSESTree.CallExpression, source: string, filePath: 
     line: getLine(node),
     column: getColumn(node),
     snippet: extractSnippet(source, getLine(node)),
-    fix: 'Validate and whitelist input before passing to exec()',
+    fix: 'Validate and whitelist input before passing to child_process functions',
   };
 }
 
@@ -111,7 +131,7 @@ const rule: Rule = {
     const childProcessUsed = sourceUsesChildProcess(source);
     if (!childProcessUsed) return findings;
 
-    const tainted = buildTaintMap(ast);
+    const tainted = buildExtendedTaintMap(ast);
 
     walk(ast, {
       CallExpression(rawNode) {

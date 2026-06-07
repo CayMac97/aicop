@@ -3,6 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { isStringLiteral, getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
+import { buildExtendedTaintMap, isTaintedExpr } from '../../../utils/taint-tracker.js';
 
 function checkEvalCall(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
   if (!isIdentifier(node.callee)) return null;
@@ -41,17 +42,22 @@ function checkNewFunction(node: TSESTree.NewExpression, source: string, filePath
   };
 }
 
-function checkTimerWithString(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+function checkTimerWithString(node: TSESTree.CallExpression, source: string, filePath: string, tainted: Set<string>): Finding | null {
   if (!isIdentifier(node.callee)) return null;
   const name = (node.callee as TSESTree.Identifier).name;
   if (name !== 'setTimeout' && name !== 'setInterval') return null;
   const firstArg = node.arguments[0];
   if (!firstArg) return null;
-  if (!isStringLiteral(firstArg as TSESTree.Expression)) return null;
+  
+  const isString = isStringLiteral(firstArg as TSESTree.Expression);
+  const isTainted = isTaintedExpr(firstArg, tainted);
+  
+  if (!isString && !isTainted) return null;
+
   return {
     ruleId: 'security/eval-usage',
     severity: 'error',
-    message: `${name}() called with a string argument — equivalent to eval()`,
+    message: `${name}() called with a string argument or dynamic input — equivalent to eval()`,
     file: filePath,
     line: getLine(node),
     column: getColumn(node),
@@ -93,13 +99,14 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
+    const tainted = buildExtendedTaintMap(ast);
 
     walk(ast, {
       CallExpression(rawNode) {
         const node = rawNode as TSESTree.CallExpression;
         const evalF = checkEvalCall(node, source, filePath);
         if (evalF) { findings.push(evalF); return; }
-        const timerF = checkTimerWithString(node, source, filePath);
+        const timerF = checkTimerWithString(node, source, filePath, tainted);
         if (timerF) { findings.push(timerF); return; }
         const scriptF = checkScriptDocumentWrite(node, source, filePath);
         if (scriptF) findings.push(scriptF);

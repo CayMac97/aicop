@@ -3,7 +3,6 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
-import { isTestFile } from '../../../utils/file-utils.js';
 
 const CONSOLE_METHODS = new Set(['log', 'debug', 'warn', 'error', 'info', 'trace', 'dir', 'dirxml', 'table']);
 

@@ -160,6 +160,7 @@ export interface CliOptions {
   includeExamples?: boolean;
   includeTests?: boolean;
   explain?: boolean;
+  dryRun?: boolean;
 }
 
 export function buildScanOptions(targetPath: string, config: VibescanConfig, opts: CliOptions, minSeverity: Severity): ScanOptions {

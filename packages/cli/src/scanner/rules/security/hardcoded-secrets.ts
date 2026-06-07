@@ -3,7 +3,6 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { isStringLiteral, isLiteral, getLine, getColumn, isIdentifier, isProperty } from '../../../utils/ast-helpers.js';
-import { isTestFile } from '../../../utils/file-utils.js';
 
 function isDocumentationString(value: string): boolean {
   const up = value.toUpperCase();
