@@ -36,7 +36,7 @@ function formatFileHeader(file: FileScanResult, ci: boolean): string {
   return chalk.bold.white(fileLine) + chalk.gray('─'.repeat(Math.max(0, 60 - fileLine.length))) + ' ' + scoreLabel;
 }
 
-function formatFinding(finding: Finding, ci: boolean): string {
+function formatFinding(finding: Finding, ci: boolean, showExplain?: boolean): string {
   const lines: string[] = [];
   const prefix = ci ? `[${finding.severity.toUpperCase()}]` : formatSeverityPrefix(finding.severity);
   lines.push(`${prefix}  [${finding.ruleId}]  line ${finding.line}`);
@@ -53,6 +53,13 @@ function formatFinding(finding: Finding, ci: boolean): string {
     lines.push(ci ? `| ${fixLabel} ${finding.fix}` : chalk.dim('│  ') + fixLabel + ' ' + finding.fix);
   }
 
+  if (showExplain && finding.explain) {
+    lines.push(ci ? `| Pattern matched: ${finding.explain}` : chalk.dim(`│  `) + chalk.magenta('Pattern matched: ') + finding.explain);
+    if (finding.confidence) {
+      lines.push(ci ? `| Confidence: ${finding.confidence}` : chalk.dim(`│  `) + chalk.magenta('Confidence: ') + finding.confidence);
+    }
+  }
+
   lines.push(ci ? '' : chalk.dim('│'));
   return lines.join('\n');
 }
@@ -66,7 +73,7 @@ function renderFileSeparator(ci: boolean): string {
   return chalk.gray('─'.repeat(72));
 }
 
-export function formatBySeverity(result: ScanResult, severity: Severity, ci: boolean): string {
+export function formatBySeverity(result: ScanResult, severity: Severity, ci: boolean, explain?: boolean): string {
   const sections: string[] = [];
 
   for (const file of result.files) {
@@ -75,7 +82,7 @@ export function formatBySeverity(result: ScanResult, severity: Severity, ci: boo
 
     sections.push(formatFileSectionHeader(file, ci));
     for (const finding of findings) {
-      sections.push(formatFinding(finding, ci));
+      sections.push(formatFinding(finding, ci, explain));
     }
     sections.push('');
   }
@@ -89,7 +96,7 @@ export function formatBySeverity(result: ScanResult, severity: Severity, ci: boo
   return sections.join('\n');
 }
 
-export function formatTerminal(result: ScanResult, ci: boolean): string {
+export function formatTerminal(result: ScanResult, ci: boolean, explain?: boolean): string {
   const sections: string[] = [];
   const separator = renderFileSeparator(ci);
 
@@ -105,7 +112,7 @@ export function formatTerminal(result: ScanResult, ci: boolean): string {
     }
 
     for (const finding of file.findings) {
-      sections.push(formatFinding(finding, ci));
+      sections.push(formatFinding(finding, ci, explain));
     }
     sections.push('');
   }

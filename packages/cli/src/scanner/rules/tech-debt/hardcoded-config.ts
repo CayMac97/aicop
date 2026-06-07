@@ -131,7 +131,7 @@ const rule: Rule = {
   fix: 'Use environment variables for all configuration. Use dotenv or a config module to load them with sensible defaults.',
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
-    if (isConfigFile(filePath) || isTestFile(filePath)) return [];
+    if (isConfigFile(filePath)) return [];
     const findings: Finding[] = [];
 
     walk(ast, {

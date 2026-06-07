@@ -39,6 +39,15 @@ function argContainsUserInput(arg: TSESTree.Node, tainted: Set<string>): boolean
   return isUserInput(arg, tainted);
 }
 
+function hasVarAllowlistCheck(source: string, varName: string, line: number): boolean {
+  const priorLines = source.split('\n').slice(Math.max(0, line - 15), line).join('\n');
+  return (
+    priorLines.includes(`.includes(${varName}`) ||
+    priorLines.includes(`.has(${varName}`) ||
+    priorLines.includes(`typeof ${varName}`)
+  );
+}
+
 function checkExecCall(node: TSESTree.CallExpression, source: string, filePath: string, childProcessUsed: boolean, tainted: Set<string>): Finding | null {
   if (!childProcessUsed) return null;
 
@@ -59,6 +68,18 @@ function checkExecCall(node: TSESTree.CallExpression, source: string, filePath: 
   const firstArg = node.arguments[0];
   if (!firstArg) return null;
   if (!argContainsUserInput(firstArg, tainted)) return null;
+
+  // Suppress when all tainted template expressions are validated via allowlist
+  if (firstArg.type === 'TemplateLiteral') {
+    const tl = firstArg as TSESTree.TemplateLiteral;
+    const taintedExprs = tl.expressions.filter((e) => isUserInput(e, tainted));
+    if (
+      taintedExprs.length > 0 &&
+      taintedExprs.every((e) =>
+        isIdentifier(e) && hasVarAllowlistCheck(source, (e as TSESTree.Identifier).name, getLine(node)),
+      )
+    ) return null;
+  }
 
   return {
     ruleId: 'security/command-injection',

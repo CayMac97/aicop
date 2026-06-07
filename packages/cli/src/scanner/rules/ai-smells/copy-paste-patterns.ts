@@ -4,6 +4,7 @@ import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn } from '../../../utils/ast-helpers.js';
 
+
 interface FunctionBody {
   node: TSESTree.Node;
   name: string;
@@ -11,7 +12,7 @@ interface FunctionBody {
   startLine: number;
 }
 
-const MIN_STMTS_FOR_DUPLICATE = 5;
+const MIN_STMTS_FOR_DUPLICATE = 10;
 const TEST_FILE_RE = /\.(test|spec)\.[jt]sx?$/i;
 
 function getFunctionName(node: TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression): string {
@@ -87,8 +88,6 @@ const rule: Rule = {
   fix: 'Extract the common logic into a shared function or module. Apply DRY (Don\'t Repeat Yourself) principles.',
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
-    if (TEST_FILE_RE.test(filePath)) return [];
-
     const findings: Finding[] = [];
     const bodies = extractFunctionBodies(ast);
     const seen = new Map<string, { line: number; name: string }>();

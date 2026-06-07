@@ -37,6 +37,8 @@ function addScanOptions(cmd: Command): Command {
     .option('--debug', 'Enable debug logging')
     .option('--include-vendor', 'Include vendor/library files in scan')
     .option('--include-examples', 'Include examples/, demo/, fixtures/ directories in scan (excluded by default)')
+    .option('--include-tests', 'Treat test files like production code (disables test-specific downgrades)')
+    .option('--explain', 'Explain why a finding triggered (shows matched pattern and confidence)')
     .action(async (targetPath: string, opts: CliOptions) => {
       await runScan(targetPath, opts);
     });
@@ -313,8 +315,8 @@ program
       spinner.succeed(chalk.green(`Scanned ${result.filesScanned} files`));
       const score = result.aiScore;
       const color = getBadgeColor(score);
-      const badgeUrl = `https://img.shields.io/badge/aicop-${score}%2F100-${color}?style=${opts.style}`;
-      const markdown = `![AIScore](${badgeUrl})`;
+      const badgeUrl = `https://img.shields.io/badge/AIScore-${score}%2F100-${color}?label=AICop&style=${opts.style}`;
+      const markdown = `[![AIScore](${badgeUrl})](https://github.com/CayMac97/aicop)`;
       const scoreEmoji = getScoreEmoji(score);
       const W = 63;
       const line = (inner: string): string => `│${inner.padEnd(W - 2)}│`;
@@ -363,6 +365,8 @@ program
   .option('--debug', 'Enable debug logging')
   .option('--include-vendor', 'Include vendor/library files in scan')
   .option('--include-examples', 'Include examples/, demo/, fixtures/ directories in scan (excluded by default)')
+  .option('--include-tests', 'Treat test files like production code (disables test-specific downgrades)')
+  .option('--explain', 'Explain why a finding triggered (shows matched pattern and confidence)')
   .action(async (targetPath: string | undefined, opts: CliOptions) => {
     await runScan(targetPath ?? '.', opts);
   });
@@ -372,9 +376,9 @@ async function writeOutput(displayResult: ScanResult, opts: CliOptions, ci: bool
   const isFileOutput = format !== 'terminal' || Boolean(opts.output);
   if (isInteractive && !isFileOutput) {
     process.stdout.write(renderSummary(displayResult, false) + '\n');
-    await showInteractiveGroups(displayResult, targetPath, VERSION);
+    await showInteractiveGroups(displayResult, targetPath, VERSION, opts.explain);
   } else {
-    await report(displayResult, { format, ci, outputPath: opts.output, version: VERSION });
+    await report(displayResult, { format, ci, outputPath: opts.output, version: VERSION, explain: opts.explain });
     if (isInteractive) {
       process.stdout.write(renderSummary(displayResult, false) + '\n');
     }

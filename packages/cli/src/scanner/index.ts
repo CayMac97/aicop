@@ -6,6 +6,7 @@ import { runContextAnalysis } from './context-analyzer.js';
 import { computeAiScore } from './rules/ai-smells/ai-confidence-scorer.js';
 import { readFileContent, getRelativePath } from '../utils/file-utils.js';
 import { logger } from '../utils/logger.js';
+import picomatch from 'picomatch';
 import { Rule, Finding, FileScanResult, ScanResult, ScanOptions, VibescanConfig, Severity } from './rules/types.js';
 import { isVendorFile, getFileSizeBytes, MEDIUM_FILE_BYTES } from './file-collector.js';
 
@@ -29,30 +30,19 @@ function getEnabledRules(config: VibescanConfig, ruleId?: string): Rule[] {
   });
 }
 
-const TEST_FILE_RE = /[/\\](?:test|tests|spec|__tests__|e2e|mocks?|__mocks__)[/\\](?!fixtures[/\\])|\.(?:test|spec|e2e-spec|fixture)\.[jt]sx?$/i;
-
-const SEV_ORDER: Record<string, number> = { error: 0, warn: 1, info: 2 };
-const SEV_BY_ORDER = ['error', 'warn', 'info'] as const;
-
-function applyConfigSeverity(finding: Finding, config: VibescanConfig): Finding {
-  const configured = config.rules[finding.ruleId];
-  if (!configured || configured === 'off') return finding;
-  // Config can downgrade findings (e.g. error→warn to suppress) but rules that
-  // compute context-sensitive severity (e.g. MD5 for checksums = warn vs
-  // MD5 for passwords = error) should not be upgraded beyond what the rule says.
-  // Take the MOST LENIENT between the config severity and the finding severity.
-  const configLevel = SEV_ORDER[configured] ?? 1;
-  const findingLevel = SEV_ORDER[finding.severity] ?? 1;
-  const finalLevel = Math.max(configLevel, findingLevel);
-  return { ...finding, severity: SEV_BY_ORDER[finalLevel] ?? finding.severity };
-}
-
-function downgradeInTestFile(finding: Finding, filePath: string): Finding {
-  if (!TEST_FILE_RE.test(filePath)) return finding;
-  if (finding.ruleId === 'security/hardcoded-secrets') {
-    return { ...finding, severity: 'warn', message: 'hardcoded secret in test file — use environment variables even in tests' };
+function applyTestOverrides(finding: Finding, config: VibescanConfig, filePath: string, includeTests: boolean): Finding | null {
+  if (includeTests || !config.testPatterns || config.testPatterns.length === 0 || !config.testOverrides) {
+    return finding;
   }
-  return finding;
+  
+  const isTest = picomatch.isMatch(filePath.replace(/\\/g, '/'), config.testPatterns, { dot: true, matchBase: true });
+  if (!isTest) return finding;
+
+  const override = config.testOverrides[finding.ruleId];
+  if (!override) return finding;
+  if (override === 'off') return null;
+
+  return { ...finding, severity: override };
 }
 
 function applyIgnoreComments(findings: Finding[], source: string): Finding[] {
@@ -72,9 +62,15 @@ function applyIgnoreComments(findings: Finding[], source: string): Finding[] {
   });
 }
 
-function isSkippedInTestFile(finding: Finding, filePath: string): boolean {
-  if (!TEST_FILE_RE.test(filePath)) return false;
-  return finding.ruleId === 'security/missing-rate-limit' || finding.ruleId === 'security/csrf-missing';
+function applyConfigSeverity(finding: Finding, config: VibescanConfig): Finding {
+  const configured = config.rules[finding.ruleId];
+  if (!configured || configured === 'off') return finding;
+  const SEV_ORDER: Record<string, number> = { error: 0, warn: 1, info: 2 };
+  const SEV_BY_ORDER = ['error', 'warn', 'info'] as const;
+  const configLevel = SEV_ORDER[configured] ?? 1;
+  const findingLevel = SEV_ORDER[finding.severity] ?? 1;
+  const finalLevel = Math.max(configLevel, findingLevel);
+  return { ...finding, severity: SEV_BY_ORDER[finalLevel] ?? finding.severity };
 }
 
 function meetsMinSeverity(finding: Finding, minSeverity: Severity): boolean {
@@ -112,6 +108,7 @@ function scanFile(
   minSeverity: Severity,
   noAiScore: boolean,
   preloadedSource?: string,
+  includeTests?: boolean,
 ): FileScanResult {
   const relativePath = getRelativePath(filePath, basePath);
   let source = '';
@@ -151,9 +148,9 @@ function scanFile(
   rawFindings.push(...contextFindings);
 
   const findings = applyIgnoreComments(suppressImportWarnings(rawFindings), source)
+    .map((f) => applyTestOverrides(f, config, filePath, includeTests ?? false))
+    .filter((f): f is Finding => f !== null)
     .map((f) => applyConfigSeverity(f, config))
-    .map((f) => downgradeInTestFile(f, filePath))
-    .filter((f) => !isSkippedInTestFile(f, filePath))
     .filter((f) => meetsMinSeverity(f, minSeverity))
     .sort((a, b) => {
       const order = { error: 0, warn: 1, info: 2 };
@@ -208,11 +205,11 @@ function computeAIScore(files: FileScanResult[]): AIScoreResult {
   const techDebtPenalty = Math.min(techDebtCount * 0.5, 10);
 
   const total = secErrPenalty + secWarnPenalty + aiSmellPenalty + techDebtPenalty;
-  const aiScore = Math.max(0, Math.round(100 - total));
+  const aiScore = Math.max(0, Math.floor(100 - total));
 
-  const secScore = Math.max(0, Math.round(100 - secErrCount * 5 - secWarnCount * 2.5));
-  const aiSmellScore = Math.max(0, Math.round(100 - aiSmellCount * 2));   // aiSmellCount already excludes info
-  const techScore = Math.max(0, Math.round(100 - techDebtCount * 1)); // techDebtCount already excludes info
+  const secScore = Math.max(0, Math.floor(100 - secErrCount * 5 - secWarnCount * 2.5));
+  const aiSmellScore = Math.max(0, Math.floor(100 - aiSmellCount * 2));   // aiSmellCount already excludes info
+  const techScore = Math.max(0, Math.floor(100 - techDebtCount * 1)); // techDebtCount already excludes info
 
   return {
     aiScore,
@@ -255,7 +252,7 @@ export async function scan(options: ScanOptions, onProgress?: (file: string) => 
       onProgress?.(getRelativePath(filePath, basePath));
       // Always collect at 'info' so all findings are in the result;
       // display-layer filtering happens in buildDisplayResult.
-      const result = scanFile(filePath, basePath, enabledRules, config, 'info', noAiScore, preloadedSource);
+      const result = scanFile(filePath, basePath, enabledRules, config, 'info', noAiScore, preloadedSource, options.includeTests);
       fileResults.push(result);
     }
 

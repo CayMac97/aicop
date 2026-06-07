@@ -3,6 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier } from '../../../utils/ast-helpers.js';
+import { isTestFile } from '../../../utils/file-utils.js';
 
 function isFunctionNode(node: TSESTree.Node): node is TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression {
   return node.type === 'FunctionDeclaration' ||
@@ -139,6 +140,7 @@ function checkAsyncNoAwait(
   if (!info.isAsync || info.hasAwait) return null;
   if (info.hasThenCatch) return null;
   const funcNode = info.node as TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression;
+  if (funcNode.generator) return null;
   if (returnsOnlyCallExpression(funcNode)) return null;
   if (isEmptyOrStubBody(funcNode)) return null;
   if (returnsPromiseOrObservable(funcNode)) return null;

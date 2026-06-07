@@ -3,9 +3,8 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn } from '../../../utils/ast-helpers.js';
-
-const WARN_LINE_LIMIT = 60;
-const ERROR_LINE_LIMIT = 100;
+const WARN_LINE_LIMIT = 150;
+const ERROR_LINE_LIMIT = 300;
 
 function countFunctionLines(funcNode: TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression): number {
   const body = funcNode.body;

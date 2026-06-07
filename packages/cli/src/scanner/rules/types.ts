@@ -20,6 +20,8 @@ export interface Finding {
   snippet: string;
   fix?: string;
   fixCode?: string;
+  explain?: string;
+  confidence?: 'HIGH' | 'MEDIUM' | 'LOW';
 }
 
 /** Interface every rule must implement */
@@ -88,6 +90,8 @@ export interface VibescanConfig {
   thresholds: Thresholds;
   output: OutputConfig;
   includeExamples?: boolean;
+  testPatterns?: string[];
+  testOverrides?: Record<string, Severity | 'off'>;
 }
 
 /** CLI scan options assembled from args + config */
@@ -105,4 +109,6 @@ export interface ScanOptions {
   ignore?: string[];
   includeVendor?: boolean;
   includeExamples?: boolean;
+  includeTests?: boolean;
+  explain?: boolean;
 }

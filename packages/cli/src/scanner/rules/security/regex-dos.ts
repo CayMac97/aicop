@@ -4,6 +4,7 @@ import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isStringLiteral, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
 
+
 const NESTED_QUANTIFIER = /(\([^)]*[+*][^)]*\)[+*]|\([^)]*\)[+*][+*])/;;
 const OVERLAPPING_ALTERNATION = /\(([^|)]+\|[^)]+)\)[+*]/;
 

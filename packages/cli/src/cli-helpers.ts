@@ -63,7 +63,7 @@ interface GroupEntry {
   colorFn: (s: string) => string;
 }
 
-export function showInteractiveGroups(result: ScanResult, targetPath?: string, version?: string): Promise<void> {
+export function showInteractiveGroups(result: ScanResult, targetPath?: string, version?: string, explain?: boolean): Promise<void> {
   const groups: GroupEntry[] = [
     { key: 'e', label: 'Errors',   sev: 'error', count: result.errorCount, colorFn: chalk.red },
     { key: 'w', label: 'Warnings', sev: 'warn',  count: result.warnCount,  colorFn: chalk.yellow },
@@ -100,7 +100,7 @@ export function showInteractiveGroups(result: ScanResult, targetPath?: string, v
         const key = raw.trim().toLowerCase();
         const group = groups.find((g) => g.key === key);
         if (group) {
-          process.stdout.write('\n' + formatBySeverity(result, group.sev, false) + '\n');
+          process.stdout.write('\n' + formatBySeverity(result, group.sev, false, explain) + '\n');
           ask();
         } else if (key === 'p') {
           const prompt = generateFixPrompt(result, {
@@ -158,6 +158,8 @@ export interface CliOptions {
   debug?: boolean;
   includeVendor?: boolean;
   includeExamples?: boolean;
+  includeTests?: boolean;
+  explain?: boolean;
 }
 
 export function buildScanOptions(targetPath: string, config: VibescanConfig, opts: CliOptions, minSeverity: Severity): ScanOptions {
@@ -175,6 +177,8 @@ export function buildScanOptions(targetPath: string, config: VibescanConfig, opt
     ignore: opts.ignore,
     includeVendor: Boolean(opts.includeVendor),
     includeExamples: Boolean(opts.includeExamples),
+    includeTests: Boolean(opts.includeTests),
+    explain: Boolean(opts.explain),
   };
 }
 

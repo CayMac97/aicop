@@ -3,6 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn } from '../../../utils/ast-helpers.js';
+import { isTestFile } from '../../../utils/file-utils.js';
 
 const ALLOWED_NUMBERS = new Set([
   0, 1, -1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 16, 20, 24, 25, 30, 32, 36, 40, 50, 60, 64, 90, 100, 120, 128, 256, 512, 1000, 1024,
@@ -21,6 +22,8 @@ const SKIP_PARENT_TYPES = new Set([
   'SwitchCase',            // case 404:
   'ConditionalExpression', // status === 200 ? ...
   'AssignmentExpression',  // this.code = 200
+  'MemberExpression',      // arr[2]
+  'BinaryExpression',      // i < 100
 ]);
 
 const WELL_KNOWN_NUMBER_CONTEXTS = new Set(['setTimeout', 'setInterval', 'setImmediate', 'slice', 'splice', 'indexOf']);
@@ -34,6 +37,7 @@ const MILLISECOND_MULTIPLES_DESCRIPTION: Record<number, string> = {
 };
 
 function shouldFlagNumber(value: number, parent: TSESTree.Node | null): boolean {
+  if (value >= -100 && value <= 10000) return false;
   if (ALLOWED_NUMBERS.has(value)) return false;
   if (!parent) return false;
   if (SKIP_PARENT_TYPES.has(parent.type)) return false;

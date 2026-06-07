@@ -66,4 +66,14 @@ export const DEFAULT_CONFIG: VibescanConfig = {
     format: 'terminal',
     htmlReportPath: '.aicop/report.html',
   },
+  testPatterns: ["**/*.test.{js,ts,jsx,tsx}", "**/*.spec.{js,ts,jsx,tsx}", "**/__tests__/**", "**/fixtures/**"],
+  testOverrides: {
+    "security/hardcoded-secrets": "warn",
+    "security/eval-usage": "warn",
+    "ai-smell/todo-stub-functions": "off",
+    "ai-smell/missing-null-checks": "off",
+    "ai-smell/copy-paste-patterns": "off",
+    "security/xss-vulnerabilities": "warn",
+    "security/regex-dos": "warn"
+  }
 };

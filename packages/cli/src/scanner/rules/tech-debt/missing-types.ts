@@ -112,7 +112,6 @@ const rule: Rule = {
       },
     });
 
-    findings.push(...checkTsIgnore(source, filePath));
     return findings;
   },
 };

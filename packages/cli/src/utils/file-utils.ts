@@ -27,10 +27,12 @@ export function isSupportedFile(filePath: string): boolean {
 
 /** Check if a file is a test file */
 export function isTestFile(filePath: string): boolean {
+  const normalizedPath = filePath.replace(/\\/g, '/');
   return (
-    /\.(test|spec)\.(ts|tsx|js|jsx)$/.test(filePath) ||
-    /\/__tests__\//.test(filePath) ||
-    /\/test\//.test(filePath)
+    /\.(test|spec)\.(ts|tsx|js|jsx)$/i.test(normalizedPath) ||
+    /\/__tests__\//i.test(normalizedPath) ||
+    /\/tests?\//i.test(normalizedPath) ||
+    /\/test-?[a-zA-Z0-9_-]*\//i.test(normalizedPath)
   );
 }
 

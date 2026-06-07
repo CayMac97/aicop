@@ -31,46 +31,7 @@ function hasNullSafetyInSnippet(snippet: string, varName: string): boolean {
     || snippet.includes(`${varName}[0]!`);
 }
 
-// aicop-ignore tech-debt/cyclomatic-complexity
-function checkArrayIndexAccess(
-  node: TSESTree.MemberExpression,
-  source: string,
-  filePath: string,
-  mysqlRowsVars: Set<string>,
-  forOfVars: Set<string>,
-  arrayLiteralVars: Set<string>,
-): Finding | null {
-  if (!node.computed) return null;
-  if (node.property.type !== 'Literal') return null;
-  const indexVal = (node.property as TSESTree.Literal).value;
-  if (typeof indexVal !== 'number' || indexVal !== 0) return null;
-  if (node.object.type !== 'Identifier') return null;
-  if (node.optional) return null;
 
-  const varName = (node.object as TSESTree.Identifier).name;
-  const line = getLine(node);
-
-  if (mysqlRowsVars.has(varName)) return null;
-  if (forOfVars.has(varName)) return null;
-  if (arrayLiteralVars.has(varName)) return null;
-  if (isReqOrResAccess(node)) return null;
-  if (hasSplitAssignment(source, varName, line)) return null;
-  if (hasPriorNullGuard(source, varName, line)) return null;
-
-  const snippet = extractSnippet(source, line, 2);
-  if (hasNullSafetyInSnippet(snippet, varName)) return null;
-
-  return {
-    ruleId: 'ai-smell/missing-null-checks',
-    severity: 'warn',
-    message: `accessing ${varName}[0] without a length check`,
-    file: filePath,
-    line,
-    column: getColumn(node),
-    snippet,
-    fix: `Check array length first: if (${varName}.length > 0) { ... }`,
-  };
-}
 
 function isDbFindCall(node: TSESTree.CallExpression): boolean {
   if (!isMemberExpression(node.callee)) return false;
@@ -93,68 +54,7 @@ function isMysqlQueryCall(node: TSESTree.Node): boolean {
   return method === 'query' || method === 'execute';
 }
 
-function collectMysqlRowsVars(ast: ParsedAST): Set<string> {
-  const rowsVars = new Set<string>();
 
-  walk(ast, {
-    VariableDeclarator(rawNode) {
-      const node = rawNode as TSESTree.VariableDeclarator;
-      if (!node.init) return;
-      const init = unwrapAwait(node.init);
-      if (!isMysqlQueryCall(init as TSESTree.Node)) return;
-      if (node.id.type === 'ArrayPattern') {
-        const first = (node.id as TSESTree.ArrayPattern).elements[0];
-        if (first?.type === 'Identifier') rowsVars.add((first as TSESTree.Identifier).name);
-      } else if (node.id.type === 'Identifier') {
-        rowsVars.add((node.id as TSESTree.Identifier).name);
-      }
-    },
-  });
-
-  return rowsVars;
-}
-
-function collectArrayLiteralVars(ast: ParsedAST): Set<string> {
-  const vars = new Set<string>();
-  walk(ast, {
-    VariableDeclarator(rawNode) {
-      const node = rawNode as TSESTree.VariableDeclarator;
-      if (!node.init || node.init.type !== 'ArrayExpression') return;
-      if (node.id.type !== 'Identifier') return;
-      const arr = node.init as TSESTree.ArrayExpression;
-      if (arr.elements.length > 0) vars.add((node.id as TSESTree.Identifier).name);
-    },
-    AssignmentExpression(rawNode) {
-      const node = rawNode as TSESTree.AssignmentExpression;
-      if (node.right.type !== 'ArrayExpression') return;
-      if (node.left.type !== 'Identifier') return;
-      const arr = node.right as TSESTree.ArrayExpression;
-      if (arr.elements.length > 0) vars.add((node.left as TSESTree.Identifier).name);
-    },
-  });
-  return vars;
-}
-
-function collectForOfVars(ast: ParsedAST): Set<string> {
-  const vars = new Set<string>();
-  walk(ast, {
-    ForOfStatement(rawNode) {
-      const node = rawNode as TSESTree.ForOfStatement;
-      if (node.left.type !== 'VariableDeclaration') return;
-      for (const decl of (node.left as TSESTree.VariableDeclaration).declarations) {
-        if (decl.id.type === 'Identifier') vars.add((decl.id as TSESTree.Identifier).name);
-      }
-    },
-  });
-  return vars;
-}
-
-function hasSplitAssignment(source: string, varName: string, line: number): boolean {
-  const lines = source.split('\n').slice(Math.max(0, line - 10), line + 1);
-  // aicop-ignore security/regex-dos
-  const pattern = new RegExp(`\\b${varName}\\b.*\\.split\\(`);
-  return lines.some((l) => pattern.test(l));
-}
 
 function hasPriorNullGuard(source: string, varName: string, line: number): boolean {
   const allLines = source.split('\n');
@@ -219,12 +119,14 @@ function checkDbResultAccess(ast: ParsedAST, source: string, filePath: string): 
       findings.push({
         ruleId: 'ai-smell/missing-null-checks',
         severity: 'warn',
-        message: `${varName} from DB query may be null — check before accessing`,
+        message: `Variable '${varName}' (from database findOne/findById) is accessed without a null check`,
         file: filePath,
         line,
         column: getColumn(node),
         snippet,
-        fix: `if (!${varName}) return; // or handle the null case`,
+        fix: `if (!${varName}) return; // or throw Error`,
+        explain: `variable '${varName}' originates from database query and is accessed directly`,
+        confidence: 'MEDIUM'
       });
     },
   });
@@ -280,12 +182,14 @@ function checkJsonParseResult(ast: ParsedAST, source: string, filePath: string):
       findings.push({
         ruleId: 'ai-smell/missing-null-checks',
         severity: 'warn',
-        message: `${varName} from JSON.parse() used without null check — may throw if parse fails`,
+        message: `JSON.parse is called without a try/catch block`,
         file: filePath,
         line,
         column: getColumn(node),
         snippet,
-        fix: `Wrap JSON.parse() in try/catch and check the result before accessing properties`,
+        fix: 'Wrap JSON.parse in a try/catch block to handle invalid JSON gracefully.',
+        explain: 'JSON.parse() is called outside of any try/catch block',
+        confidence: 'HIGH'
       });
     },
   });
@@ -367,28 +271,7 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
-    const mysqlRowsVars = collectMysqlRowsVars(ast);
-    const forOfVars = collectForOfVars(ast);
-    const arrayLiteralVars = collectArrayLiteralVars(ast);
 
-    const flaggedArrayVars = new Set<string>();
-    walk(ast, {
-      MemberExpression(rawNode) {
-        const node = rawNode as TSESTree.MemberExpression;
-        if (node.object.type === 'Identifier') {
-          const varName = (node.object as TSESTree.Identifier).name;
-          if (flaggedArrayVars.has(varName)) return;
-          const f = checkArrayIndexAccess(node, source, filePath, mysqlRowsVars, forOfVars, arrayLiteralVars);
-          if (f) {
-            flaggedArrayVars.add(varName);
-            findings.push(f);
-          }
-        } else {
-          const f = checkArrayIndexAccess(node, source, filePath, mysqlRowsVars, forOfVars, arrayLiteralVars);
-          if (f) findings.push(f);
-        }
-      },
-    });
 
     findings.push(...checkDbResultAccess(ast, source, filePath));
     findings.push(...checkJsonParseResult(ast, source, filePath));

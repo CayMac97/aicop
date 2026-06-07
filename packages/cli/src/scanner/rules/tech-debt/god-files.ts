@@ -1,9 +1,9 @@
 import { TSESTree } from '@typescript-eslint/typescript-estree';
 import { Rule, Finding, ParsedAST } from '../types.js';
 
-const WARN_LINES = 400;
-const ERROR_LINES = 800;
-const MAX_EXPORTS = 20;
+const WARN_LINES = 1000;
+const ERROR_LINES = 2000;
+const MAX_EXPORTS = 40;
 
 function countExportDeclaration(decl: NonNullable<TSESTree.ExportNamedDeclaration['declaration']>): number {
   if (decl.type === 'VariableDeclaration') {
@@ -47,7 +47,7 @@ const rule: Rule = {
   name: 'God Files',
   category: 'tech-debt',
   severity: 'warn',
-  description: 'Detects files that are too large (>400 lines warn, >800 error) or export too many things (>20)',
+  description: 'Detects files that are too large (>1000 lines warn, >2000 error) or export too many things (>40)',
   why: 'God files violate the Single Responsibility Principle. They are hard to navigate, cause merge conflicts, and hide the structure of your codebase. AI models routinely generate monolithic files.',
   fix: 'Split the file into focused modules, each with a clear single responsibility. Group related exports together.',
 

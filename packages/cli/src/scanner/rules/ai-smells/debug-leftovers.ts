@@ -168,7 +168,6 @@ const rule: Rule = {
   fix: 'Use a structured logger. Remove debugger statements. Move test data to fixture files.',
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
-    if (isTestFile(filePath)) return [];
     const findings: Finding[] = [];
 
     const parentMap = buildParentMap(ast);

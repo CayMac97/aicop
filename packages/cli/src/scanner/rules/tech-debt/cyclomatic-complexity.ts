@@ -72,7 +72,7 @@ const rule: Rule = {
   category: 'tech-debt',
   severity: 'warn',
   description: 'Detects functions with high cyclomatic complexity that are hard to test and maintain',
-  why: 'High cyclomatic complexity means many execution paths, requiring more tests and increasing the chance of bugs. Functions above complexity 10 should be split.',
+  why: 'High cyclomatic complexity means many execution paths, requiring more tests and increasing the chance of bugs. Functions above complexity 25 should be split.',
   fix: 'Break complex functions into smaller, focused functions. Extract conditions into well-named predicate functions.',
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
@@ -83,12 +83,12 @@ const rule: Rule = {
         if (!isFunctionNode(rawNode)) return;
         const funcNode = rawNode as TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression;
         const complexity = calculateComplexity(funcNode);
-        if (complexity < 12) return;
+        if (complexity < 20) return;
         const funcName = getFunctionName(funcNode);
-        const severity = complexity > 15 ? 'error' : 'warn';
-        const message = complexity > 15
-          ? `Function "${funcName}" has cyclomatic complexity ${complexity} (limit: 15) — split it up`
-          : `Function "${funcName}" has cyclomatic complexity ${complexity} (limit: 15) — consider splitting`;
+        const severity = complexity > 45 ? 'error' : 'warn';
+        const message = complexity > 45
+          ? `Function "${funcName}" has cyclomatic complexity ${complexity} (limit: 45) — split it up`
+          : `Function "${funcName}" has cyclomatic complexity ${complexity} (limit: 45) — consider splitting`;
         findings.push({
           ruleId: 'tech-debt/cyclomatic-complexity',
           severity,

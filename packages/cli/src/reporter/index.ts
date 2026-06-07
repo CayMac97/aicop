@@ -13,10 +13,11 @@ export interface ReporterOptions {
   ci: boolean;
   outputPath?: string;
   version: string;
+  explain?: boolean;
 }
 
 export async function report(result: ScanResult, options: ReporterOptions): Promise<void> {
-  const { format, ci, outputPath, version } = options;
+  const { format, ci, outputPath, version, explain } = options;
   try {
     if (format === 'json') {
       const json = formatJson(result, version);
@@ -37,7 +38,7 @@ export async function report(result: ScanResult, options: ReporterOptions): Prom
       return;
     }
 
-    const body = formatTerminal(result, ci);
+    const body = formatTerminal(result, ci, explain);
     const summary = renderSummary(result, ci);
 
     if (outputPath) {
