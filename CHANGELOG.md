@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **SQL-Injection Detection**: Rewrote `security/sql-injection` rule to accurately detect dynamic SQL string concatenations and template literals passed to database functions without relying solely on the taint tracker. Parameterized queries remain correctly unflagged.
 - **Explainability**: The rule now provides `HIGH` confidence explanations when dynamic strings reach database query functions unparameterized.
+- **NoSQL-Injection Variable Tracking**: Enhanced `security/nosql-injection` to properly track variables storing malicious queries before they hit the DB call. It now correctly detects inputs obfuscated through intermediate variables and explicitly warns with `HIGH` confidence when the `$where` operator is used.
 
 ## [1.0.9] - 2026-06-07
 
