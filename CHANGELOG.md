@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.1.0] - 2026-06-07
+## [1.0.10] - 2026-06-07
 
 ### Added
 - **Prompt Injection Rule**: Added new `security/prompt-injection` rule to detect when unfiltered user input reaches AI SDKs (OpenAI, Anthropic, LangChain), helping prevent attackers from overriding system prompts or extracting sensitive data.
