@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [1.1.0] - 2026-06-07
 
+### Added
+- **Prompt Injection Rule**: Added new `security/prompt-injection` rule to detect when unfiltered user input reaches AI SDKs (OpenAI, Anthropic, LangChain), helping prevent attackers from overriding system prompts or extracting sensitive data.
+
 ### Fixed
 - **SQL-Injection Detection**: Rewrote `security/sql-injection` rule to accurately detect dynamic SQL string concatenations and template literals passed to database functions without relying solely on the taint tracker. Parameterized queries remain correctly unflagged.
 - **Explainability**: The rule now provides `HIGH` confidence explanations when dynamic strings reach database query functions unparameterized.

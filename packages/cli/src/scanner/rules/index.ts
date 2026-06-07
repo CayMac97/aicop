@@ -21,6 +21,7 @@ import xxeInjection from './security/xxe-injection.js';
 import nosqlInjection from './security/nosql-injection.js';
 import csrfMissing from './security/csrf-missing.js';
 import insecureSession from './security/insecure-session.js';
+import promptInjection from './security/prompt-injection.js';
 
 import deadCodeBlocks from './ai-smells/dead-code-blocks.js';
 import inconsistentErrorHandling from './ai-smells/inconsistent-error-handling.js';
@@ -63,6 +64,7 @@ const ALL_RULES: Rule[] = [
   nosqlInjection,
   csrfMissing,
   insecureSession,
+  promptInjection,
   deadCodeBlocks,
   inconsistentErrorHandling,
   todoStubFunctions,
