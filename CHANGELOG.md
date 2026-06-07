@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - 2026-06-07
+
+### Fixed
+- **SQL-Injection Detection**: Rewrote `security/sql-injection` rule to accurately detect dynamic SQL string concatenations and template literals passed to database functions without relying solely on the taint tracker. Parameterized queries remain correctly unflagged.
+- **Explainability**: The rule now provides `HIGH` confidence explanations when dynamic strings reach database query functions unparameterized.
+
 ## [1.0.9] - 2026-06-07
 
 ### Added

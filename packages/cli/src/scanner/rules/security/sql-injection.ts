@@ -179,7 +179,7 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
     const dbCallVars = collectDbCallVars(ast);
     const tainted = buildTaintMap(ast);
 
-    function tryFlag(node: TSESTree.Node, message: string, fixMsg: string): void {
+    function tryFlag(node: TSESTree.Node, fixMsg: string): void {
       const line = getLine(node);
       if (PARAMETERIZED_PATTERN.test(extractSnippet(source, line))) return;
       const ctx = findContext(node, parentMap);
@@ -189,7 +189,9 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
         findings.push({
           ruleId: 'security/sql-injection',
           severity: 'error',
-          message,
+          message: 'SQL string built via concatenation/template literal with dynamic input',
+          explain: 'SQL string built via concatenation/template — user input reaches query without parameterization',
+          confidence: 'HIGH',
           file: filePath,
           line,
           column: getColumn(node),
@@ -203,17 +205,17 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
       TemplateLiteral(rawNode) {
         const node = rawNode as TSESTree.TemplateLiteral;
         const raw = node.quasis.map((q) => q.value.raw).join('');
-        if (!looksLikeSQL(raw) || !templateHasUserInput(node, tainted)) return;
-        tryFlag(node, 'SQL template literal with user input — injection risk',
-          'Use parameterized queries: db.query("SELECT * FROM users WHERE id = ?", [id])');
+        if (!looksLikeSQL(raw) || node.expressions.length === 0) return;
+        tryFlag(node, 'Use parameterized queries: db.query("SELECT * FROM users WHERE id = ?", [id])');
       },
       BinaryExpression(rawNode) {
         const node = rawNode as TSESTree.BinaryExpression;
         if (node.operator !== '+') return;
+        if (node.left.type === 'Literal' && node.right.type === 'Literal') return;
         const leftStr = isStringLiteral(node.left) ? String((node.left as TSESTree.StringLiteral).value) : '';
-        if (!looksLikeSQL(leftStr) || !concatHasUserInput(node, tainted)) return;
-        tryFlag(node, 'SQL string concat with user input — injection risk',
-          'Use parameterized queries or a query builder like Prisma, Knex, or TypeORM');
+        const rightStr = isStringLiteral(node.right) ? String((node.right as TSESTree.StringLiteral).value) : '';
+        if (!looksLikeSQL(leftStr) && !looksLikeSQL(rightStr)) return;
+        tryFlag(node, 'Use parameterized queries or a query builder like Prisma, Knex, or TypeORM');
       },
     });
 
