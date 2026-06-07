@@ -1,5 +1,5 @@
 <img width="570" height="633" alt="image" src="https://github.com/user-attachments/assets/51c4cb3b-1c16-4db6-88a5-57580b626b85" />
-﻿# 🛡 AICop
+# 🛡 AICop
 
 **Your AI wrote bugs. AICop finds them.
 npx aicop scan .**  
@@ -13,6 +13,98 @@ aicop scan ./src
 
 > Works with any JS/TS project. No config required to get started.
 
+---
+
+## 🆚 AICop vs. Vibecop
+
+Mit Version 1.0.9 vollzieht AICop den Schritt von einem starren Scanner zu einem transparenten Analyse-Tool für KI-generierten JavaScript/TypeScript-Code. Während Konkurrenz-Tools wie *Vibecop* durch Python-Support und CI-native Features bei polyglotten Projekten punkten, fokussiert sich AICop auf tiefgreifende AST-Analysen (38+ Regeln), automatisierte Fix-Prompts und ein feingranulares Test-Environment-Handling. 
+
+### Feature- & Genauigkeits-Vergleich
+
+<div align="center">
+
+| Metrik / Feature | aicop 1.0.8 (alt) | aicop 1.0.9 (aktuell) | vibecop 0.4.3 |
+| :--- | :---: | :---: | :---: |
+| **Aktive Regeln** | 38 | 38 | ~ 12 |
+| **Testcode Findings (Accuracy)** | 4 | 4 | 3 |
+| **Erkennung: Hardcoded Secrets** | 🟢 ✓ | 🟢 ✓ | 🟢 ✓ |
+| **Erkennung: eval() usage** | 🟢 ✓ | 🟢 ✓ | 🟢 ✓ |
+| **Erkennung: TODO-Stubs** | 🟢 ✓ (2x) | 🟢 ✓ (2x) | 🟡 ✓ (1x) |
+| **Erkennung: SQL-Injection** | 🔴 ✗ | 🔴 ✗ | 🔴 ✗ |
+| | | | |
+| **Transparenz (`--explain`)** | 🔴 ✗ | 🟢 ✓ (Pattern + Confidence) | 🔴 ✗ |
+| **Metrik-System** | 🟡 Aufgerundet (manipulierbar) | 🟢 Absolut (Math.floor, ehrlich) | 🔴 ✗ |
+| **Test-File Handling** | 🔴 Blind ignoriert | 🟢 Konfigurierbare Overrides | 🔴 ✗ |
+| **Benchmarking-Daten** | 🔴 Synthetisch | 🟢 Echter LLM-Output | - |
+| | | | |
+| **CLI Tools (Fix-Prompt, Badge)** | 🟢 ✓ | 🟢 ✓ (Verbessert) | 🔴 ✗ |
+| **Diff Scanning / Baseline** | 🟢 ✓ | 🟢 ✓ | 🟡 Nur Diff |
+| **CI/IDE Integration** | 🔴 ✗ | 🔴 ✗ | 🟢 SARIF & MCP Server |
+| **Sprachen** | JS/TS | JS/TS | 🟢 JS/TS/Python |
+
+</div>
+
+### Architektonischer Radar-Vergleich
+
+<div align="center">
+  <svg width="400" height="400" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+    <!-- Background Grid -->
+    <polygon points="200,50 330,125 330,275 200,350 70,275 70,125" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>
+    <polygon points="200,80 304,140 304,260 200,320 96,260 96,140" fill="none" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="4,4"/>
+    <polygon points="200,110 278,155 278,245 200,290 122,245 122,155" fill="none" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="4,4"/>
+    <polygon points="200,140 252,170 252,230 200,260 148,230 148,170" fill="none" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="4,4"/>
+    <polygon points="200,170 226,185 226,215 200,230 174,215 174,185" fill="none" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="4,4"/>
+    
+    <!-- Axes -->
+    <line x1="200" y1="200" x2="200" y2="50" stroke="#94a3b8" stroke-width="1"/>
+    <line x1="200" y1="200" x2="330" y2="125" stroke="#94a3b8" stroke-width="1"/>
+    <line x1="200" y1="200" x2="330" y2="275" stroke="#94a3b8" stroke-width="1"/>
+    <line x1="200" y1="200" x2="200" y2="350" stroke="#94a3b8" stroke-width="1"/>
+    <line x1="200" y1="200" x2="70" y2="275" stroke="#94a3b8" stroke-width="1"/>
+    <line x1="200" y1="200" x2="70" y2="125" stroke="#94a3b8" stroke-width="1"/>
+    
+    <!-- Axis Labels -->
+    <text x="200" y="40" font-family="sans-serif" font-size="12" font-weight="bold" fill="#334155" text-anchor="middle">Regel-Tiefe (AST)</text>
+    <text x="345" y="125" font-family="sans-serif" font-size="12" font-weight="bold" fill="#334155" text-anchor="start">Transparenz</text>
+    <text x="345" y="280" font-family="sans-serif" font-size="12" font-weight="bold" fill="#334155" text-anchor="start">Developer Exp.</text>
+    <text x="200" y="370" font-family="sans-serif" font-size="12" font-weight="bold" fill="#334155" text-anchor="middle">Sprach-Support</text>
+    <text x="55" y="280" font-family="sans-serif" font-size="12" font-weight="bold" fill="#334155" text-anchor="end">CI / IDE Integration</text>
+    <text x="55" y="125" font-family="sans-serif" font-size="12" font-weight="bold" fill="#334155" text-anchor="end">Konfigurierbarkeit</text>
+
+    <!-- Vibecop Data -->
+    <polygon points="200,140 252,170 252,230 200,320 70,275 148,170" fill="rgba(234, 88, 12, 0.2)" stroke="#ea580c" stroke-width="2"/>
+    <circle cx="200" cy="140" r="4" fill="#ea580c"/>
+    <circle cx="252" cy="170" r="4" fill="#ea580c"/>
+    <circle cx="252" cy="230" r="4" fill="#ea580c"/>
+    <circle cx="200" cy="320" r="4" fill="#ea580c"/>
+    <circle cx="70" cy="275" r="4" fill="#ea580c"/>
+    <circle cx="148" cy="170" r="4" fill="#ea580c"/>
+
+    <!-- AICop 1.0.9 Data -->
+    <polygon points="200,50 330,125 330,275 200,260 122,245 96,140" fill="rgba(16, 185, 129, 0.4)" stroke="#10b981" stroke-width="2"/>
+    <circle cx="200" cy="50" r="4" fill="#10b981"/>
+    <circle cx="330" cy="125" r="4" fill="#10b981"/>
+    <circle cx="330" cy="275" r="4" fill="#10b981"/>
+    <circle cx="200" cy="260" r="4" fill="#10b981"/>
+    <circle cx="122" cy="245" r="4" fill="#10b981"/>
+    <circle cx="96" cy="140" r="4" fill="#10b981"/>
+
+    <!-- Legend -->
+    <rect x="250" y="350" width="12" height="12" fill="rgba(16, 185, 129, 0.4)" stroke="#10b981" stroke-width="2"/>
+    <text x="270" y="361" font-family="sans-serif" font-size="12" fill="#334155">aicop 1.0.9</text>
+    
+    <rect x="250" y="370" width="12" height="12" fill="rgba(234, 88, 12, 0.2)" stroke="#ea580c" stroke-width="2"/>
+    <text x="270" y="381" font-family="sans-serif" font-size="12" fill="#334155">vibecop 0.4.3</text>
+  </svg>
+</div>
+
+### Wer sollte was nutzen?
+
+* **Nutze AICop, wenn** du primär JavaScript/TypeScript verwendest, tiefe AST-Scans für AI-Smells brauchst und Code-Qualität durch den "AI Score" gamifizieren willst.
+* **Nutze Vibecop, wenn** du polyglotte Projekte (Python/JS) hast und tiefe CI-Integration via SARIF oder MCP-Server benötigst.
+* **Beide kombinieren?** Durchaus sinnvoll: AICop für tiefe Smell-Analysen lokal, Vibecop für CI/CD-Pipelines und Python-Repos.
+
+---
 ## Table of Contents
 
 - [What it does](#what-it-does)
@@ -293,3 +385,5 @@ aicop.net/
 ## License
 
 MIT — free forever. Your code never leaves your machine.
+ 
+ 
