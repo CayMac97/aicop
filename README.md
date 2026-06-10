@@ -124,12 +124,12 @@ Mit Version 1.0.9 vollzieht AICop den Schritt von einem starren Scanner zu einem
 
 ## What it does
 
-AICop parses every `.ts`, `.tsx`, `.js`, `.jsx` file into a full AST and runs **35 detection rules**:
+AICop parses every `.ts`, `.tsx`, `.js`, `.jsx` file into a full AST and runs **41 detection rules**:
 
 | Category | Count | What it catches |
 |---|---|---|
-| 🔒 Security | 15 | Hardcoded secrets, SQL/command injection, XSS, eval, JWT no expiry, CORS misconfig, SSRF, path traversal, weak crypto, ReDoS, prototype pollution, missing rate limits, open redirect, insecure deserialisation, XXE injection |
-| 🤖 AI Smells | 11 | Hallucinated APIs, dead code, TODO stubs, copy-paste patterns, debug leftovers, mixed async, missing null checks, generic variable names, magic numbers, inconsistent error handling, AI confidence score |
+| 🔒 Security | 17 | Hardcoded secrets, SQL/command/prompt injection, XSS, eval, JWT no expiry, CORS misconfig, SSRF, path traversal, weak crypto, ReDoS, prototype pollution, missing rate limits, open redirect, insecure deserialisation, XXE injection, Next.js input validation |
+| 🤖 AI Smells | 12 | Hallucinated APIs, Next.js client/server confusion, dead code, TODO stubs, copy-paste patterns, debug leftovers, mixed async, missing null checks, generic variable names, magic numbers, inconsistent error handling, AI confidence score |
 | 🧹 Tech Debt | 6 | Cyclomatic complexity, function length, nesting depth, god files, hardcoded config, missing types |
 
 Every scanned file gets an **AI Confidence Score** and every scan produces an overall **AIScore™** (0–100).
@@ -198,12 +198,15 @@ aicop init                            # create .aicoprc.json config
 | `security/open-redirect` | warn | `res.redirect()` with unvalidated user input |
 | `security/insecure-deserialization` | error | `JSON.parse`, `eval`, `serialize-javascript` on untrusted input without validation |
 | `security/xxe-injection` | error | XML parsers with external entity processing enabled |
+| `security/prompt-injection` | error | Detects unfiltered user input passed directly to AI SDKs |
+| `security/nextjs-missing-input-validation` | warn | Server Actions and Route Handlers should validate input using a schema library (e.g. Zod) |
 
 ### 🤖 AI Smell Rules
 
 | Rule ID | Severity | What it detects |
 |---|---|---|
 | `ai-smell/hallucinated-api-calls` | error | Calls to npm packages that do not exist |
+| `ai-smell/nextjs-client-server-confusion` | warn | Detects client-side hooks or browser globals in Next.js files missing "use client" |
 | `ai-smell/dead-code-blocks` | warn | Unreachable code after `return`/`throw`/`break` |
 | `ai-smell/todo-stub-functions` | warn | Functions whose body is only a TODO comment or throws `"Not implemented"` |
 | `ai-smell/copy-paste-patterns` | warn | Identical or near-identical code blocks (structural duplication) |

@@ -75,7 +75,11 @@ function buildSummaryContent(result: ScanResult): string {
     `   ${label.padEnd(width)}${value}`;
 
   lines.push('');
-  lines.push(pad('Files scanned:', `${result.filesScanned}`) + `      Time: ${formatDuration(result.scanDurationMs)}`);
+  if (result.filesScanned === 0) {
+    lines.push(pad('Supported files found:', `0`) + `      Time: ${formatDuration(result.scanDurationMs)}`);
+  } else {
+    lines.push(pad('Files scanned:', `${result.filesScanned}`) + `      Time: ${formatDuration(result.scanDurationMs)}`);
+  }
   lines.push(pad('Files with issues:', `${result.filesWithIssues}`));
   lines.push('');
 
@@ -126,7 +130,9 @@ function buildCiSummary(result: ScanResult): string {
   const lines: string[] = [
     '',
     '=== SCAN COMPLETE ===',
-    `Files scanned: ${result.filesScanned}  Time: ${formatDuration(result.scanDurationMs)}`,
+    result.filesScanned === 0 
+      ? `Supported files found: 0  Time: ${formatDuration(result.scanDurationMs)}`
+      : `Files scanned: ${result.filesScanned}  Time: ${formatDuration(result.scanDurationMs)}`,
     `Files with issues: ${result.filesWithIssues}`,
     [
       `Errors: ${result.errorCount}`,

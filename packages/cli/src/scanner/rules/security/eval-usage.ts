@@ -3,7 +3,8 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { isStringLiteral, getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
-import { buildExtendedTaintMap, isTaintedExpr } from '../../../utils/taint-tracker.js';
+import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult } from '../../../utils/taint-tracker.js';
+import { buildParentMap } from '../../ast-walker.js';
 
 function checkEvalCall(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
   if (!isIdentifier(node.callee)) return null;
@@ -42,7 +43,7 @@ function checkNewFunction(node: TSESTree.NewExpression, source: string, filePath
   };
 }
 
-function checkTimerWithString(node: TSESTree.CallExpression, source: string, filePath: string, tainted: Set<string>): Finding | null {
+function checkTimerWithString(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   if (!isIdentifier(node.callee)) return null;
   const name = (node.callee as TSESTree.Identifier).name;
   if (name !== 'setTimeout' && name !== 'setInterval') return null;
@@ -50,7 +51,7 @@ function checkTimerWithString(node: TSESTree.CallExpression, source: string, fil
   if (!firstArg) return null;
   
   const isString = isStringLiteral(firstArg as TSESTree.Expression);
-  const isTainted = isTaintedExpr(firstArg, tainted);
+  const isTainted = isNodeContextuallyTainted(firstArg, taintResult, parentMap);
   
   if (!isString && !isTainted) return null;
 
@@ -99,14 +100,15 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
-    const tainted = buildExtendedTaintMap(ast);
+    const taintResult = buildContextualTaintMap(ast, filePath);
+    const parentMap = buildParentMap(ast);
 
     walk(ast, {
       CallExpression(rawNode) {
         const node = rawNode as TSESTree.CallExpression;
         const evalF = checkEvalCall(node, source, filePath);
         if (evalF) { findings.push(evalF); return; }
-        const timerF = checkTimerWithString(node, source, filePath, tainted);
+        const timerF = checkTimerWithString(node, source, filePath, taintResult, parentMap);
         if (timerF) { findings.push(timerF); return; }
         const scriptF = checkScriptDocumentWrite(node, source, filePath);
         if (scriptF) findings.push(scriptF);

@@ -16,6 +16,7 @@ function countExports(ast: ParsedAST): number {
   let count = 0;
   for (const node of ast.body) {
     if (node.type === 'ExportDefaultDeclaration') { count++; continue; }
+    if (node.type === 'ExportAllDeclaration') { count++; continue; }
     if (node.type !== 'ExportNamedDeclaration') continue;
     const ed = node as TSESTree.ExportNamedDeclaration;
     if (ed.specifiers.length > 0) {

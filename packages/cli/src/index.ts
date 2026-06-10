@@ -1,7 +1,11 @@
 import { isMainThread, parentPort, workerData } from 'node:worker_threads';
 if (!isMainThread && parentPort) {
   const { scanFile, getEnabledRules } = require('./scanner/scan-file.js') as typeof import('./scanner/scan-file.js');
+  const { crossFileCache } = require('./scanner/cross-file/cross-file-resolver.js') as typeof import('./scanner/cross-file/cross-file-resolver.js');
   const data = workerData as any;
+  if (data.preloadedSources) {
+    crossFileCache.initWithSources(data.preloadedSources);
+  }
   const rules = getEnabledRules(data.config);
   for (const file of data.files) {
     const result = scanFile(file, data.basePath, rules, data.config, data.minSeverity, data.noAiScore, undefined, data.includeTests);

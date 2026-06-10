@@ -3,7 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
-import { buildTaintMap, isTaintedNode } from '../../../utils/taint-tracker.js';
+import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult } from '../../../utils/taint-tracker.js';
 
 const AI_SDK_KEYWORDS = ['openai', 'anthropic', 'langchain'];
 const TARGET_PROPS = new Set(['content', 'prompt', 'input', 'message', 'messages', 'text']);
@@ -52,45 +52,45 @@ function isDirectUserInput(node: TSESTree.Node): boolean {
   return isIdentifier(root) && root.name === 'req';
 }
 
-function isTainted(node: TSESTree.Node, tainted: Set<string>): boolean {
+function isTainted(node: TSESTree.Node, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
   if (isDirectUserInput(node)) return true;
-  if (isTaintedNode(node, tainted)) return true;
+  if (isNodeContextuallyTainted(node, taintResult, parentMap)) return true;
   if (node.type === 'TemplateLiteral') {
-    return (node as TSESTree.TemplateLiteral).expressions.some(e => isTainted(e, tainted));
+    return (node as TSESTree.TemplateLiteral).expressions.some(e => isTainted(e, taintResult, parentMap));
   }
   if (node.type === 'BinaryExpression' && (node as TSESTree.BinaryExpression).operator === '+') {
     const be = node as TSESTree.BinaryExpression;
-    return isTainted(be.left, tainted) || isTainted(be.right, tainted);
+    return isTainted(be.left, taintResult, parentMap) || isTainted(be.right, taintResult, parentMap);
   }
   return false;
 }
 
-function containsTaintedTargetProp(obj: TSESTree.ObjectExpression, tainted: Set<string>): boolean {
+function containsTaintedTargetProp(obj: TSESTree.ObjectExpression, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
   for (const prop of obj.properties) {
     if (prop.type !== 'Property') continue;
     const keyName = isIdentifier(prop.key) ? prop.key.name : 
                    (prop.key.type === 'Literal' ? String(prop.key.value) : null);
     
     if (keyName && TARGET_PROPS.has(keyName)) {
-      if (isTainted(prop.value, tainted)) return true;
+      if (isTainted(prop.value, taintResult, parentMap)) return true;
       if (prop.value.type === 'ArrayExpression') {
          const arr = prop.value as TSESTree.ArrayExpression;
-         if (arr.elements.some(el => el && el.type === 'ObjectExpression' && containsTaintedTargetProp(el, tainted))) {
+         if (arr.elements.some(el => el && (isTainted(el, taintResult, parentMap) || (el.type === 'ObjectExpression' && containsTaintedTargetProp(el, taintResult, parentMap))))) {
            return true;
          }
       }
-      if (prop.value.type === 'ObjectExpression' && containsTaintedTargetProp(prop.value as TSESTree.ObjectExpression, tainted)) {
+      if (prop.value.type === 'ObjectExpression' && containsTaintedTargetProp(prop.value as TSESTree.ObjectExpression, taintResult, parentMap)) {
         return true;
       }
     } else {
       // Deep check other properties just in case
       if (prop.value.type === 'ArrayExpression') {
         const arr = prop.value as TSESTree.ArrayExpression;
-        if (arr.elements.some(el => el && el.type === 'ObjectExpression' && containsTaintedTargetProp(el, tainted))) {
+        if (arr.elements.some(el => el && (isTainted(el, taintResult, parentMap) || (el.type === 'ObjectExpression' && containsTaintedTargetProp(el, taintResult, parentMap))))) {
           return true;
         }
       }
-      if (prop.value.type === 'ObjectExpression' && containsTaintedTargetProp(prop.value as TSESTree.ObjectExpression, tainted)) {
+      if (prop.value.type === 'ObjectExpression' && containsTaintedTargetProp(prop.value as TSESTree.ObjectExpression, taintResult, parentMap)) {
         return true;
       }
     }
@@ -109,22 +109,8 @@ function buildParentMap(ast: ParsedAST): Map<TSESTree.Node, TSESTree.Node> {
 }
 
 function isSanitizedContext(node: TSESTree.Node, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
-  let curr: TSESTree.Node | undefined = node;
-  while (curr) {
-    if (curr.type === 'CallExpression') {
-      const call = curr as TSESTree.CallExpression;
-      if (isIdentifier(call.callee) && SANITIZER_PATTERN.test(call.callee.name)) {
-        return true;
-      }
-      if (isMemberExpression(call.callee) && isIdentifier(call.callee.property) && SANITIZER_PATTERN.test(call.callee.property.name)) {
-        return true;
-      }
-    }
-    if (curr.type === 'TryStatement') {
-      return true; // We assume a try/catch implies some validation as per requirements
-    }
-    curr = parentMap.get(curr);
-  }
+  // Removing upward traversal. A call to an LLM is NOT safe just because its output is sanitized.
+  // Input sanitization is handled by removing the sanitized variables from taintResult.
   return false;
 }
 
@@ -141,7 +127,7 @@ const rule: Rule = {
     if (!hasAiSdkImport(ast)) return [];
     
     const findings: Finding[] = [];
-    const tainted = buildTaintMap(ast);
+    const taintResult = buildContextualTaintMap(ast, filePath);
     const parentMap = buildParentMap(ast);
 
     // Remove sanitized variables from tainted set
@@ -155,7 +141,7 @@ const rule: Rule = {
           const parent = parentMap.get(node);
           if (parent?.type === 'VariableDeclarator') {
             const decl = parent as TSESTree.VariableDeclarator;
-            if (isIdentifier(decl.id)) tainted.delete(decl.id.name);
+            if (isIdentifier(decl.id)) taintResult.globalTaints.delete(decl.id.name);
           }
         }
       }
@@ -171,9 +157,9 @@ const rule: Rule = {
         
         let isVuln = false;
         for (const arg of node.arguments) {
-          if (arg.type === 'ObjectExpression' && containsTaintedTargetProp(arg, tainted)) {
+          if (arg.type === 'ObjectExpression' && containsTaintedTargetProp(arg, taintResult, parentMap)) {
             isVuln = true;
-          } else if (isTainted(arg, tainted)) {
+          } else if (isTainted(arg, taintResult, parentMap)) {
             // e.g. chain.invoke(req.body) directly
             isVuln = true;
           }
@@ -195,6 +181,52 @@ const rule: Rule = {
         }
       }
     });
+
+    const { getCrossFileTaints } = require('../../../utils/taint-tracker.js');
+    const crossFileCalls = getCrossFileTaints(ast, filePath, taintResult);
+    const reportedExternalLocations = new Set<string>();
+
+    for (const crossCall of crossFileCalls) {
+      const extParentMap = buildParentMap(crossCall.externalNode as any);
+      walk(crossCall.externalNode, {
+        CallExpression(rawNode) {
+          const node = rawNode as TSESTree.CallExpression;
+          if (!isAiMethodCall(node)) return;
+          
+          if (isSanitizedContext(node, extParentMap)) return;
+
+          const dedupeKey = `${crossCall.externalFilePath}:${getLine(node)}`;
+          if (reportedExternalLocations.has(dedupeKey)) return;
+          
+          let isVuln = false;
+          for (const arg of node.arguments) {
+            const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map() };
+            if (arg.type === 'ObjectExpression' && containsTaintedTargetProp(arg, crossTaintResult, extParentMap)) {
+              isVuln = true;
+            } else if (isTainted(arg, crossTaintResult, extParentMap)) {
+              isVuln = true;
+            }
+          }
+
+          if (isVuln) {
+            reportedExternalLocations.add(dedupeKey);
+            const sourceNode = crossCall.awaitNode ?? crossCall.callNode;
+            findings.push({
+              ruleId: 'security/prompt-injection',
+              severity: 'error',
+              message: 'Cross-file Prompt Injection: Unfiltered user input flows into AI SDK in imported function',
+              explain: 'User input flows into an imported function that executes an AI prompt',
+              confidence: 'HIGH',
+              file: filePath,
+              line: getLine(sourceNode),
+              column: getColumn(sourceNode),
+              snippet: extractSnippet(source, getLine(sourceNode)),
+              fix: rule.fix,
+            });
+          }
+        }
+      });
+    }
 
     return findings;
   }

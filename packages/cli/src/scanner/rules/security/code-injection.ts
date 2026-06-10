@@ -3,39 +3,27 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral } from '../../../utils/ast-helpers.js';
+import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult, isDirectUserInputExpr } from '../../../utils/taint-tracker.js';
+import { buildParentMap } from '../../ast-walker.js';
 
 const VM_METHODS = new Set(['runInNewContext', 'runInThisContext']);
 const MATH_EVAL_METHODS = new Set(['eval', 'evaluate']);
 const MATH_OBJ_NAMES = new Set(['mathjs', 'math', 'Math']);
 
-function collectStringConstVars(ast: ParsedAST): Set<string> {
-  const vars = new Set<string>();
-  walk(ast, {
-    VariableDeclarator(rawNode) {
-      const node = rawNode as TSESTree.VariableDeclarator;
-      if (!node.init || !isStringLiteral(node.init as TSESTree.Expression)) return;
-      if (node.id.type !== 'Identifier') return;
-      vars.add((node.id as TSESTree.Identifier).name);
-    },
-  });
-  return vars;
-}
-
-function argIsDynamic(arg: TSESTree.Node, stringConsts: Set<string>): boolean {
+function argIsTainted(arg: TSESTree.Node, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
   if (isStringLiteral(arg)) return false;
   if (arg.type === 'Literal') return false;
-  if (isIdentifier(arg) && stringConsts.has((arg as TSESTree.Identifier).name)) return false;
-  return true;
+  return isNodeContextuallyTainted(arg, taintResult, parentMap) || isDirectUserInputExpr(arg);
 }
 
-function checkVmRun(node: TSESTree.CallExpression, source: string, filePath: string, stringConsts: Set<string>): Finding | null {
+function checkVmRun(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
   if ((me.object as TSESTree.Identifier).name !== 'vm') return null;
   if (!VM_METHODS.has((me.property as TSESTree.Identifier).name)) return null;
   const arg = node.arguments[0];
-  if (!arg || !argIsDynamic(arg, stringConsts)) return null;
+  if (!arg || !argIsTainted(arg, taintResult, parentMap)) return null;
   return {
     ruleId: 'security/code-injection',
     severity: 'error',
@@ -53,7 +41,7 @@ function hasAllowlistCheck(source: string, varName: string, line: number): boole
   return priorLines.includes(`.includes(${varName}`) || priorLines.includes(`.has(${varName}`);
 }
 
-function checkMathEval(node: TSESTree.CallExpression, source: string, filePath: string, stringConsts: Set<string>): Finding | null {
+function checkMathEval(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
@@ -63,7 +51,7 @@ function checkMathEval(node: TSESTree.CallExpression, source: string, filePath: 
   if (!MATH_EVAL_METHODS.has(method)) return null;
   if (obj === 'Math') return null;
   const arg = node.arguments[0];
-  if (!arg || !argIsDynamic(arg, stringConsts)) return null;
+  if (!arg || !argIsTainted(arg, taintResult, parentMap)) return null;
   if (isIdentifier(arg)) {
     if (hasAllowlistCheck(source, (arg as TSESTree.Identifier).name, getLine(node))) return null;
   }
@@ -90,17 +78,59 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
-    const stringConsts = collectStringConstVars(ast);
+    const taintResult = buildContextualTaintMap(ast, filePath);
+    const parentMap = buildParentMap(ast);
 
     walk(ast, {
       CallExpression(rawNode) {
         const node = rawNode as TSESTree.CallExpression;
-        const vmF = checkVmRun(node, source, filePath, stringConsts);
+        const vmF = checkVmRun(node, source, filePath, taintResult, parentMap);
         if (vmF) { findings.push(vmF); return; }
-        const mathF = checkMathEval(node, source, filePath, stringConsts);
+        const mathF = checkMathEval(node, source, filePath, taintResult, parentMap);
         if (mathF) findings.push(mathF);
       },
     });
+
+    const { getCrossFileTaints } = require('../../../utils/taint-tracker.js');
+    const crossFileCalls = getCrossFileTaints(ast, filePath, taintResult);
+    const reportedExternalLocations = new Set<string>();
+
+    for (const crossCall of crossFileCalls) {
+      const extParentMap = buildParentMap(crossCall.externalNode);
+      walk(crossCall.externalNode, {
+        CallExpression(rawNode) {
+          const node = rawNode as TSESTree.CallExpression;
+          const dedupeKey = `${crossCall.externalFilePath}:${getLine(node)}`;
+          if (reportedExternalLocations.has(dedupeKey)) return;
+          
+          const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map() };
+          
+          let finding: Finding | null = null;
+          let msgType = '';
+          const vmF = checkVmRun(node, source, crossCall.externalFilePath, crossTaintResult, extParentMap);
+          if (vmF) { finding = vmF; msgType = 'vm run'; }
+          else {
+            const mathF = checkMathEval(node, source, crossCall.externalFilePath, crossTaintResult, extParentMap);
+            if (mathF) { finding = mathF; msgType = 'math.eval'; }
+          }
+          
+          if (finding) {
+            reportedExternalLocations.add(dedupeKey);
+            const sourceNode = crossCall.awaitNode ?? crossCall.callNode;
+            findings.push({
+              ruleId: 'security/code-injection',
+              severity: 'error',
+              message: `Cross-file code injection risk — user input flows into ${msgType}() in imported function`,
+              file: filePath,
+              line: getLine(sourceNode),
+              column: getColumn(sourceNode),
+              snippet: extractSnippet(source, getLine(sourceNode)),
+              fix: finding.fix,
+            });
+          }
+        }
+      });
+    }
 
     return findings;
   },

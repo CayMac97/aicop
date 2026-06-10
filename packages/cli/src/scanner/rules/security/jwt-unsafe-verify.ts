@@ -34,13 +34,16 @@ function isChecked(parent: TSESTree.Node | null, source: string, line: number): 
   if (parent.type === 'VariableDeclarator' ||
     parent.type === 'AssignmentExpression' ||
     parent.type === 'ReturnStatement' ||
-    parent.type === 'AwaitExpression' ||
     parent.type === 'CallExpression' ||
     parent.type === 'TSAsExpression' ||
     parent.type === 'TSNonNullExpression') return true;
   if (parent.type === 'ExpressionStatement') {
     const ctx = extractSnippet(source, line, 5);
     return ctx.includes('try {') || ctx.includes('try{');
+  }
+  if (parent.type === 'AwaitExpression') {
+    const ctx = extractSnippet(source, line, 0);
+    return ctx.includes('=') || ctx.includes('return ') || ctx.includes('if ');
   }
   return false;
 }

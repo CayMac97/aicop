@@ -45,3 +45,15 @@ export function collectNodes<T extends TSESTree.Node>(
   });
   return nodes;
 }
+
+export function buildParentMap(root: TSESTree.Node | TSESTree.Program): Map<TSESTree.Node, TSESTree.Node> {
+  const parentMap = new Map<TSESTree.Node, TSESTree.Node>();
+  walk(root, {
+    enter(node, parent) {
+      if (parent) {
+        parentMap.set(node, parent);
+      }
+    }
+  });
+  return parentMap;
+}

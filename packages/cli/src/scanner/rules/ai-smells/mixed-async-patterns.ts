@@ -28,21 +28,29 @@ function analyzeFunctionAsync(funcNode: TSESTree.FunctionDeclaration | TSESTree.
   };
 
   let insideAwait = 0;
+  let nestedFuncDepth = 0;
   walk(funcNode, {
     enter(node) {
+      if (node !== funcNode && isFunctionNode(node)) { nestedFuncDepth++; return; }
+      if (nestedFuncDepth > 0) return;
       if (node.type === 'AwaitExpression') insideAwait++;
     },
     exit(node) {
+      if (node !== funcNode && isFunctionNode(node)) { nestedFuncDepth--; return; }
+      if (nestedFuncDepth > 0) return;
       if (node.type === 'AwaitExpression') insideAwait--;
     },
     AwaitExpression() {
+      if (nestedFuncDepth > 0) return;
       info.hasAwait = true;
     },
     // Pattern A: for await...of counts as using await
     ForOfStatement(rawNode) {
+      if (nestedFuncDepth > 0) return;
       if ((rawNode as unknown as { await: boolean }).await) info.hasAwait = true;
     },
     CallExpression(rawNode, parent) {
+      if (nestedFuncDepth > 0) return;
       if (insideAwait > 0) return;
       const node = rawNode as TSESTree.CallExpression;
       if (node.callee.type !== 'MemberExpression') return;

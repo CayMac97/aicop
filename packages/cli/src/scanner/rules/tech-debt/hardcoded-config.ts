@@ -7,7 +7,7 @@ import { isConfigFile } from '../../../utils/file-utils.js';
 
 const PORT_PATTERN = /^(?:PORT|port|Port)$/;
 const URL_PATTERN = /^https?:\/\//;
-const DB_NAMES = /^(?:mongodb|postgres|mysql|sqlite|redis|localhost)\b/i;
+const DB_NAMES = /^(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql2?|mariadb|sqlite3?|redis(?:s)?|mssql|sqlserver|localhost)/i;
 
 // Well-known service ports that are commonly hardcoded and expected
 const KNOWN_SERVICE_PORTS = new Set([

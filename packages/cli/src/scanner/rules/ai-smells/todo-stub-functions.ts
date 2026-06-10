@@ -36,8 +36,21 @@ function isHardcodedPlaceholderReturn(body: TSESTree.BlockStatement, funcName: s
   return false;
 }
 
-function getFunctionName(node: TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression): string {
+function getFunctionName(
+  node: TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression,
+  parent?: TSESTree.Node | null
+): string {
   if (node.type === 'FunctionDeclaration' && node.id) return node.id.name;
+  if (node.type === 'FunctionExpression' && node.id) return node.id.name;
+  
+  if (parent) {
+    if (parent.type === 'VariableDeclarator' && parent.id.type === 'Identifier') {
+      return parent.id.name;
+    }
+    if (parent.type === 'Property' && parent.key.type === 'Identifier') {
+      return parent.key.name;
+    }
+  }
   return '';
 }
 
@@ -45,10 +58,11 @@ function checkFunction(
   node: TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression,
   source: string,
   filePath: string,
+  parent?: TSESTree.Node | null
 ): Finding | null {
   const body = node.body;
   if (!body || body.type !== 'BlockStatement') return null;
-  const funcName = getFunctionName(node);
+  const funcName = getFunctionName(node, parent);
   if (isNotImplementedThrow(body)) {
     return {
       ruleId: 'ai-smell/todo-stub-functions',
@@ -120,10 +134,10 @@ const rule: Rule = {
     });
 
     walk(ast, {
-      enter(rawNode) {
+      enter(rawNode, parentNode) {
         if (!funcTypes.has(rawNode.type)) return;
         const funcNode = rawNode as TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression;
-        const finding = checkFunction(funcNode, source, filePath);
+        const finding = checkFunction(funcNode, source, filePath, parentNode);
         if (finding) findings.push(finding);
       },
     });

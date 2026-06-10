@@ -5,9 +5,15 @@ All notable changes to this project will be documented in this file.
 ## [1.0.10] - 2026-06-07
 
 ### Added
+- **Cross-Function Taint Tracking**: Engine now tracks variables and arguments across functions and up to 2-hops deep, vastly improving data flow analysis for injection vulnerabilities.
+- **Auto-Fixing (`--fix` / `--dry-run`)**: AICop can now automatically fix certain code smells and tech debt issues in-place, rewriting code to eliminate vulnerabilities or messy code.
+- **Parallel Scanning**: AST scanning is now multithreaded using Node.js `worker_threads`, significantly speeding up large codebases.
+- **Next.js App Router Rules**: New rules added for Next.js security (`security/nextjs-missing-input-validation`) and common AI-induced bugs (`ai-smell/nextjs-client-server-confusion`).
 - **Prompt Injection Rule**: Added new `security/prompt-injection` rule to detect when unfiltered user input reaches AI SDKs (OpenAI, Anthropic, LangChain), helping prevent attackers from overriding system prompts or extracting sensitive data.
+- **Hallucinated APIs**: Expanded `ai-smells/hallucinated-api-calls` to detect AI-hallucinated syntax for Prisma, Next.js, Zod, Mongoose, Drizzle, and test frameworks.
 
 ### Fixed
+- **eval() and spawn() Tracking**: `eval-usage` and `command-injection` rules updated to leverage the new cross-function taint tracker for complex argument tracking.
 - **SQL-Injection Detection**: Rewrote `security/sql-injection` rule to accurately detect dynamic SQL string concatenations and template literals passed to database functions without relying solely on the taint tracker. Parameterized queries remain correctly unflagged.
 - **Explainability**: The rule now provides `HIGH` confidence explanations when dynamic strings reach database query functions unparameterized.
 - **NoSQL-Injection Variable Tracking**: Enhanced `security/nosql-injection` to properly track variables storing malicious queries before they hit the DB call. It now correctly detects inputs obfuscated through intermediate variables and explicitly warns with `HIGH` confidence when the `$where` operator is used.

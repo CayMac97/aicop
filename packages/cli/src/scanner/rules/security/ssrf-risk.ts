@@ -3,21 +3,22 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
-import { buildTaintMap, isTaintedNode } from '../../../utils/taint-tracker.js';
+import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult } from '../../../utils/taint-tracker.js';
+import { buildParentMap } from '../../ast-walker.js';
 
-const HTTP_CLIENTS = new Set(['fetch', 'axios', 'got', 'request', 'superagent', 'undici']);
+const HTTP_CLIENTS = new Set(['fetch', 'axios', 'got', 'request', 'superagent', 'undici', 'needle']);
 const AXIOS_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'request']);
 const USER_INPUT_PROPS = new Set(['params', 'body', 'query', 'headers']);
 
-function isUserControlledArg(node: TSESTree.Node, tainted: Set<string>): boolean {
-  if (isTaintedNode(node, tainted)) return true;
+function isUserControlledArg(node: TSESTree.Node, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  if (isNodeContextuallyTainted(node, taintResult, parentMap)) return true;
   if (node.type === 'TemplateLiteral') {
     const tl = node as TSESTree.TemplateLiteral;
-    return tl.expressions.some((e) => isUserControlledArg(e, tainted));
+    return tl.expressions.some((e) => isUserControlledArg(e, taintResult, parentMap));
   }
   if (node.type === 'BinaryExpression') {
     const be = node as TSESTree.BinaryExpression;
-    return isUserControlledArg(be.left, tainted) || isUserControlledArg(be.right, tainted);
+    return isUserControlledArg(be.left, taintResult, parentMap) || isUserControlledArg(be.right, taintResult, parentMap);
   }
   if (!isMemberExpression(node)) return false;
   const me = node as TSESTree.MemberExpression;
@@ -67,7 +68,7 @@ function hasUrlAllowlistValidation(source: string, varName: string, line: number
   return false;
 }
 
-function checkHttpCall(node: TSESTree.CallExpression, source: string, filePath: string, tainted: Set<string>): Finding | null {
+function checkHttpCall(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   let clientName = '';
   const directName = isDirectHttpClientCall(node);
   if (directName) {
@@ -78,7 +79,7 @@ function checkHttpCall(node: TSESTree.CallExpression, source: string, filePath: 
     clientName = methodName;
   }
   const urlArg = node.arguments[0];
-  if (!urlArg || !isUserControlledArg(urlArg, tainted)) return null;
+  if (!urlArg || !isUserControlledArg(urlArg, taintResult, parentMap)) return null;
   if (isIdentifier(urlArg)) {
     const varName = (urlArg as TSESTree.Identifier).name;
     if (hasUrlAllowlistValidation(source, varName, getLine(node))) return null;
@@ -106,14 +107,47 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
-    const tainted = buildTaintMap(ast);
+    const taintResult = buildContextualTaintMap(ast, filePath);
+    const parentMap = buildParentMap(ast);
 
     walk(ast, {
       CallExpression(rawNode) {
-        const finding = checkHttpCall(rawNode as TSESTree.CallExpression, source, filePath, tainted);
+        const finding = checkHttpCall(rawNode as TSESTree.CallExpression, source, filePath, taintResult, parentMap);
         if (finding) findings.push(finding);
       },
     });
+
+    const { getCrossFileTaints } = require('../../../utils/taint-tracker.js');
+    const crossFileCalls = getCrossFileTaints(ast, filePath, taintResult);
+    const reportedExternalLocations = new Set<string>();
+
+    for (const crossCall of crossFileCalls) {
+      const extParentMap = buildParentMap(crossCall.externalNode);
+      walk(crossCall.externalNode, {
+        CallExpression(rawNode) {
+          const node = rawNode as TSESTree.CallExpression;
+          const dedupeKey = `${crossCall.externalFilePath}:${getLine(node)}`;
+          if (reportedExternalLocations.has(dedupeKey)) return;
+          
+          const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map() };
+          const finding = checkHttpCall(node, source, crossCall.externalFilePath, crossTaintResult, extParentMap);
+          if (finding) {
+            reportedExternalLocations.add(dedupeKey);
+            const sourceNode = crossCall.awaitNode ?? crossCall.callNode;
+            findings.push({
+              ruleId: 'security/ssrf-risk',
+              severity: 'error',
+              message: 'Cross-file SSRF Risk: User input flows into HTTP client in imported function',
+              file: filePath,
+              line: getLine(sourceNode),
+              column: getColumn(sourceNode),
+              snippet: extractSnippet(source, getLine(sourceNode)),
+              fix: 'Validate URLs against an allowlist before making requests. Never pass user-supplied URLs directly to HTTP clients.',
+            });
+          }
+        }
+      });
+    }
 
     return findings;
   },

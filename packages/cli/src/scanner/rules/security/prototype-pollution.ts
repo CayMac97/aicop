@@ -3,7 +3,8 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
-import { buildTaintMap } from '../../../utils/taint-tracker.js';
+import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult } from '../../../utils/taint-tracker.js';
+import { buildParentMap } from '../../ast-walker.js';
 
 const MERGE_FUNCTIONS = new Set(['merge', 'deepMerge', 'assign', 'extend', 'defaults', 'defaultsDeep']);
 const USER_INPUT_PROPS = new Set(['params', 'body', 'query', 'headers']);
@@ -18,9 +19,9 @@ function isReqBody(node: TSESTree.Node): boolean {
     USER_INPUT_PROPS.has((me.property as TSESTree.Identifier).name);
 }
 
-function isUserInputArg(node: TSESTree.Node, tainted: Set<string> = new Set()): boolean {
+function isUserInputArg(node: TSESTree.Node, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
   if (isReqBody(node)) return true;
-  if (isIdentifier(node) && tainted.has((node as TSESTree.Identifier).name)) return true;
+  if (isIdentifier(node) && isNodeContextuallyTainted(node, taintResult, parentMap)) return true;
   if (node.type === 'SpreadElement') {
     return isReqBody((node as TSESTree.SpreadElement).argument);
   }
@@ -72,13 +73,13 @@ function checkForInLoop(node: TSESTree.ForInStatement, source: string, filePath:
   };
 }
 
-function checkObjectAssign(node: TSESTree.CallExpression, source: string, filePath: string, tainted: Set<string>, parent: TSESTree.Node | null): Finding | null {
+function checkObjectAssign(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>, parent: TSESTree.Node | null): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
   if ((me.object as TSESTree.Identifier).name !== 'Object') return null;
   if ((me.property as TSESTree.Identifier).name !== 'assign') return null;
-  if (!node.arguments.some((arg) => isUserInputArg(arg, tainted))) return null;
+  if (!node.arguments.some((arg) => isUserInputArg(arg, taintResult, parentMap))) return null;
   // Result discarded (ExpressionStatement) with fresh {} target — no object is mutated
   if (
     parent?.type === 'ExpressionStatement' &&
@@ -97,7 +98,7 @@ function checkObjectAssign(node: TSESTree.CallExpression, source: string, filePa
   };
 }
 
-function checkMergeFunctionCall(node: TSESTree.CallExpression, source: string, filePath: string, tainted: Set<string>): Finding | null {
+function checkMergeFunctionCall(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   let funcName = '';
   if (isIdentifier(node.callee)) {
     funcName = (node.callee as TSESTree.Identifier).name;
@@ -106,7 +107,7 @@ function checkMergeFunctionCall(node: TSESTree.CallExpression, source: string, f
     if (isIdentifier(me.property)) funcName = (me.property as TSESTree.Identifier).name;
   }
   if (!MERGE_FUNCTIONS.has(funcName)) return null;
-  if (!node.arguments.some((arg) => isUserInputArg(arg, tainted))) return null;
+  if (!node.arguments.some((arg) => isUserInputArg(arg, taintResult, parentMap))) return null;
   return {
     ruleId: 'security/prototype-pollution',
     severity: 'error',
@@ -147,13 +148,14 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
-    const tainted = buildTaintMap(ast);
+    const taintResult = buildContextualTaintMap(ast, filePath);
+    const parentMap = buildParentMap(ast);
     const localObjectVars = collectLocalObjectVars(ast);
 
     walk(ast, {
       CallExpression(rawNode, parent) {
         const node = rawNode as TSESTree.CallExpression;
-        const assignF = checkObjectAssign(node, source, filePath, tainted, parent);
+        const assignF = checkObjectAssign(node, source, filePath, taintResult, parentMap, parent);
         if (assignF) { findings.push(assignF); return; }
         // Object.assign is handled exclusively by checkObjectAssign (including its suppression)
         if (isMemberExpression(node.callee)) {
@@ -161,7 +163,7 @@ const rule: Rule = {
           if (isIdentifier(me.object) && (me.object as TSESTree.Identifier).name === 'Object' &&
               isIdentifier(me.property) && (me.property as TSESTree.Identifier).name === 'assign') return;
         }
-        const mergeF = checkMergeFunctionCall(node, source, filePath, tainted);
+        const mergeF = checkMergeFunctionCall(node, source, filePath, taintResult, parentMap);
         if (mergeF) findings.push(mergeF);
       },
       AssignmentExpression(rawNode) {

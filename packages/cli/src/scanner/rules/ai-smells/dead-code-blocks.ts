@@ -18,9 +18,18 @@ function checkUnreachableCode(body: TSESTree.Statement[], source: string, filePa
   for (let i = 0; i < body.length - 1; i++) {
     const stmt = body[i];
     if (!stmt) continue;
+    if (stmt.type === 'FunctionDeclaration') continue;
     if (isTerminatingStatement(stmt)) {
-      const next = body[i + 1];
+      let next: TSESTree.Statement | undefined;
+      for (let j = i + 1; j < body.length; j++) {
+        if (body[j] && body[j].type !== 'FunctionDeclaration') {
+          next = body[j];
+          break;
+        }
+      }
+      
       if (!next) continue;
+      
       findings.push({
         ruleId: 'ai-smell/dead-code-blocks',
         severity: 'warn',
@@ -31,6 +40,7 @@ function checkUnreachableCode(body: TSESTree.Statement[], source: string, filePa
         snippet: extractSnippet(source, getLine(next)),
         fix: 'Remove the unreachable code block',
       });
+      break;
     }
   }
   return findings;

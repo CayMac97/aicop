@@ -3,13 +3,14 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral } from '../../../utils/ast-helpers.js';
-import { buildTaintMap, isTaintedNode } from '../../../utils/taint-tracker.js';
+import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult } from '../../../utils/taint-tracker.js';
+import { buildParentMap } from '../../ast-walker.js';
 
 const USER_INPUT_PROPS = new Set(['query', 'body', 'params', 'headers']);
 
 // aicop-ignore tech-debt/cyclomatic-complexity
-function isUserInput(node: TSESTree.Node, tainted: Set<string>): boolean {
-  if (isTaintedNode(node, tainted)) return true;
+function isUserInput(node: TSESTree.Node, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  if (isNodeContextuallyTainted(node, taintResult, parentMap)) return true;
   if (isMemberExpression(node)) {
     const me = node as TSESTree.MemberExpression;
     if (isMemberExpression(me.object)) {
@@ -22,12 +23,12 @@ function isUserInput(node: TSESTree.Node, tainted: Set<string>): boolean {
     }
   }
   if (node.type === 'TemplateLiteral') {
-    return (node as TSESTree.TemplateLiteral).expressions.some((e) => isUserInput(e, tainted));
+    return (node as TSESTree.TemplateLiteral).expressions.some((e) => isUserInput(e, taintResult, parentMap));
   }
   if (node.type === 'BinaryExpression') {
     const be = node as TSESTree.BinaryExpression;
     if (be.operator !== '+') return false;
-    return isUserInput(be.left, tainted) || isUserInput(be.right, tainted);
+    return isUserInput(be.left, taintResult, parentMap) || isUserInput(be.right, taintResult, parentMap);
   }
   return false;
 }
@@ -60,7 +61,7 @@ function hasRedirectValidation(source: string, varName: string, line: number): b
   return false;
 }
 
-function checkResRedirect(node: TSESTree.CallExpression, source: string, filePath: string, tainted: Set<string>): Finding | null {
+function checkResRedirect(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
@@ -74,10 +75,20 @@ function checkResRedirect(node: TSESTree.CallExpression, source: string, filePat
 
   if (isStaticUrl(urlArg)) return null;
   if (urlArg.type === 'TemplateLiteral') {
-    const firstRaw = (urlArg as TSESTree.TemplateLiteral).quasis[0]?.value.raw ?? '';
-    if (firstRaw.startsWith('/') && !firstRaw.startsWith('//')) return null;
+    const tl = urlArg as TSESTree.TemplateLiteral;
+    const firstRaw = tl.quasis[0]?.value.raw ?? '';
+    // If it starts with / but not //, it's safe ONLY IF the first quasi guarantees it won't become //
+    // e.g., `/${userInput}` -> if userInput is `/evil`, it becomes `//evil`.
+    // It's safe if it starts with a safe path like `/api/` or `/?` or `/#`.
+    // Just checking `startsWith('/')` is not enough. We check if the static part is strictly longer than `/`
+    // or if the first quasi is long enough to prevent `//` at the start.
+    if (firstRaw.startsWith('/') && !firstRaw.startsWith('//')) {
+      if (firstRaw.length > 1 && firstRaw[1] !== '/') return null;
+      if (firstRaw === '/' && tl.expressions.length === 0) return null;
+      // If firstRaw === '/' and there's an expression immediately after, it's unsafe!
+    }
   }
-  if (!isUserInput(urlArg, tainted)) return null;
+  if (!isUserInput(urlArg, taintResult, parentMap)) return null;
   if (isIdentifier(urlArg)) {
     const varName = (urlArg as TSESTree.Identifier).name;
     if (hasRedirectValidation(source, varName, getLine(node))) return null;
@@ -106,11 +117,12 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
-    const tainted = buildTaintMap(ast);
+    const taintResult = buildContextualTaintMap(ast, filePath);
+    const parentMap = buildParentMap(ast);
 
     walk(ast, {
       CallExpression(rawNode) {
-        const f = checkResRedirect(rawNode as TSESTree.CallExpression, source, filePath, tainted);
+        const f = checkResRedirect(rawNode as TSESTree.CallExpression, source, filePath, taintResult, parentMap);
         if (f) findings.push(f);
       },
     });

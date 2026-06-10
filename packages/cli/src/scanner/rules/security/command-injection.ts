@@ -3,7 +3,8 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral } from '../../../utils/ast-helpers.js';
-import { buildTaintMap, isTaintedNode, buildExtendedTaintMap } from '../../../utils/taint-tracker.js';
+import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult } from '../../../utils/taint-tracker.js';
+import { buildParentMap } from '../../ast-walker.js';
 
 const EXEC_FUNCTIONS = new Set(['exec', 'execSync', 'spawn', 'spawnSync', 'execFile', 'execFileSync']);
 const USER_INPUT_PROPS = new Set(['body', 'query', 'params', 'headers']);
@@ -17,26 +18,26 @@ function isReqPropUserInput(node: TSESTree.MemberExpression): boolean {
     && USER_INPUT_PROPS.has((parent.property as TSESTree.Identifier).name);
 }
 
-function isUserInput(node: TSESTree.Node, tainted: Set<string> = new Set()): boolean {
-  if (isTaintedNode(node, tainted)) return true;
+function isUserInput(node: TSESTree.Node, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  if (isNodeContextuallyTainted(node, taintResult, parentMap)) return true;
   if (isMemberExpression(node)) {
     const me = node as TSESTree.MemberExpression;
     if (isReqPropUserInput(me)) return true;
   }
   if (node.type === 'TemplateLiteral') {
-    return (node as TSESTree.TemplateLiteral).expressions.some((e) => isUserInput(e, tainted));
+    return (node as TSESTree.TemplateLiteral).expressions.some((e) => isUserInput(e, taintResult, parentMap));
   }
   if (node.type === 'BinaryExpression') {
     const be = node as TSESTree.BinaryExpression;
     if (be.operator !== '+') return false;
-    return isUserInput(be.left, tainted) || isUserInput(be.right, tainted);
+    return isUserInput(be.left, taintResult, parentMap) || isUserInput(be.right, taintResult, parentMap);
   }
   return false;
 }
 
-function argContainsUserInput(arg: TSESTree.Node, tainted: Set<string>): boolean {
+function argContainsUserInput(arg: TSESTree.Node, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
   if (isStringLiteral(arg)) return false;
-  return isUserInput(arg, tainted);
+  return isUserInput(arg, taintResult, parentMap);
 }
 
 function hasVarAllowlistCheck(source: string, varName: string, line: number): boolean {
@@ -48,7 +49,7 @@ function hasVarAllowlistCheck(source: string, varName: string, line: number): bo
   );
 }
 
-function checkExecCall(node: TSESTree.CallExpression, source: string, filePath: string, childProcessUsed: boolean, tainted: Set<string>): Finding | null {
+function checkExecCall(node: TSESTree.CallExpression, source: string, filePath: string, childProcessUsed: boolean, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   if (!childProcessUsed) return null;
 
   let funcName: string | null = null;
@@ -71,13 +72,13 @@ function checkExecCall(node: TSESTree.CallExpression, source: string, filePath: 
   if (!firstArg) return null;
   
   let isVulnerable = false;
-  if (argContainsUserInput(firstArg, tainted)) {
+  if (argContainsUserInput(firstArg, taintResult, parentMap)) {
     isVulnerable = true;
     
     // Suppress when all tainted template expressions are validated via allowlist
     if (firstArg.type === 'TemplateLiteral') {
       const tl = firstArg as TSESTree.TemplateLiteral;
-      const taintedExprs = tl.expressions.filter((e) => isUserInput(e, tainted));
+      const taintedExprs = tl.expressions.filter((e) => isUserInput(e, taintResult, parentMap));
       if (
         taintedExprs.length > 0 &&
         taintedExprs.every((e) =>
@@ -92,7 +93,7 @@ function checkExecCall(node: TSESTree.CallExpression, source: string, filePath: 
   // Also check array elements in second argument (for spawn)
   if (!isVulnerable && secondArg && secondArg.type === 'ArrayExpression') {
     const hasTaintedElem = (secondArg as TSESTree.ArrayExpression).elements.some(elem => 
-      elem && argContainsUserInput(elem, tainted)
+      elem && argContainsUserInput(elem, taintResult, parentMap)
     );
     if (hasTaintedElem) {
        isVulnerable = true;
@@ -113,8 +114,23 @@ function checkExecCall(node: TSESTree.CallExpression, source: string, filePath: 
   };
 }
 
-function sourceUsesChildProcess(source: string): boolean {
-  return source.includes('child_process');
+function hasChildProcessImport(ast: ParsedAST): boolean {
+  let uses = false;
+  walk(ast, {
+    ImportDeclaration(node) {
+      if ((node as TSESTree.ImportDeclaration).source.value === 'child_process' || (node as TSESTree.ImportDeclaration).source.value === 'node:child_process') {
+        uses = true;
+      }
+    },
+    CallExpression(node) {
+      const call = node as TSESTree.CallExpression;
+      if (isIdentifier(call.callee) && call.callee.name === 'require' && call.arguments[0] && isStringLiteral(call.arguments[0])) {
+        const val = (call.arguments[0] as TSESTree.StringLiteral).value;
+        if (val === 'child_process' || val === 'node:child_process') uses = true;
+      }
+    }
+  });
+  return uses;
 }
 
 const rule: Rule = {
@@ -128,17 +144,50 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
-    const childProcessUsed = sourceUsesChildProcess(source);
-    if (!childProcessUsed) return findings;
+    const childProcessUsed = hasChildProcessImport(ast);
 
-    const tainted = buildExtendedTaintMap(ast);
+    const taintResult = buildContextualTaintMap(ast, filePath);
+    const parentMap = buildParentMap(ast);
 
-    walk(ast, {
-      CallExpression(rawNode) {
-        const f = checkExecCall(rawNode as TSESTree.CallExpression, source, filePath, childProcessUsed, tainted);
-        if (f) findings.push(f);
-      },
-    });
+    if (childProcessUsed) {
+      walk(ast, {
+        CallExpression(rawNode) {
+          const f = checkExecCall(rawNode as TSESTree.CallExpression, source, filePath, childProcessUsed, taintResult, parentMap);
+          if (f) findings.push(f);
+        },
+      });
+    }
+
+    const { getCrossFileTaints } = require('../../../utils/taint-tracker.js');
+    const crossFileCalls = getCrossFileTaints(ast, filePath, taintResult);
+    const reportedExternalLocations = new Set<string>();
+
+    for (const crossCall of crossFileCalls) {
+      walk(crossCall.externalNode, {
+        CallExpression(rawNode) {
+          const node = rawNode as TSESTree.CallExpression;
+          const dedupeKey = `${crossCall.externalFilePath}:${getLine(node)}`;
+          if (reportedExternalLocations.has(dedupeKey)) return;
+          
+          const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map() };
+          const f = checkExecCall(node, source, crossCall.externalFilePath, true, crossTaintResult, new Map());
+          if (f) {
+            reportedExternalLocations.add(dedupeKey);
+            const sourceNode = crossCall.awaitNode ?? crossCall.callNode;
+            findings.push({
+              ruleId: 'security/command-injection',
+              severity: 'error',
+              message: 'Cross-file command injection risk — user input flows into imported child_process function',
+              file: filePath,
+              line: getLine(sourceNode),
+              column: getColumn(sourceNode),
+              snippet: extractSnippet(source, getLine(sourceNode)),
+              fix: 'Validate and whitelist input before passing to child_process functions',
+            });
+          }
+        }
+      });
+    }
 
     return findings;
   },

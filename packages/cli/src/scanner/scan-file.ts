@@ -1,4 +1,4 @@
-import { parse } from '@typescript-eslint/typescript-estree';
+import { parse, TSESTree } from '@typescript-eslint/typescript-estree';
 import path from 'node:path';
 import picomatch from 'picomatch';
 import { Rule, Finding, FileScanResult, VibescanConfig, Severity } from './rules/types.js';
@@ -106,6 +106,7 @@ export function scanFile(
   minSeverity: Severity,
   noAiScore: boolean,
   preloadedSource?: string,
+  preloadedAst?: TSESTree.Node | TSESTree.Program,
   includeTests?: boolean,
 ): FileScanResult {
   const relativePath = getRelativePath(filePath, basePath);
@@ -117,18 +118,20 @@ export function scanFile(
     return { filePath, relativePath, findings: [], aiScore: 0, parseError: String(err) };
   }
 
-  let ast;
-  try {
-    const ext = path.extname(filePath).toLowerCase();
-    const useJsx = ext === '.jsx' || ext === '.tsx';
+  let ast = preloadedAst;
+  if (!ast) {
     try {
-      ast = parse(source, { ...PARSE_OPTIONS, jsx: useJsx });
-    } catch {
-      ast = parse(source, { ...PARSE_OPTIONS, jsx: true });
+      const ext = path.extname(filePath).toLowerCase();
+      const useJsx = ext === '.jsx' || ext === '.tsx';
+      try {
+        ast = parse(source, { ...PARSE_OPTIONS, jsx: useJsx });
+      } catch {
+        ast = parse(source, { ...PARSE_OPTIONS, jsx: true });
+      }
+    } catch (err) {
+      logger.debug(`Parse error in ${relativePath}: ${String(err)}`);
+      return { filePath, relativePath, findings: [], aiScore: 0, parseError: `Parse error: ${String(err)}` };
     }
-  } catch (err) {
-    logger.debug(`Parse error in ${relativePath}: ${String(err)}`);
-    return { filePath, relativePath, findings: [], aiScore: 0, parseError: `Parse error: ${String(err)}` };
   }
 
   const rawFindings: Finding[] = [];

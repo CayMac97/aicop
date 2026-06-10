@@ -6,7 +6,12 @@ import { logger } from '../utils/logger.js';
 import { FileScanResult, ScanResult, ScanOptions } from './rules/types.js';
 import { isVendorFile, getFileSizeBytes, MEDIUM_FILE_BYTES } from './file-collector.js';
 import { readFileContent, getRelativePath } from '../utils/file-utils.js';
-import { getEnabledRules, scanFile } from './scan-file.js';
+import { getEnabledRules, scanFile, PARSE_OPTIONS } from './scan-file.js';
+import { clearModuleCache } from './cross-file/module-resolver.js';
+import { crossFileCache } from './cross-file/cross-file-resolver.js';
+import { globalSymbolTable } from './cross-file/global-symbol-table.js';
+import { parse } from '@typescript-eslint/typescript-estree';
+import { runPhase1 } from './cross-file/phase1-parser.js';
 
 function chunkArray<T>(arr: T[], size: number): T[][] {
   const chunks = [];
@@ -71,6 +76,9 @@ function computeAIScore(files: FileScanResult[]): AIScoreResult {
 }
 
 export async function scan(options: ScanOptions, onProgress?: (file: string) => void): Promise<ScanResult> {
+  clearModuleCache();
+  crossFileCache.clear();
+  globalSymbolTable.clear();
   const startTime = Date.now();
   const { config, noAiScore, ruleId, includeVendor } = options;
   try {
@@ -113,6 +121,25 @@ export async function scan(options: ScanOptions, onProgress?: (file: string) => 
       filesToScan.push(filePath);
     }
 
+    const preloadedSources: Record<string, string> = {};
+    logger.debug('Running Phase 1: building global symbol table...');
+    for (const filePath of filesToScan) {
+      try {
+        const source = readFileContent(filePath);
+        preloadedSources[filePath] = source;
+        const ext = path.extname(filePath).toLowerCase();
+        let ast;
+        try {
+          ast = parse(source, { ...PARSE_OPTIONS, jsx: ext === '.jsx' || ext === '.tsx' });
+        } catch {
+          try { ast = parse(source, { ...PARSE_OPTIONS, jsx: true }); } catch { continue; }
+        }
+        runPhase1(ast, filePath);
+      } catch { /* ignore unreadable files */ }
+    }
+    logger.debug('Phase 1 complete.');
+    crossFileCache.initWithSources(preloadedSources);
+
     if (filesToScan.length < 20) {
       // Sequential scan
       for (const filePath of filesToScan) {
@@ -126,7 +153,9 @@ export async function scan(options: ScanOptions, onProgress?: (file: string) => 
       const chunkSize = Math.max(1, Math.ceil(filesToScan.length / numCpus));
       const chunks = chunkArray(filesToScan, chunkSize);
 
-      const workers = chunks.map(chunk => {
+      const workerResults: FileScanResult[][] = [];
+      const workers = chunks.map((chunk, i) => {
+        workerResults.push([]);
         return new Promise<void>((resolve, reject) => {
           const worker = new Worker(__filename, {
              workerData: {
@@ -135,13 +164,15 @@ export async function scan(options: ScanOptions, onProgress?: (file: string) => 
                 config,
                 minSeverity: 'info',
                 noAiScore,
-                includeTests: options.includeTests ?? false
+                includeTests: options.includeTests ?? false,
+                ruleId: options.ruleId,
+                preloadedSources
              }
           });
           worker.on('message', (msg) => {
              if (msg.type === 'result') {
                 onProgress?.(msg.result.relativePath);
-                fileResults.push(msg.result);
+                workerResults[i].push(msg.result);
              } else if (msg.type === 'done') {
                 resolve();
              }
@@ -153,6 +184,7 @@ export async function scan(options: ScanOptions, onProgress?: (file: string) => 
         });
       });
       await Promise.all(workers);
+      fileResults.push(...workerResults.flat());
     }
 
     const allFindings = fileResults.flatMap((f) => f.findings);

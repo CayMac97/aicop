@@ -59,20 +59,16 @@ function isMysqlQueryCall(node: TSESTree.Node): boolean {
 function hasPriorNullGuard(source: string, varName: string, line: number): boolean {
   const allLines = source.split('\n');
   const windowStart = Math.max(0, line - 50);
-  const priorSource = allLines.slice(windowStart, line).join('\n');
-  return (
-    priorSource.includes(`!${varName}`) ||
-    priorSource.includes(`if (${varName})`) ||
-    priorSource.includes(`if (${varName} `) ||
-    priorSource.includes(`${varName}.length`) ||
-    priorSource.includes(`${varName} !== null`) ||
-    priorSource.includes(`${varName} !== undefined`) ||
-    priorSource.includes(`${varName} == null`) ||
-    priorSource.includes(`${varName} === null`) ||
-    priorSource.includes(`${varName} === undefined`) ||
-    priorSource.includes(`${varName}?.`) ||
-    priorSource.includes(`${varName} &&`)
+  // line-1 schließt die aktuelle Zeile aus (slice geht bis end-1)
+  const priorSource = allLines.slice(windowStart, line - 1).join('\n');
+  
+  // Nutze Regex mit Wortgrenzen \b um Substring-Matches (z.B. postId) zu verhindern
+  const safeVarName = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const guardRegex = new RegExp(
+    `(!${safeVarName}\\b)|(if\\s*\\(\\s*${safeVarName}\\b)|(${safeVarName}\\.length)|(${safeVarName}\\s*!==\\s*null)|(${safeVarName}\\s*!==\\s*undefined)|(${safeVarName}\\s*==\\s*null)|(${safeVarName}\\s*===\\s*null)|(${safeVarName}\\s*===\\s*undefined)|(${safeVarName}\\?\\.)|(${safeVarName}\\s*&&)`,
   );
+  
+  return guardRegex.test(priorSource);
 }
 
 function checkDbResultAccess(ast: ParsedAST, source: string, filePath: string): Finding[] {

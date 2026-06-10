@@ -46,18 +46,29 @@ function isOriginReflectCallback(node: TSESTree.Expression): boolean {
   if (!isIdentifier(originParam) || !isIdentifier(callbackParam)) return false;
   const originName = (originParam as TSESTree.Identifier).name;
   const cbName = (callbackParam as TSESTree.Identifier).name;
-  const body = fn.body;
-  if (body.type === 'BlockStatement') {
-    const stmts = (body as TSESTree.BlockStatement).body;
-    if (stmts.length !== 1 || stmts[0].type !== 'ExpressionStatement') return false;
-    const expr = (stmts[0] as TSESTree.ExpressionStatement).expression;
-    if (expr.type !== 'CallExpression') return false;
-    return callbackReflectsOrigin(expr as TSESTree.CallExpression, cbName, originName);
-  }
-  if (body.type === 'CallExpression') {
-    return callbackReflectsOrigin(body as TSESTree.CallExpression, cbName, originName);
-  }
-  return false;
+  
+  let reflects = false;
+  let hasGuard = false;
+
+  walk(fn.body, {
+    IfStatement() { hasGuard = true; },
+    SwitchStatement() { hasGuard = true; },
+    ConditionalExpression() { hasGuard = true; },
+    LogicalExpression() { hasGuard = true; },
+    CallExpression(rawNode) {
+      const call = rawNode as TSESTree.CallExpression;
+      if (callbackReflectsOrigin(call, cbName, originName)) {
+        reflects = true;
+      } else if (isIdentifier(call.callee) && call.callee.name === cbName) {
+        const args = call.arguments;
+        if (args.length >= 2 && args[1] && args[1].type === 'Literal' && (args[1] as TSESTree.Literal).value === true) {
+          reflects = true;
+        }
+      }
+    }
+  });
+
+  return reflects && !hasGuard;
 }
 
 function checkCorsObjectMisconfiguration(obj: TSESTree.ObjectExpression, node: TSESTree.Node, source: string, filePath: string): Finding | null {
@@ -118,9 +129,8 @@ function hasAllowlistValidation(source: string, varName: string, line: number): 
     priorLines.includes(`indexOf(${varName}`) ||
     priorLines.includes(`.has(${varName}`)) return true;
   // Also match: const varName = allowlist.includes(...) ? ... : ... (ternary guard)
-  // aicop-ignore security/regex-dos
-  const ternaryRe = new RegExp(`\\b${varName}\\b[^=\\n]*=.*\\.includes\\(`);
-  return ternaryRe.test(priorLines);
+  if (priorLines.includes(varName) && priorLines.includes('.includes(')) return true;
+  return false;
 }
 
 function unwrapTypeAssertion(node: TSESTree.Expression): TSESTree.Expression {

@@ -5,7 +5,7 @@ import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isStringLiteral, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
 
 
-const NESTED_QUANTIFIER = /(\([^)]*[+*][^)]*\)[+*]|\([^)]*\)[+*][+*])/;;
+const NESTED_QUANTIFIER = /\([^)]*[+*?][^)]*\)[+*]/;
 const OVERLAPPING_ALTERNATION = /\(([^|)]+\|[^)]+)\)[+*]/;
 
 type RegexLiteral = TSESTree.Literal & {

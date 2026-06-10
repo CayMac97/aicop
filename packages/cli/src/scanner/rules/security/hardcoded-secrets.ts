@@ -197,28 +197,16 @@ if (!JWT_SECRET) throw new Error('JWT_SECRET environment variable is required');
         const value = rawValue;
         if (!checkVariableNamePattern(name, value)) return;
         if (PUBLIC_KEY_PATTERN.test(value)) return;
-        
-        // Hypothetical variables for the structure requested in instruction
-        const entropy = 4.0; // Placeholder for logic
-        const hasSuspiciousFormat = true; // Placeholder for logic
-        const val = value;
-
-        if (entropy > 3.5 || hasSuspiciousFormat) {
-          findings.push({
-            ruleId: 'security/hardcoded-secrets',
-            severity: 'error',
-            message: `Hardcoded secret detected in variable/property '${name}'`,
-            file: filePath,
-            line: getLine(node),
-            column: getColumn(node),
-            snippet: node.type === 'Property' ? `${name}: '${val}'` : `${name} = '${val}'`,
-            fix: 'Use environment variables (e.g. process.env.SECRET_KEY) or a secret manager instead of hardcoding secrets.',
-            // @ts-ignore
-            explain: `variable/property name contains "${name.toLowerCase().match(/key|secret|token|password|passwd|pwd|auth|cert/)?.[0] || 'secret pattern'}" + value entropy > 3.5 or matches key format`,
-            // @ts-ignore
-            confidence: 'HIGH'
-          });
-        }
+        findings.push({
+          ruleId: 'security/hardcoded-secrets',
+          severity: 'error',
+          message: `hardcoded value in '${name}' variable`,
+          file: filePath,
+          line: getLine(node),
+          column: getColumn(node),
+          snippet: extractSnippet(source, getLine(node)),
+          fix: `Use process.env.${name.toUpperCase()} instead of hardcoding this value`,
+        });
       },
     });
 
