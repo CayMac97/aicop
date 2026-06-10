@@ -148,30 +148,51 @@ function checkNodeForNoSQLInjection(
   return { isVuln: false, hasWhere: false };
 }
 
-function hasTaintedVarNames(source: string, taintResult: TaintResult, line: number): string[] {
-  const priorLines = source.split('\n').slice(Math.max(0, line - 20), line);
+function hasTaintedVarNames(taintResult: TaintResult): string[] {
   const allTaintedNames = new Set(taintResult.globalTaints);
   for (const lt of taintResult.localTaints.values()) {
     lt.forEach(name => allTaintedNames.add(name));
   }
-  return Array.from(allTaintedNames).filter((name) =>
-    priorLines.some((l) => l.includes(name)),
-  );
+  return Array.from(allTaintedNames);
 }
 
-function hasTypeOrPatternValidation(source: string, varNames: string[], line: number): boolean {
-  const priorLines = source.split('\n').slice(Math.max(0, line - 20), line).join('\n');
-  if (varNames.some((n) => priorLines.includes(`typeof ${n}`))) return true;
-  if (varNames.some((n) => priorLines.includes(`.test(${n})`))) return true;
-  const hasValidateFn =
-    /\b(?:validate|sanitize|check|clean)[A-Za-z]*\s*\(/.test(priorLines) &&
-    varNames.some((n) => priorLines.includes(n));
-  const hasErrorCheck = /if\s*\(\s*errors\b/.test(priorLines);
-  if (hasValidateFn) {
-    if (/\b(?:sanitize|clean)\b/.test(priorLines)) return true;
-    if (hasErrorCheck) return true;
+function hasTypeOrPatternValidation(node: TSESTree.Node, varNames: string[], parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  let current: TSESTree.Node | undefined = node;
+  let hasGuard = false;
+  while (current) {
+    if (
+      current.type === 'IfStatement' ||
+      current.type === 'ConditionalExpression' ||
+      current.type === 'SwitchStatement' ||
+      current.type === 'LogicalExpression'
+    ) {
+      walk(current, {
+        UnaryExpression(rawNode) {
+          const uNode = rawNode as TSESTree.UnaryExpression;
+          if (uNode.operator === 'typeof') {
+            if (isIdentifier(uNode.argument) && varNames.includes(uNode.argument.name)) {
+              hasGuard = true;
+            }
+          }
+        },
+        CallExpression(rawNode) {
+          const cNode = rawNode as TSESTree.CallExpression;
+          if (isMemberExpression(cNode.callee) && isIdentifier(cNode.callee.property)) {
+            if (cNode.callee.property.name === 'test') {
+              hasGuard = true;
+            }
+          }
+          if (isIdentifier(cNode.callee)) {
+            const name = cNode.callee.name;
+            if (/^(?:validate|sanitize|check|clean)/i.test(name)) hasGuard = true;
+          }
+        }
+      });
+      if (hasGuard) break;
+    }
+    current = parentMap.get(current);
   }
-  return false;
+  return hasGuard;
 }
 
 const rule: Rule = {
@@ -201,8 +222,8 @@ const rule: Rule = {
         for (const arg of node.arguments) {
           const res = checkNodeForNoSQLInjection(arg, taintResult, parentMap);
           if (res.isVuln) {
-            const taintedNamesHere = hasTaintedVarNames(source, taintResult, getLine(node));
-            if (hasTypeOrPatternValidation(source, taintedNamesHere, getLine(node))) break;
+            const taintedNamesHere = hasTaintedVarNames(taintResult);
+            if (hasTypeOrPatternValidation(node, taintedNamesHere, parentMap)) break;
             
             let explain = 'MongoDB query built with direct user input — attacker can manipulate query logic';
             if (res.hasWhere) {
@@ -251,9 +272,11 @@ const rule: Rule = {
             const res = checkNodeForNoSQLInjection(arg, crossTaintResult, extParentMap);
             if (res.isVuln) {
               const sourceNode = crossCall.awaitNode ?? crossCall.callNode;
-              const sourceLine = getLine(sourceNode);
-              const taintedNamesHere = hasTaintedVarNames(source, taintResult, sourceLine);
-              if (!hasTypeOrPatternValidation(source, taintedNamesHere, sourceLine)) {
+              const mainFileTaintedNames = hasTaintedVarNames(taintResult);
+              const extFileTaintedNames = Array.from(crossCall.taintedParams);
+              const hasMainValidation = hasTypeOrPatternValidation(sourceNode, mainFileTaintedNames, parentMap);
+              const hasExtValidation = hasTypeOrPatternValidation(node, extFileTaintedNames, extParentMap);
+              if (!hasMainValidation && !hasExtValidation) {
                 isVulnerable = true;
                 break;
               }

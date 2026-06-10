@@ -30,19 +30,30 @@ function checkSessionOptions(node: TSESTree.CallExpression, source: string, file
   const opts = optArg as TSESTree.ObjectExpression;
 
   const secretProp = findProp(opts, 'secret');
-  if (secretProp && isStringLiteral(secretProp.value as TSESTree.Expression)) {
-    const val = String((secretProp.value as TSESTree.StringLiteral).value);
-    if (val.length < 20) {
-      findings.push({
-        ruleId: 'security/insecure-session',
-        severity: 'warn',
-        message: 'weak session secret — use a long random string from process.env',
-        file: filePath,
-        line: getLine(secretProp),
-        column: getColumn(secretProp),
-        snippet: extractSnippet(source, getLine(secretProp)),
-        fix: 'Set secret from process.env: session({ secret: process.env.SESSION_SECRET })',
-      });
+  if (secretProp) {
+    const checkString = (node: TSESTree.Node) => {
+      if (isStringLiteral(node as TSESTree.Expression)) {
+        const val = String((node as TSESTree.StringLiteral).value);
+        if (val.length < 20) {
+          findings.push({
+            ruleId: 'security/insecure-session',
+            severity: 'warn',
+            message: 'weak session secret — use a long random string from process.env',
+            file: filePath,
+            line: getLine(node),
+            column: getColumn(node),
+            snippet: extractSnippet(source, getLine(node)),
+            fix: 'Set secret from process.env: session({ secret: process.env.SESSION_SECRET })',
+          });
+        }
+      }
+    };
+    if (secretProp.value.type === 'ArrayExpression') {
+      for (const el of (secretProp.value as TSESTree.ArrayExpression).elements) {
+        if (el) checkString(el);
+      }
+    } else {
+      checkString(secretProp.value);
     }
   }
 
@@ -68,21 +79,45 @@ function checkSessionOptions(node: TSESTree.CallExpression, source: string, file
     }
 
     const secureProp = findProp(cookieObj, 'secure');
-    if (secureProp && secureProp.value.type === 'Literal') {
-      const val = (secureProp.value as TSESTree.Literal).value;
-      if (val === false) {
-        findings.push({
-          ruleId: 'security/insecure-session',
-          severity: 'warn',
-          message: 'session cookie secure:false — transmitted over HTTP',
-          file: filePath,
-          line: getLine(secureProp),
-          column: getColumn(secureProp),
-          snippet: extractSnippet(source, getLine(secureProp)),
-          fix: 'Set secure:true in production — use: secure: process.env.NODE_ENV === "production"',
-        });
+    if (secureProp) {
+      if (secureProp.value.type === 'Literal') {
+        const val = (secureProp.value as TSESTree.Literal).value;
+        if (val === false) {
+          findings.push({
+            ruleId: 'security/insecure-session',
+            severity: 'warn',
+            message: 'session cookie secure:false — transmitted over HTTP',
+            file: filePath,
+            line: getLine(secureProp),
+            column: getColumn(secureProp),
+            snippet: extractSnippet(source, getLine(secureProp)),
+            fix: 'Set secure:true in production — use: secure: process.env.NODE_ENV === "production"',
+          });
+        }
       }
+    } else if (!hasSpread) {
+      findings.push({
+        ruleId: 'security/insecure-session',
+        severity: 'warn',
+        message: 'session cookie secure option missing — defaults to false (transmitted over HTTP)',
+        file: filePath,
+        line: getLine(cookieProp),
+        column: getColumn(cookieProp),
+        snippet: extractSnippet(source, getLine(cookieProp)),
+        fix: 'Set secure:true in production — use: cookie: { secure: process.env.NODE_ENV === "production" }',
+      });
     }
+  } else if (!cookieProp && !hasSpread) {
+    findings.push({
+      ruleId: 'security/insecure-session',
+      severity: 'warn',
+      message: 'session cookie options missing — secure defaults to false',
+      file: filePath,
+      line: getLine(node),
+      column: getColumn(node),
+      snippet: extractSnippet(source, getLine(node)),
+      fix: 'Add cookie options and set secure:true in production',
+    });
   }
 
   const resaveProp = findProp(opts, 'resave');

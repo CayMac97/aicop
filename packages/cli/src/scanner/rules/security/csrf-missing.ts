@@ -59,6 +59,9 @@ function isCsrfArg(arg: TSESTree.Node): boolean {
       if (isIdentifier(me.property)) return CSRF_IDENTIFIER_RE.test((me.property as TSESTree.Identifier).name);
     }
   }
+  if (arg.type === 'ArrayExpression') {
+    return (arg as TSESTree.ArrayExpression).elements.some((e) => e && isCsrfArg(e));
+  }
   return false;
 }
 
@@ -123,18 +126,18 @@ const rule: Rule = {
     if (hasJwt && !hasSession) return findings;
     if (unprotectedPostRoutes.length === 0) return findings;
 
-    // Report the first unprotected POST route
-    const triggerNode = unprotectedPostRoutes[0];
-    findings.push({
-      ruleId: 'security/csrf-missing',
-      severity: 'warn',
-      message: 'POST routes without CSRF protection — state-changing requests are forgeable',
-      file: filePath,
-      line: getLine(triggerNode),
-      column: getColumn(triggerNode),
-      snippet: extractSnippet(source, getLine(triggerNode)),
-      fix: 'Use csurf or csrf-csrf middleware on all state-changing routes',
-    });
+    for (const triggerNode of unprotectedPostRoutes) {
+      findings.push({
+        ruleId: 'security/csrf-missing',
+        severity: 'warn',
+        message: 'POST routes without CSRF protection — state-changing requests are forgeable',
+        file: filePath,
+        line: getLine(triggerNode),
+        column: getColumn(triggerNode),
+        snippet: extractSnippet(source, getLine(triggerNode)),
+        fix: 'Use csurf or csrf-csrf middleware on all state-changing routes',
+      });
+    }
 
     return findings;
   },

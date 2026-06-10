@@ -3,7 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
-import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult } from '../../../utils/taint-tracker.js';
+import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult, getCrossFileTaints } from '../../../utils/taint-tracker.js';
 import { buildParentMap } from '../../ast-walker.js';
 
 const HTTP_CLIENTS = new Set(['fetch', 'axios', 'got', 'request', 'superagent', 'undici', 'needle']);
@@ -54,18 +54,43 @@ function isHttpClientMethodCall(node: TSESTree.CallExpression): string | null {
   return isValid ? `${obj}.${method}` : null;
 }
 
-function hasUrlAllowlistValidation(source: string, varName: string, line: number): boolean {
-  const priorLines = source.split('\n').slice(Math.max(0, line - 20), line).join('\n');
-  // new URL() + hostname/origin check
-  if (priorLines.includes(`new URL(${varName})`) &&
-    (priorLines.includes('.hostname') || priorLines.includes('.origin'))) return true;
-  // startsWith prefix validation: url.startsWith('https://trusted.com')
-  if (priorLines.includes(`${varName}.startsWith(`)) return true;
-  // Allowlist array/set check: ALLOWED.includes(url) or ALLOWED.has(url)
-  if (priorLines.includes(`.includes(${varName}`) || priorLines.includes(`.has(${varName}`)) return true;
-  // Regex test: SAFE_RE.test(url)
-  if (priorLines.includes(`.test(${varName})`)) return true;
-  return false;
+function hasUrlAllowlistValidation(node: TSESTree.Node, varName: string, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  let current: TSESTree.Node | undefined = node;
+  let hasGuard = false;
+  while (current) {
+    if (
+      current.type === 'IfStatement' ||
+      current.type === 'ConditionalExpression' ||
+      current.type === 'SwitchStatement' ||
+      current.type === 'LogicalExpression'
+    ) {
+      walk(current, {
+        NewExpression(rawNode) {
+          const nNode = rawNode as TSESTree.NewExpression;
+          if (isIdentifier(nNode.callee) && nNode.callee.name === 'URL') {
+            if (nNode.arguments[0] && isIdentifier(nNode.arguments[0]) && nNode.arguments[0].name === varName) {
+              hasGuard = true;
+            }
+          }
+        },
+        CallExpression(rawNode) {
+          const cNode = rawNode as TSESTree.CallExpression;
+          if (isMemberExpression(cNode.callee)) {
+            const prop = cNode.callee.property;
+            if (isIdentifier(prop)) {
+              if (prop.name === 'test' || prop.name === 'includes' || prop.name === 'has') hasGuard = true;
+              if (prop.name === 'startsWith') {
+                if (isIdentifier(cNode.callee.object) && cNode.callee.object.name === varName) hasGuard = true;
+              }
+            }
+          }
+        }
+      });
+      if (hasGuard) break;
+    }
+    current = parentMap.get(current);
+  }
+  return hasGuard;
 }
 
 function checkHttpCall(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
@@ -82,7 +107,12 @@ function checkHttpCall(node: TSESTree.CallExpression, source: string, filePath: 
   if (!urlArg || !isUserControlledArg(urlArg, taintResult, parentMap)) return null;
   if (isIdentifier(urlArg)) {
     const varName = (urlArg as TSESTree.Identifier).name;
-    if (hasUrlAllowlistValidation(source, varName, getLine(node))) return null;
+    if (hasUrlAllowlistValidation(node, varName, parentMap)) return null;
+  } else if (urlArg.type === 'NewExpression') {
+    const newExpr = urlArg as TSESTree.NewExpression;
+    if (isIdentifier(newExpr.callee) && newExpr.callee.name === 'URL') {
+      return null;
+    }
   }
   return {
     ruleId: 'security/ssrf-risk',
@@ -117,7 +147,6 @@ const rule: Rule = {
       },
     });
 
-    const { getCrossFileTaints } = require('../../../utils/taint-tracker.js');
     const crossFileCalls = getCrossFileTaints(ast, filePath, taintResult);
     const reportedExternalLocations = new Set<string>();
 

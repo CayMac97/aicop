@@ -43,10 +43,13 @@ function collectRateLimitVars(ast: ParsedAST): Set<string> {
 }
 
 function middlewareIncludesRateLimit(
-  args: Array<TSESTree.Expression | TSESTree.SpreadElement>,
+  args: Array<TSESTree.Expression | TSESTree.SpreadElement | TSESTree.Node>,
   rateLimitVars: Set<string>,
 ): boolean {
   for (const arg of args) {
+    if (arg.type === 'ArrayExpression') {
+      if (middlewareIncludesRateLimit((arg as TSESTree.ArrayExpression).elements.filter(Boolean) as TSESTree.Expression[], rateLimitVars)) return true;
+    }
     if (arg.type === 'CallExpression') {
       const ce = arg as TSESTree.CallExpression;
       if (isIdentifier(ce.callee)) {
@@ -89,27 +92,61 @@ app.post('/forgot-password', authLimiter, async (req, res) => { ... });`,
     const findings: Finding[] = [];
     const rateLimitVars = collectRateLimitVars(ast);
     const seenEndpoints = new Set<string>();
+    
+    let hasGlobalRateLimit = false;
 
     walk(ast, {
       CallExpression(rawNode) {
         const node = rawNode as TSESTree.CallExpression;
+        if (isMemberExpression(node.callee)) {
+          const me = node.callee as TSESTree.MemberExpression;
+          if (isIdentifier(me.property) && (me.property as TSESTree.Identifier).name === 'use') {
+            if (middlewareIncludesRateLimit(node.arguments, rateLimitVars)) {
+              const firstArg = node.arguments[0];
+              let isGlobal = true;
+              if (firstArg && isStringLiteral(firstArg as TSESTree.Expression)) {
+                const prefix = String((firstArg as TSESTree.StringLiteral).value);
+                if (prefix !== '/' && prefix !== '*' && !isAuthRoute(prefix)) {
+                  isGlobal = false;
+                }
+              }
+              if (isGlobal) {
+                hasGlobalRateLimit = true;
+              }
+            }
+          }
+        }
+        
         const routePath = isRouteDefinition(node);
         if (!routePath) return;
         if (!isAuthRoute(routePath)) return;
         if (middlewareIncludesRateLimit(node.arguments, rateLimitVars)) return;
         if (seenEndpoints.has(routePath)) return;
         seenEndpoints.add(routePath);
-        findings.push({
-          ruleId: 'security/missing-rate-limit',
-          severity: 'warn',
-          message: `Auth endpoint "${routePath}" has no rate limiting middleware`,
-          file: filePath,
-          line: getLine(node),
-          column: getColumn(node),
-          snippet: extractSnippet(source, getLine(node)),
-          fix: 'Install express-rate-limit and add: const limiter = rateLimit({ windowMs: 15*60*1000, max: 10 })',
-        });
+        
+        // We delay creating findings until we've parsed everything to check hasGlobalRateLimit
+        (node as any)._missingRateLimitPath = routePath;
       },
+    });
+
+    if (hasGlobalRateLimit) return findings;
+
+    walk(ast, {
+      CallExpression(rawNode) {
+        const node = rawNode as TSESTree.CallExpression;
+        if ((node as any)._missingRateLimitPath) {
+          findings.push({
+            ruleId: 'security/missing-rate-limit',
+            severity: 'warn',
+            message: `Auth endpoint "${(node as any)._missingRateLimitPath}" has no rate limiting middleware`,
+            file: filePath,
+            line: getLine(node),
+            column: getColumn(node),
+            snippet: extractSnippet(source, getLine(node)),
+            fix: 'Install express-rate-limit and add: const limiter = rateLimit({ windowMs: 15*60*1000, max: 10 })',
+          });
+        }
+      }
     });
 
     return findings;

@@ -43,6 +43,45 @@ function unwrapAwait(node: TSESTree.Node): TSESTree.Node {
   return node;
 }
 
+export function buildParentMap(ast: ParsedAST | TSESTree.Node): Map<TSESTree.Node, TSESTree.Node> {
+  const map = new Map<TSESTree.Node, TSESTree.Node>();
+  walk(ast, {
+    enter(node, parent) {
+      if (parent) map.set(node, parent);
+    },
+  });
+  return map;
+}
+
+export function isDynamicExpr(n: TSESTree.Expression, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  if (isDirectUserInputExpr(n)) return true;
+  if (isIdentifier(n) && isNodeContextuallyTainted(n, taintResult, parentMap)) return true;
+  if (n.type === 'ArrayExpression') {
+    return n.elements.some((e) => e && e.type !== 'SpreadElement' && isDynamicExpr(e as TSESTree.Expression, taintResult, parentMap));
+  }
+  if (n.type === 'TemplateLiteral') {
+    return (n as TSESTree.TemplateLiteral).expressions.some(
+      (e) => isDynamicExpr(e as TSESTree.Expression, taintResult, parentMap)
+    );
+  }
+  if (n.type === 'BinaryExpression' && (n as TSESTree.BinaryExpression).operator === '+') {
+    const be = n as TSESTree.BinaryExpression;
+    return isDynamicExpr(be.left as TSESTree.Expression, taintResult, parentMap) ||
+           isDynamicExpr(be.right as TSESTree.Expression, taintResult, parentMap);
+  }
+  if (n.type === 'CallExpression') {
+    const ce = n as TSESTree.CallExpression;
+    if (isMemberExpression(ce.callee) && isIdentifier(ce.callee.property) && ce.callee.property.name === 'join') {
+      if (ce.callee.object.type === 'ArrayExpression') {
+        return ce.callee.object.elements.some(
+          (e) => e && e.type !== 'SpreadElement' && isDynamicExpr(e as TSESTree.Expression, taintResult, parentMap)
+        );
+      }
+    }
+  }
+  return false;
+}
+
 const REQ_USER_INPUT_PROPS = new Set(['body', 'query', 'params', 'headers', 'cookies']);
 
 export function isDirectUserInputExpr(node: TSESTree.Node): boolean {
@@ -70,6 +109,9 @@ export function isDirectUserInputExpr(node: TSESTree.Node): boolean {
 export function isTaintedExpr(node: TSESTree.Node, tainted: Set<string>): boolean {
   if (isDirectUserInputExpr(node)) return true;
   if (isTaintedNode(node, tainted)) return true;
+  if (node.type === 'ArrayExpression') {
+    return node.elements.some(e => e && e.type !== 'SpreadElement' && isTaintedExpr(e, tainted));
+  }
   if (node.type === 'BinaryExpression' && node.operator === '+') {
     return isTaintedExpr(node.left, tainted) || isTaintedExpr(node.right, tainted);
   }
@@ -140,6 +182,21 @@ export function buildTaintMap(ast: ParsedAST): Set<string> {
         if (isIdentifier(me.object)) {
           if (isTaintedExpr(node.right, tainted)) {
             tainted.add((me.object as TSESTree.Identifier).name);
+          }
+        }
+      }
+    },
+
+    CallExpression(rawNode) {
+      const node = rawNode as TSESTree.CallExpression;
+      if (isMemberExpression(node.callee) && isIdentifier(node.callee.object) && node.callee.object.name === 'Object') {
+        if (isIdentifier(node.callee.property) && node.callee.property.name === 'assign') {
+          if (node.arguments.length >= 2) {
+            const firstArg = node.arguments[0];
+            const sources = node.arguments.slice(1);
+            if (isIdentifier(firstArg) && sources.some(s => isTaintedExpr(s, tainted))) {
+              tainted.add(firstArg.name);
+            }
           }
         }
       }
@@ -346,6 +403,20 @@ export function buildContextualTaintMap(ast: ParsedAST, filePath: string): Taint
             const ae = aNode as TSESTree.AssignmentExpression;
             if (ae.left.type === 'Identifier' && isCurrentlyTainted(ae.right, funcNode)) {
               lt.add(ae.left.name);
+            }
+          },
+          CallExpression(cNode) {
+            const call = cNode as TSESTree.CallExpression;
+            if (isMemberExpression(call.callee) && isIdentifier(call.callee.object) && call.callee.object.name === 'Object') {
+              if (isIdentifier(call.callee.property) && call.callee.property.name === 'assign') {
+                if (call.arguments.length >= 2) {
+                  const firstArg = call.arguments[0];
+                  const sources = call.arguments.slice(1);
+                  if (isIdentifier(firstArg) && sources.some(s => isCurrentlyTainted(s, funcNode))) {
+                    lt.add(firstArg.name);
+                  }
+                }
+              }
             }
           }
         });

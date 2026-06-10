@@ -4,7 +4,7 @@ import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral } from '../../../utils/ast-helpers.js';
 
-const UNSAFE_DESER_PACKAGES = new Set(['node-serialize', 'serialize-javascript']);
+const UNSAFE_DESER_PACKAGES = new Set(['node-serialize', 'serialize-javascript', 'js-yaml']);
 
 function isStaticArg(node: TSESTree.Node): boolean {
   if (node.type === 'Literal') return true;
@@ -16,15 +16,23 @@ function isStaticArg(node: TSESTree.Node): boolean {
 
 function checkUnserialize(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
   let name: string | null = null;
+  let isYamlLoad = false;
 
   if (isIdentifier(node.callee)) {
     const n = (node.callee as TSESTree.Identifier).name;
     if (n === 'unserialize') name = 'unserialize';
   } else if (isMemberExpression(node.callee)) {
     const me = node.callee as TSESTree.MemberExpression;
-    if (isIdentifier(me.property) && (me.property as TSESTree.Identifier).name === 'unserialize') {
-      const obj = isIdentifier(me.object) ? (me.object as TSESTree.Identifier).name : '?';
-      name = `${obj}.unserialize`;
+    if (isIdentifier(me.property)) {
+      if ((me.property as TSESTree.Identifier).name === 'unserialize') {
+        const obj = isIdentifier(me.object) ? (me.object as TSESTree.Identifier).name : '?';
+        name = `${obj}.unserialize`;
+      } else if ((me.property as TSESTree.Identifier).name === 'load') {
+        if (isIdentifier(me.object) && (me.object as TSESTree.Identifier).name === 'yaml') {
+          name = 'yaml.load';
+          isYamlLoad = true;
+        }
+      }
     }
   }
 
@@ -32,6 +40,19 @@ function checkUnserialize(node: TSESTree.CallExpression, source: string, filePat
 
   const arg = node.arguments[0];
   if (!arg || isStaticArg(arg)) return null;
+
+  if (isYamlLoad) {
+    return {
+      ruleId: 'security/insecure-deserialization',
+      severity: 'error',
+      message: `${name}() allows RCE with crafted payloads in older js-yaml versions`,
+      file: filePath,
+      line: getLine(node),
+      column: getColumn(node),
+      snippet: extractSnippet(source, getLine(node)),
+      fix: 'Use yaml.safeLoad() instead — never deserialize untrusted data with yaml.load()',
+    };
+  }
 
   return {
     ruleId: 'security/insecure-deserialization',
@@ -77,6 +98,23 @@ const rule: Rule = {
     const findings: Finding[] = [];
 
     walk(ast, {
+      ImportDeclaration(rawNode) {
+        const node = rawNode as TSESTree.ImportDeclaration;
+        if (!isStringLiteral(node.source)) return;
+        const pkg = String((node.source as TSESTree.StringLiteral).value);
+        if (UNSAFE_DESER_PACKAGES.has(pkg)) {
+          findings.push({
+            ruleId: 'security/insecure-deserialization',
+            severity: 'warn',
+            message: `"${pkg}" can deserialize executable code — RCE risk`,
+            file: filePath,
+            line: getLine(node),
+            column: getColumn(node),
+            snippet: extractSnippet(source, getLine(node)),
+            fix: 'Replace with JSON.parse() for data, or use a safe serialization format',
+          });
+        }
+      },
       CallExpression(rawNode) {
         const node = rawNode as TSESTree.CallExpression;
         const deser = checkUnserialize(node, source, filePath);

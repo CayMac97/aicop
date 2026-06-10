@@ -3,7 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isStringLiteral, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
-
+import { buildContextualTaintMap, buildParentMap, isDynamicExpr } from '../../../utils/taint-tracker.js';
 
 const NESTED_QUANTIFIER = /\([^)]*[+*?][^)]*\)[+*]/;
 const OVERLAPPING_ALTERNATION = /\(([^|)]+\|[^)]+)\)[+*]/;
@@ -41,36 +41,17 @@ function checkRegexLiteral(node: RegexLiteral, source: string, filePath: string)
   };
 }
 
-const USER_INPUT_PROPS_REGEX = new Set(['params', 'body', 'query', 'headers', 'cookies']);
-
-function isUserControlledArg(arg: TSESTree.Node): boolean {
-  if (arg.type === 'TemplateLiteral') {
-    return (arg as TSESTree.TemplateLiteral).expressions.some((e) => isUserControlledArg(e));
-  }
-  if (!isMemberExpression(arg)) return false;
-  const me = arg as TSESTree.MemberExpression;
-  if (isMemberExpression(me.object)) {
-    const parent = me.object as TSESTree.MemberExpression;
-    if (isIdentifier(parent.object) && (parent.object as TSESTree.Identifier).name === 'req') {
-      if (isIdentifier(parent.property) && USER_INPUT_PROPS_REGEX.has((parent.property as TSESTree.Identifier).name)) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-function checkNewRegExp(node: TSESTree.NewExpression, source: string, filePath: string): Finding | null {
+function checkRegExpConstruct(node: TSESTree.NewExpression | TSESTree.CallExpression, source: string, filePath: string, taintResult: any, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   if (!isIdentifier(node.callee)) return null;
   if ((node.callee as TSESTree.Identifier).name !== 'RegExp') return null;
   const patternArg = node.arguments[0];
   if (!patternArg) return null;
   if (!isStringLiteral(patternArg as TSESTree.Expression)) {
-    if (!isUserControlledArg(patternArg)) return null;
+    if (!isDynamicExpr(patternArg as TSESTree.Expression, taintResult, parentMap)) return null;
     return {
       ruleId: 'security/regex-dos',
       severity: 'error',
-      message: 'new RegExp() with user-controlled input — direct ReDoS risk',
+      message: 'RegExp() constructed with user-controlled input — direct ReDoS risk',
       file: filePath,
       line: getLine(node),
       column: getColumn(node),
@@ -104,6 +85,8 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
+    const parentMap = buildParentMap(ast);
+    const taintResult = buildContextualTaintMap(ast, filePath);
 
     walk(ast, {
       Literal(rawNode) {
@@ -111,7 +94,11 @@ const rule: Rule = {
         if (finding) findings.push(finding);
       },
       NewExpression(rawNode) {
-        const finding = checkNewRegExp(rawNode as TSESTree.NewExpression, source, filePath);
+        const finding = checkRegExpConstruct(rawNode as TSESTree.NewExpression, source, filePath, taintResult, parentMap);
+        if (finding) findings.push(finding);
+      },
+      CallExpression(rawNode) {
+        const finding = checkRegExpConstruct(rawNode as TSESTree.CallExpression, source, filePath, taintResult, parentMap);
         if (finding) findings.push(finding);
       },
     });

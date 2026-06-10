@@ -120,11 +120,11 @@ function checkMergeFunctionCall(node: TSESTree.CallExpression, source: string, f
   };
 }
 
-function checkDynamicPropertyAssign(node: TSESTree.AssignmentExpression, source: string, filePath: string): Finding | null {
+function checkDynamicPropertyAssign(node: TSESTree.AssignmentExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   if (node.left.type !== 'MemberExpression') return null;
   const me = node.left as TSESTree.MemberExpression;
   if (!me.computed) return null;
-  if (!isReqBody(me.property)) return null;
+  if (!isUserInputArg(me.property, taintResult, parentMap)) return null;
   return {
     ruleId: 'security/prototype-pollution',
     severity: 'error',
@@ -167,7 +167,7 @@ const rule: Rule = {
         if (mergeF) findings.push(mergeF);
       },
       AssignmentExpression(rawNode) {
-        const finding = checkDynamicPropertyAssign(rawNode as TSESTree.AssignmentExpression, source, filePath);
+        const finding = checkDynamicPropertyAssign(rawNode as TSESTree.AssignmentExpression, source, filePath, taintResult, parentMap);
         if (finding) findings.push(finding);
       },
       ForInStatement(rawNode) {

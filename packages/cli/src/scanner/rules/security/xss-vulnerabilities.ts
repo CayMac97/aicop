@@ -3,7 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { isStringLiteral, getLine, getColumn, isMemberExpression, isIdentifier, isCallExpression } from '../../../utils/ast-helpers.js';
-import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult } from '../../../utils/taint-tracker.js';
+import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult, getCrossFileTaints } from '../../../utils/taint-tracker.js';
 import { buildParentMap } from '../../ast-walker.js';
 
 const USER_INPUT_PROPS = new Set(['body', 'query', 'params', 'headers']);
@@ -201,8 +201,9 @@ function isHtmlContentTypeHeader(node: TSESTree.CallExpression): boolean {
   const valueArg = node.arguments[1] as TSESTree.Expression | undefined;
   if (!nameArg || !valueArg) return false;
   if (!isStringLiteral(nameArg) || !isStringLiteral(valueArg)) return false;
-  return (nameArg as TSESTree.StringLiteral).value.toLowerCase() === 'content-type' &&
-    (valueArg as TSESTree.StringLiteral).value.toLowerCase().includes('text/html');
+  const contentTypeMatch = (nameArg as TSESTree.StringLiteral).value.toLowerCase() === 'content-type';
+  const val = (valueArg as TSESTree.StringLiteral).value.toLowerCase();
+  return contentTypeMatch && (val === 'text/html' || val.startsWith('text/html;'));
 }
 
 function isResSendDynamic(node: TSESTree.CallExpression): boolean {
@@ -338,7 +339,6 @@ const rule: Rule = {
       }
     }
 
-    const { getCrossFileTaints } = require('../../../utils/taint-tracker.js');
     const crossFileCalls = getCrossFileTaints(ast, filePath, taintResult);
     const reportedExternalLocations = new Set<string>();
 

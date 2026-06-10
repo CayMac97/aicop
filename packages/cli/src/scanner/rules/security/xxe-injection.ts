@@ -3,6 +3,8 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral } from '../../../utils/ast-helpers.js';
+import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult } from '../../../utils/taint-tracker.js';
+import { buildParentMap } from '../../ast-walker.js';
 
 const XML_PARSE_METHODS = new Set(['parseXmlString', 'parseXml']);
 const UNSAFE_XML_PACKAGES = new Set(['libxmljs', 'libxmljs2', 'xml2js', 'fast-xml-parser', 'xmldom']);
@@ -17,12 +19,8 @@ function hasNoentTrue(opts: TSESTree.ObjectExpression): boolean {
   });
 }
 
-function isFromReq(node: TSESTree.Node): boolean {
-  if (node.type === 'CallExpression') {
-    const ce = node as TSESTree.CallExpression;
-    if (isMemberExpression(ce.callee)) return isFromReq((ce.callee as TSESTree.MemberExpression).object);
-    return false;
-  }
+function isUserInput(node: TSESTree.Node, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  if (isNodeContextuallyTainted(node, taintResult, parentMap)) return true;
   if (!isMemberExpression(node)) return false;
   const me = node as TSESTree.MemberExpression;
   if (isIdentifier(me.object) && (me.object as TSESTree.Identifier).name === 'req') {
@@ -30,7 +28,7 @@ function isFromReq(node: TSESTree.Node): boolean {
       return true;
     }
   }
-  return isFromReq(me.object);
+  return false;
 }
 
 function checkLibXmlJsNoent(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
@@ -55,12 +53,12 @@ function checkLibXmlJsNoent(node: TSESTree.CallExpression, source: string, fileP
   };
 }
 
-function checkXml2jsUserInput(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+function checkXml2jsUserInput(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.property) || (me.property as TSESTree.Identifier).name !== 'parseString') return null;
   const firstArg = node.arguments[0];
-  if (!firstArg || !isFromReq(firstArg)) return null;
+  if (!firstArg || !isUserInput(firstArg, taintResult, parentMap)) return null;
   return {
     ruleId: 'security/xxe-injection',
     severity: 'warn',
@@ -102,13 +100,15 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
+    const taintResult = buildContextualTaintMap(ast, filePath);
+    const parentMap = buildParentMap(ast);
 
     walk(ast, {
       CallExpression(rawNode: TSESTree.Node) {
         const node = rawNode as TSESTree.CallExpression;
         const f1 = checkLibXmlJsNoent(node, source, filePath);
         if (f1) { findings.push(f1); return; }
-        const f2 = checkXml2jsUserInput(node, source, filePath);
+        const f2 = checkXml2jsUserInput(node, source, filePath, taintResult, parentMap);
         if (f2) { findings.push(f2); return; }
         const f3 = checkUnsafeXmlRequire(node, source, filePath);
         if (f3) findings.push(f3);

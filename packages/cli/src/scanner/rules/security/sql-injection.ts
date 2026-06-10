@@ -3,7 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet, readFileContent } from '../../../utils/file-utils.js';
 import { isStringLiteral, getLine, getColumn, isMemberExpression, isIdentifier } from '../../../utils/ast-helpers.js';
-import { buildTaintMap, buildContextualTaintMap, getCrossFileTaints, TaintResult, isNodeContextuallyTainted } from '../../../utils/taint-tracker.js';
+import { buildTaintMap, buildContextualTaintMap, getCrossFileTaints, TaintResult, isNodeContextuallyTainted, isDynamicExpr, buildParentMap } from '../../../utils/taint-tracker.js';
 import { crossFileCache } from '../../cross-file/cross-file-resolver.js';
 
 const SQL_VERB_PATTERN = /\b(SELECT|INSERT\s+INTO|UPDATE\s+\w|DELETE\s+FROM|DROP\s+TABLE|CREATE\s+TABLE|ALTER\s+TABLE|EXEC(?:UTE)?)\b/i;
@@ -37,22 +37,6 @@ function templateHasUserInput(node: TSESTree.TemplateLiteral, taintResult: Taint
     if (isIdentifier(expr) && isNodeContextuallyTainted(expr, taintResult, parentMap)) return true;
     return false;
   });
-}
-
-function isDynamicExpr(n: TSESTree.Expression, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
-  if (isUserInputExpression(n)) return true;
-  if (isIdentifier(n) && isNodeContextuallyTainted(n, taintResult, parentMap)) return true;
-  if (n.type === 'TemplateLiteral') {
-    return (n as TSESTree.TemplateLiteral).expressions.some(
-      (e) => isDynamicExpr(e as TSESTree.Expression, taintResult, parentMap)
-    );
-  }
-  if (n.type === 'BinaryExpression' && (n as TSESTree.BinaryExpression).operator === '+') {
-    const be = n as TSESTree.BinaryExpression;
-    return isDynamicExpr(be.left as TSESTree.Expression, taintResult, parentMap) ||
-           isDynamicExpr(be.right as TSESTree.Expression, taintResult, parentMap);
-  }
-  return false;
 }
 
 function concatHasUserInput(node: TSESTree.BinaryExpression, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
@@ -97,16 +81,6 @@ function isSafeSinkCall(node: TSESTree.CallExpression): boolean {
   return SAFE_SINK_ROOTS.has((obj as TSESTree.Identifier).name.toLowerCase());
 }
 
-function buildParentMap(ast: ParsedAST): Map<TSESTree.Node, TSESTree.Node> {
-  const map = new Map<TSESTree.Node, TSESTree.Node>();
-  walk(ast, {
-    enter(node, parent) {
-      if (parent) map.set(node, parent);
-    },
-  });
-  return map;
-}
-
 // aicop-ignore tech-debt/cyclomatic-complexity
 function findContext(
   sqlNode: TSESTree.Node,
@@ -149,7 +123,7 @@ function findContext(
   return null;
 }
 
-function collectDbCallVars(ast: ParsedAST): Set<string> {
+function collectDbCallVars(ast: TSESTree.Node): Set<string> {
   const vars = new Set<string>();
   walk(ast, {
     CallExpression(rawNode) {
@@ -239,9 +213,43 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
         if (node.operator !== '+=') return;
         if (!isExpressionNode(node.right)) return;
         if (!isDynamicExpr(node.right, taintResult, parentMap)) return;
-        // If it's a += operation with user input, and reaches a db call, it's flagged
-        tryFlag(node, 'SQL string built via AssignmentExpression (+=) with user input — injection risk',
-          'Use parameterized queries or a query builder like Prisma, Knex, or TypeORM');
+        
+        let reachesDb = false;
+        if (isIdentifier(node.left)) {
+          reachesDb = dbCallVars.has((node.left as TSESTree.Identifier).name);
+        } else {
+          // Fallback to original parent walking if it's not a simple variable assignment
+          const ctx = findContext(node, parentMap);
+          reachesDb = ctx?.kind === 'db-call';
+        }
+        
+        if (reachesDb) {
+          tryFlag(node, 'SQL string built via AssignmentExpression (+=) with user input — injection risk',
+            'Use parameterized queries or a query builder like Prisma, Knex, or TypeORM');
+        }
+      },
+      CallExpression(rawNode) {
+        const node = rawNode as TSESTree.CallExpression;
+        if (isMemberExpression(node.callee) && isIdentifier(node.callee.property) && node.callee.property.name === 'join') {
+          const obj = node.callee.object;
+          if (obj.type === 'ArrayExpression') {
+            const elements = (obj as TSESTree.ArrayExpression).elements;
+            const strings = elements.map(e => isStringLiteral(e) ? String((e as TSESTree.StringLiteral).value) : '').filter(Boolean);
+            if (strings.some(looksLikeSQL)) {
+              if (elements.some(e => e && isDynamicExpr(e as TSESTree.Node, taintResult, parentMap))) {
+                let reachesDb = false;
+                const ctx = findContext(node, parentMap);
+                reachesDb = ctx?.kind === 'db-call';
+                if (ctx?.kind === 'var' && ctx.varName) {
+                  reachesDb = dbCallVars.has(ctx.varName);
+                }
+                if (reachesDb) {
+                  tryFlag(node, 'SQL string built via Array.join() with user input — injection risk', 'Use parameterized queries or a query builder like Prisma, Knex, or TypeORM');
+                }
+              }
+            }
+          }
+        }
       },
     });
 
@@ -310,12 +318,52 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
           const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map() };
           if (!isDynamicExpr(node.right, crossTaintResult, extParentMap)) return;
           
+          let reachesDb = false;
+          if (isIdentifier(node.left)) {
+            const extDbCallVars = collectDbCallVars(crossCall.externalNode);
+            reachesDb = extDbCallVars.has((node.left as TSESTree.Identifier).name);
+          } else {
+            const ctx = findContext(node, extParentMap);
+            reachesDb = ctx?.kind === 'db-call';
+          }
+          
+          if (!reachesDb) return;
+          
           const dedupeKey = `${crossCall.externalFilePath}:${getLine(rawNode)}:assign`;
           if (reportedExternalLocations.has(dedupeKey)) return;
           reportedExternalLocations.add(dedupeKey);
           
           tryFlagCrossFile(crossCall, node, 'Cross-File SQL Injection: User input concatenated via += into SQL query in imported function',
             'Parameterize the SQL query inside the imported function');
+        },
+        CallExpression(rawNode) {
+          const node = rawNode as TSESTree.CallExpression;
+          if (isMemberExpression(node.callee) && isIdentifier(node.callee.property) && node.callee.property.name === 'join') {
+            const obj = node.callee.object;
+            if (obj.type === 'ArrayExpression') {
+              const elements = (obj as TSESTree.ArrayExpression).elements;
+              const strings = elements.map(e => isStringLiteral(e) ? String((e as TSESTree.StringLiteral).value) : '').filter(Boolean);
+              if (strings.some(looksLikeSQL)) {
+                const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map() };
+                if (elements.some(e => e && isDynamicExpr(e as TSESTree.Node, crossTaintResult, extParentMap))) {
+                  let reachesDb = false;
+                  const ctx = findContext(node, extParentMap);
+                  reachesDb = ctx?.kind === 'db-call';
+                  if (ctx?.kind === 'var' && ctx.varName) {
+                    const extDbCallVars = collectDbCallVars(crossCall.externalNode);
+                    reachesDb = extDbCallVars.has(ctx.varName);
+                  }
+                  if (reachesDb) {
+                    const dedupeKey = `${crossCall.externalFilePath}:${getLine(rawNode)}:join`;
+                    if (reportedExternalLocations.has(dedupeKey)) return;
+                    reportedExternalLocations.add(dedupeKey);
+                    tryFlagCrossFile(crossCall, node, 'Cross-File SQL Injection: User input concatenated via Array.join() into SQL query in imported function',
+                      'Parameterize the SQL query inside the imported function');
+                  }
+                }
+              }
+            }
+          }
         },
       });
     }

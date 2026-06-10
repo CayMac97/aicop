@@ -5,7 +5,7 @@ import { extractSnippet } from '../../../utils/file-utils.js';
 import { isStringLiteral, getLine, getColumn, isIdentifier, isMemberExpression, isLiteral } from '../../../utils/ast-helpers.js';
 
 const BROKEN_HASH_ALGORITHMS = new Set(['md5', 'sha1', 'sha-1', 'md4', 'rc4', 'des', '3des', 'rc2']);
-const SECURITY_CONTEXT_NAMES = /^(?:token|secret|otp|code|key|salt|nonce|reset|password|passwd|pwd|auth|session|csrf|hash)/i;
+const SECURITY_CONTEXT_NAMES = /(?:token|secret|otp|code|key|salt|nonce|reset|password|passwd|pwd|auth|session|csrf|hash)/i;
 const WEAK_HASH_PACKAGES = new Set(['md5', 'sha1', 'md5-node', 'md5.js', 'sha.js', 'sha1-node']);
 const PASSWORD_CONTEXT = /\b(password|passwd|pwd)\b/i;
 const BCRYPT_FIX_SNIPPET = 'Use bcrypt or argon2 for passwords — never SHA-256:\nconst hash = await bcrypt.hash(password, 12)';
@@ -91,6 +91,14 @@ function containsMathRandom(node: TSESTree.Node): boolean {
   }
   if (node.type === 'MemberExpression') {
     return containsMathRandom((node as TSESTree.MemberExpression).object);
+  }
+  if (node.type === 'BinaryExpression') {
+    const be = node as TSESTree.BinaryExpression;
+    return containsMathRandom(be.left) || containsMathRandom(be.right);
+  }
+  if (node.type === 'TemplateLiteral') {
+    const tl = node as TSESTree.TemplateLiteral;
+    return tl.expressions.some(e => containsMathRandom(e));
   }
   return false;
 }
@@ -240,6 +248,14 @@ const rule: Rule = {
         const varName = (node.left as TSESTree.Identifier).name;
         if (!SECURITY_CONTEXT_NAMES.test(varName)) return;
         if (!containsMathRandom(node.right)) return;
+        findings.push(mathRandomFinding(node, varName, source, filePath));
+      },
+      Property(rawNode) {
+        const node = rawNode as TSESTree.Property;
+        if (node.key.type !== 'Identifier') return;
+        const varName = (node.key as TSESTree.Identifier).name;
+        if (!SECURITY_CONTEXT_NAMES.test(varName)) return;
+        if (!containsMathRandom(node.value)) return;
         findings.push(mathRandomFinding(node, varName, source, filePath));
       },
     });

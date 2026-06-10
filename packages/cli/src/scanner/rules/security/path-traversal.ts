@@ -3,7 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral } from '../../../utils/ast-helpers.js';
-import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult } from '../../../utils/taint-tracker.js';
+import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult, getCrossFileTaints } from '../../../utils/taint-tracker.js';
 import { buildParentMap } from '../../ast-walker.js';
 
 const FS_DANGER_METHODS = new Set([
@@ -39,21 +39,69 @@ function isUserInputExpr(node: TSESTree.Node, taintResult: TaintResult, parentMa
   if (node.type === 'TemplateLiteral') {
     return (node as TSESTree.TemplateLiteral).expressions.some((e) => isUserInputExpr(e, taintResult, parentMap));
   }
+  if (node.type === 'CallExpression') {
+    const ce = node as TSESTree.CallExpression;
+    if (isMemberExpression(ce.callee) && isIdentifier(ce.callee.property) && ce.callee.property.name === 'join') {
+      if (ce.callee.object.type === 'ArrayExpression') {
+        return ce.callee.object.elements.some((e) => e && isUserInputExpr(e, taintResult, parentMap));
+      }
+    }
+  }
   return false;
+}
+
+function isSuspiciousString(n: TSESTree.Node): boolean {
+  if (!isStringLiteral(n)) return false;
+  const val = String((n as TSESTree.StringLiteral).value);
+  return val.includes('/') || val.includes('\\') || val.includes('dir') || val.includes('path') || val.includes('file');
 }
 
 function checkFsCall(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
-  if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
-  const objName = (me.object as TSESTree.Identifier).name;
+  let objName = '';
+  let methodName = '';
+  if (isIdentifier(me.object) && isIdentifier(me.property)) {
+    objName = me.object.name;
+    methodName = me.property.name;
+  } else if (isMemberExpression(me.object) && isIdentifier(me.object.object) && isIdentifier(me.object.property) && isIdentifier(me.property)) {
+    if (me.object.object.name === 'fs' && me.object.property.name === 'promises') {
+      objName = 'fs';
+      methodName = me.property.name;
+    }
+  }
   if (objName !== 'fs' && objName !== 'fse') return null;
-  const methodName = (me.property as TSESTree.Identifier).name;
   if (!FS_DANGER_METHODS.has(methodName)) return null;
   const pathArg = node.arguments[0];
   if (!pathArg) return null;
   if (isStringLiteral(pathArg as TSESTree.Expression)) return null;
   if (!isUserInputExpr(pathArg, taintResult, parentMap)) return null;
+  let current: TSESTree.Node | undefined = node;
+  let hasGuard = false;
+  while (current) {
+    if (
+      current.type === 'IfStatement' ||
+      current.type === 'ConditionalExpression' ||
+      current.type === 'SwitchStatement' ||
+      current.type === 'LogicalExpression'
+    ) {
+      walk(current, {
+        CallExpression(cNode) {
+          const call = cNode as TSESTree.CallExpression;
+          if (isMemberExpression(call.callee) && isIdentifier(call.callee.property)) {
+            if (call.callee.property.name === 'startsWith') {
+              hasGuard = true;
+            }
+          }
+        }
+      });
+      if (hasGuard) break;
+    }
+    current = parentMap.get(current);
+  }
+
+  if (hasGuard) return null;
+
   return {
     ruleId: 'security/path-traversal',
     severity: 'error',
@@ -66,10 +114,7 @@ function checkFsCall(node: TSESTree.CallExpression, source: string, filePath: st
   };
 }
 
-function linesAfter(source: string, line: number, count: number): string {
-  const all = source.split('\n');
-  return all.slice(line, line + count).join('\n');  // line is 1-indexed; slice at index `line` = next line
-}
+
 
 function checkPathJoin(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
@@ -80,8 +125,33 @@ function checkPathJoin(node: TSESTree.CallExpression, source: string, filePath: 
   if (method !== 'join' && method !== 'resolve') return null;
   const hasUserInput = node.arguments.some((arg) => isUserInputExpr(arg, taintResult, parentMap));
   if (!hasUserInput) return null;
-  const contextAfter = linesAfter(source, getLine(node), 6);
-  if (contextAfter.includes('.startsWith(')) return null;
+
+  let current: TSESTree.Node | undefined = node;
+  let hasGuard = false;
+  while (current) {
+    if (
+      current.type === 'IfStatement' ||
+      current.type === 'ConditionalExpression' ||
+      current.type === 'SwitchStatement' ||
+      current.type === 'LogicalExpression'
+    ) {
+      walk(current, {
+        CallExpression(cNode) {
+          const call = cNode as TSESTree.CallExpression;
+          if (isMemberExpression(call.callee) && isIdentifier(call.callee.property)) {
+            if (call.callee.property.name === 'startsWith') {
+              hasGuard = true;
+            }
+          }
+        }
+      });
+      if (hasGuard) break;
+    }
+    current = parentMap.get(current);
+  }
+
+  if (hasGuard) return null;
+
   return {
     ruleId: 'security/path-traversal',
     severity: 'error',
@@ -114,12 +184,6 @@ function checkPathConcatBinary(node: TSESTree.BinaryExpression, source: string, 
   const rightHasUser = isUserInputExpr(right, taintResult, parentMap);
 
   if (!leftHasUser && !rightHasUser) return null;
-
-  const isSuspiciousString = (n: TSESTree.Node) => {
-    if (!isStringLiteral(n)) return false;
-    const val = String((n as TSESTree.StringLiteral).value);
-    return val.includes('/') || val.includes('\\') || val.includes('dir') || val.includes('path') || val.includes('file');
-  };
 
   if (!isSuspiciousString(left) && !isSuspiciousString(right)) return null;
 
@@ -156,10 +220,25 @@ const rule: Rule = {
         if (fsF) { findings.push(fsF); return; }
         const pathF = checkPathJoin(node, source, filePath, taintResult, parentMap);
         if (pathF) {
-          const afterLines = linesAfter(source, pathF.line, 6);
-          const hasSendFile = afterLines.includes('.sendFile(') || afterLines.includes('.download(');
-          const hasSafeStringUse = !hasSendFile && (afterLines.includes('res.send(') || afterLines.includes('res.json('));
-          if (!hasSafeStringUse) findings.push(pathF);
+          // Verify if it's used immediately in a safe way without guards
+          let current: TSESTree.Node | undefined = node;
+          let isSafe = false;
+          while (current) {
+            const parent = parentMap.get(current);
+            if (parent && parent.type === 'CallExpression') {
+              const call = parent as TSESTree.CallExpression;
+              if (isMemberExpression(call.callee) && isIdentifier(call.callee.property)) {
+                const name = call.callee.property.name;
+                if (name === 'send' || name === 'json') {
+                  isSafe = true;
+                  break;
+                }
+              }
+            }
+            if (parent && (parent.type === 'FunctionDeclaration' || parent.type === 'FunctionExpression' || parent.type === 'ArrowFunctionExpression' || parent.type === 'BlockStatement')) break;
+            current = parent;
+          }
+          if (!isSafe) findings.push(pathF);
         }
       },
       BinaryExpression(rawNode) {
@@ -169,25 +248,31 @@ const rule: Rule = {
       AssignmentExpression(rawNode) {
         const node = rawNode as TSESTree.AssignmentExpression;
         if (node.operator === '+=') {
-          // Bug AP fix: check += operations
           if (isUserInputExpr(node.right, taintResult, parentMap)) {
-            // Simplified check: if right is tainted, and we're appending it to something, flag it as risk
-            findings.push({
-              ruleId: 'security/path-traversal',
-              severity: 'error',
-              message: 'path string built with user input (+=) — traversal risk',
-              file: filePath,
-              line: getLine(node),
-              column: getColumn(node),
-              snippet: extractSnippet(source, getLine(node)),
-              fix: 'Resolve and validate path stays within base directory before any file operation',
-            });
+            // Check if left side is suspicious string or left side's initialization is suspicious
+            let leftSuspicious = false;
+            if (node.left.type === 'Identifier') {
+              const varName = (node.left as TSESTree.Identifier).name;
+              if (varName.includes('dir') || varName.includes('path') || varName.includes('file')) leftSuspicious = true;
+            }
+            if (isSuspiciousString(node.left)) leftSuspicious = true;
+            if (leftSuspicious) {
+              findings.push({
+                ruleId: 'security/path-traversal',
+                severity: 'error',
+                message: 'path string built with user input (+=) — traversal risk',
+                file: filePath,
+                line: getLine(node),
+                column: getColumn(node),
+                snippet: extractSnippet(source, getLine(node)),
+                fix: 'Resolve and validate path stays within base directory before any file operation',
+              });
+            }
           }
         }
       }
     });
 
-    const { getCrossFileTaints } = require('../../../utils/taint-tracker.js');
     const crossFileCalls = getCrossFileTaints(ast, filePath, taintResult);
     const reportedExternalLocations = new Set<string>();
 

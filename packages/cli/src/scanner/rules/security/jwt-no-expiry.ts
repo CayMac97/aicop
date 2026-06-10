@@ -22,9 +22,15 @@ function hasExpiryInOptions(optionsNode: TSESTree.SpreadElement | TSESTree.Expre
     if (prop.type === 'SpreadElement') return true; // spread may include expiresIn — can't tell statically
     if (prop.type !== 'Property') return false;
     const p = prop as TSESTree.Property;
-    if (!isIdentifier(p.key)) return false;
-    const name = (p.key as TSESTree.Identifier).name;
-    return name === 'expiresIn' || name === 'exp';
+    if (isIdentifier(p.key)) {
+      const name = (p.key as TSESTree.Identifier).name;
+      return name === 'expiresIn' || name === 'exp';
+    }
+    if (p.key.type === 'Literal') {
+      const name = String((p.key as TSESTree.Literal).value);
+      return name === 'expiresIn' || name === 'exp';
+    }
+    return false;
   });
 }
 
@@ -34,8 +40,13 @@ function payloadHasExpClaim(payloadNode: TSESTree.SpreadElement | TSESTree.Expre
   return obj.properties.some((prop) => {
     if (prop.type !== 'Property') return false;
     const p = prop as TSESTree.Property;
-    if (!isIdentifier(p.key)) return false;
-    return (p.key as TSESTree.Identifier).name === 'exp';
+    if (isIdentifier(p.key)) {
+      return (p.key as TSESTree.Identifier).name === 'exp';
+    }
+    if (p.key.type === 'Literal') {
+      return String((p.key as TSESTree.Literal).value) === 'exp';
+    }
+    return false;
   });
 }
 

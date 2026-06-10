@@ -3,6 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral } from '../../../utils/ast-helpers.js';
+import { buildParentMap } from '../../ast-walker.js';
 
 function isWildcardOrigin(node: TSESTree.Expression): boolean {
   return isStringLiteral(node) && String((node as TSESTree.StringLiteral).value) === '*';
@@ -122,15 +123,45 @@ function checkCorsObjectMisconfiguration(obj: TSESTree.ObjectExpression, node: T
   return null;
 }
 
-function hasAllowlistValidation(source: string, varName: string, line: number): boolean {
-  const priorLines = source.split('\n').slice(Math.max(0, line - 15), line).join('\n');
-  // Match prefix only (no closing paren) so 'includes(origin as string)' also works
-  if (priorLines.includes(`includes(${varName}`) ||
-    priorLines.includes(`indexOf(${varName}`) ||
-    priorLines.includes(`.has(${varName}`)) return true;
-  // Also match: const varName = allowlist.includes(...) ? ... : ... (ternary guard)
-  if (priorLines.includes(varName) && priorLines.includes('.includes(')) return true;
-  return false;
+function hasAllowlistValidation(node: TSESTree.Node, varName: string, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  let current: TSESTree.Node | undefined = node;
+  let hasGuard = false;
+
+  while (current) {
+    if (
+      current.type === 'IfStatement' ||
+      current.type === 'ConditionalExpression' ||
+      current.type === 'SwitchStatement' ||
+      current.type === 'LogicalExpression'
+    ) {
+      let guardNode: TSESTree.Node | null = null;
+      if (current.type === 'IfStatement' || current.type === 'ConditionalExpression') {
+        guardNode = (current as any).test;
+      } else if (current.type === 'SwitchStatement') {
+        guardNode = (current as any).discriminant;
+      } else if (current.type === 'LogicalExpression') {
+        guardNode = (current as any).left;
+      }
+
+      if (guardNode) {
+        let usesVarName = false;
+        let usesValidationMethod = false;
+        walk(guardNode, {
+          Identifier(rawNode) {
+            if ((rawNode as TSESTree.Identifier).name === varName) usesVarName = true;
+            const name = (rawNode as TSESTree.Identifier).name;
+            if (name === 'includes' || name === 'indexOf' || name === 'has') usesValidationMethod = true;
+          }
+        });
+        if (usesVarName && usesValidationMethod) {
+          hasGuard = true;
+          break;
+        }
+      }
+    }
+    current = parentMap.get(current);
+  }
+  return hasGuard;
 }
 
 function unwrapTypeAssertion(node: TSESTree.Expression): TSESTree.Expression {
@@ -141,7 +172,7 @@ function unwrapTypeAssertion(node: TSESTree.Expression): TSESTree.Expression {
   return node;
 }
 
-function checkResHeaderMisconfiguration(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+function checkResHeaderMisconfiguration(node: TSESTree.CallExpression, source: string, filePath: string, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.property)) return null;
@@ -157,7 +188,7 @@ function checkResHeaderMisconfiguration(node: TSESTree.CallExpression, source: s
   const innerVal = unwrapTypeAssertion(valArg as TSESTree.Expression);
   if (isIdentifier(innerVal)) {
     const varName = (innerVal as TSESTree.Identifier).name;
-    if (hasAllowlistValidation(source, varName, getLine(node))) return null;
+    if (hasAllowlistValidation(node, varName, parentMap)) return null;
   }
   return {
     ruleId: 'security/cors-misconfiguration',
@@ -198,11 +229,12 @@ app.use(cors({
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
+    const parentMap = buildParentMap(ast);
 
     walk(ast, {
       CallExpression(rawNode) {
         const node = rawNode as TSESTree.CallExpression;
-        const resF = checkResHeaderMisconfiguration(node, source, filePath);
+        const resF = checkResHeaderMisconfiguration(node, source, filePath, parentMap);
         if (resF) { findings.push(resF); return; }
         const firstArg = node.arguments[0];
         if (!firstArg || firstArg.type !== 'ObjectExpression') return;

@@ -3,7 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral } from '../../../utils/ast-helpers.js';
-import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult } from '../../../utils/taint-tracker.js';
+import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult, getCrossFileTaints } from '../../../utils/taint-tracker.js';
 import { buildParentMap } from '../../ast-walker.js';
 
 const EXEC_FUNCTIONS = new Set(['exec', 'execSync', 'spawn', 'spawnSync', 'execFile', 'execFileSync']);
@@ -40,13 +40,42 @@ function argContainsUserInput(arg: TSESTree.Node, taintResult: TaintResult, pare
   return isUserInput(arg, taintResult, parentMap);
 }
 
-function hasVarAllowlistCheck(source: string, varName: string, line: number): boolean {
-  const priorLines = source.split('\n').slice(Math.max(0, line - 15), line).join('\n');
-  return (
-    priorLines.includes(`.includes(${varName}`) ||
-    priorLines.includes(`.has(${varName}`) ||
-    priorLines.includes(`typeof ${varName}`)
-  );
+function hasVarAllowlistCheck(node: TSESTree.Node, varName: string, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  let current: TSESTree.Node | undefined = node;
+  let hasGuard = false;
+  while (current) {
+    if (
+      current.type === 'IfStatement' ||
+      current.type === 'ConditionalExpression' ||
+      current.type === 'SwitchStatement' ||
+      current.type === 'LogicalExpression'
+    ) {
+      let usesVarName = false;
+      let usesValidationMethod = false;
+      walk(current, {
+        Identifier(rawNode) {
+          if ((rawNode as TSESTree.Identifier).name === varName) usesVarName = true;
+          const name = (rawNode as TSESTree.Identifier).name;
+          if (name === 'includes' || name === 'indexOf' || name === 'has') usesValidationMethod = true;
+        },
+        UnaryExpression(rawNode) {
+          const uNode = rawNode as TSESTree.UnaryExpression;
+          if (uNode.operator === 'typeof') {
+            if (isIdentifier(uNode.argument) && uNode.argument.name === varName) {
+              usesVarName = true;
+              usesValidationMethod = true;
+            }
+          }
+        }
+      });
+      if (usesVarName && usesValidationMethod) {
+        hasGuard = true;
+        break;
+      }
+    }
+    current = parentMap.get(current);
+  }
+  return hasGuard;
 }
 
 function checkExecCall(node: TSESTree.CallExpression, source: string, filePath: string, childProcessUsed: boolean, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
@@ -82,7 +111,7 @@ function checkExecCall(node: TSESTree.CallExpression, source: string, filePath: 
       if (
         taintedExprs.length > 0 &&
         taintedExprs.every((e) =>
-          isIdentifier(e) && hasVarAllowlistCheck(source, (e as TSESTree.Identifier).name, getLine(node)),
+          isIdentifier(e) && hasVarAllowlistCheck(node, (e as TSESTree.Identifier).name, parentMap),
         )
       ) {
         isVulnerable = false;
@@ -158,7 +187,6 @@ const rule: Rule = {
       });
     }
 
-    const { getCrossFileTaints } = require('../../../utils/taint-tracker.js');
     const crossFileCalls = getCrossFileTaints(ast, filePath, taintResult);
     const reportedExternalLocations = new Set<string>();
 
@@ -170,7 +198,8 @@ const rule: Rule = {
           if (reportedExternalLocations.has(dedupeKey)) return;
           
           const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map() };
-          const f = checkExecCall(node, source, crossCall.externalFilePath, true, crossTaintResult, new Map());
+          const extParentMap = buildParentMap(crossCall.externalNode);
+          const f = checkExecCall(node, source, crossCall.externalFilePath, true, crossTaintResult, extParentMap);
           if (f) {
             reportedExternalLocations.add(dedupeKey);
             const sourceNode = crossCall.awaitNode ?? crossCall.callNode;

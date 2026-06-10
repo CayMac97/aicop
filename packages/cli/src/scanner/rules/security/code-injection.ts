@@ -3,7 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral } from '../../../utils/ast-helpers.js';
-import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult, isDirectUserInputExpr } from '../../../utils/taint-tracker.js';
+import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult, isDirectUserInputExpr, getCrossFileTaints } from '../../../utils/taint-tracker.js';
 import { buildParentMap } from '../../ast-walker.js';
 
 const VM_METHODS = new Set(['runInNewContext', 'runInThisContext']);
@@ -36,9 +36,33 @@ function checkVmRun(node: TSESTree.CallExpression, source: string, filePath: str
   };
 }
 
-function hasAllowlistCheck(source: string, varName: string, line: number): boolean {
-  const priorLines = source.split('\n').slice(Math.max(0, line - 10), line).join('\n');
-  return priorLines.includes(`.includes(${varName}`) || priorLines.includes(`.has(${varName}`);
+function hasAllowlistCheck(node: TSESTree.Node, varName: string, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  let current: TSESTree.Node | undefined = node;
+  let hasGuard = false;
+  while (current) {
+    if (
+      current.type === 'IfStatement' ||
+      current.type === 'ConditionalExpression' ||
+      current.type === 'SwitchStatement' ||
+      current.type === 'LogicalExpression'
+    ) {
+      let usesVarName = false;
+      let usesValidationMethod = false;
+      walk(current, {
+        Identifier(rawNode) {
+          if ((rawNode as TSESTree.Identifier).name === varName) usesVarName = true;
+          const name = (rawNode as TSESTree.Identifier).name;
+          if (name === 'includes' || name === 'indexOf' || name === 'has') usesValidationMethod = true;
+        }
+      });
+      if (usesVarName && usesValidationMethod) {
+        hasGuard = true;
+        break;
+      }
+    }
+    current = parentMap.get(current);
+  }
+  return hasGuard;
 }
 
 function checkMathEval(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
@@ -53,7 +77,7 @@ function checkMathEval(node: TSESTree.CallExpression, source: string, filePath: 
   const arg = node.arguments[0];
   if (!arg || !argIsTainted(arg, taintResult, parentMap)) return null;
   if (isIdentifier(arg)) {
-    if (hasAllowlistCheck(source, (arg as TSESTree.Identifier).name, getLine(node))) return null;
+    if (hasAllowlistCheck(node, (arg as TSESTree.Identifier).name, parentMap)) return null;
   }
   return {
     ruleId: 'security/code-injection',
@@ -91,7 +115,6 @@ const rule: Rule = {
       },
     });
 
-    const { getCrossFileTaints } = require('../../../utils/taint-tracker.js');
     const crossFileCalls = getCrossFileTaints(ast, filePath, taintResult);
     const reportedExternalLocations = new Set<string>();
 

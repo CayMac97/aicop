@@ -3,7 +3,8 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
-
+import { buildParentMap } from '../../../utils/taint-tracker.js';
+import { isStringLiteral } from '../../../utils/ast-helpers.js';
 function chainContainsJwt(node: TSESTree.Expression | TSESTree.PrivateIdentifier): boolean {
   if (isIdentifier(node)) {
     const name = (node as TSESTree.Identifier).name.toLowerCase();
@@ -15,7 +16,10 @@ function chainContainsJwt(node: TSESTree.Expression | TSESTree.PrivateIdentifier
   return false;
 }
 
-function isJwtVerifyCall(node: TSESTree.CallExpression): boolean {
+function isJwtVerifyCall(node: TSESTree.CallExpression, verifyVars: Set<string>): boolean {
+  if (isIdentifier(node.callee)) {
+    return verifyVars.has((node.callee as TSESTree.Identifier).name) && node.arguments.length >= 2;
+  }
   if (!isMemberExpression(node.callee)) return false;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.property)) return false;
@@ -29,21 +33,29 @@ function hasCallback(node: TSESTree.CallExpression): boolean {
   return callback?.type === 'ArrowFunctionExpression' || callback?.type === 'FunctionExpression';
 }
 
-function isChecked(parent: TSESTree.Node | null, source: string, line: number): boolean {
-  if (!parent) return false;
-  if (parent.type === 'VariableDeclarator' ||
-    parent.type === 'AssignmentExpression' ||
-    parent.type === 'ReturnStatement' ||
-    parent.type === 'CallExpression' ||
-    parent.type === 'TSAsExpression' ||
-    parent.type === 'TSNonNullExpression') return true;
-  if (parent.type === 'ExpressionStatement') {
-    const ctx = extractSnippet(source, line, 5);
-    return ctx.includes('try {') || ctx.includes('try{');
-  }
-  if (parent.type === 'AwaitExpression') {
-    const ctx = extractSnippet(source, line, 0);
-    return ctx.includes('=') || ctx.includes('return ') || ctx.includes('if ');
+function isChecked(node: TSESTree.Node, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  let current: TSESTree.Node | undefined = node;
+  while (current) {
+    if (
+      current.type === 'VariableDeclarator' ||
+      current.type === 'AssignmentExpression' ||
+      current.type === 'ReturnStatement' ||
+      current.type === 'TSAsExpression' ||
+      current.type === 'TSNonNullExpression'
+    ) {
+      return true;
+    }
+    // CallExpression is checked if it's the parent (e.g. passing to another func), but we only check immediate parent for that
+    if (current.type === 'FunctionDeclaration' || current.type === 'FunctionExpression' || current.type === 'ArrowFunctionExpression') {
+      break; // stop at function boundary
+    }
+    const parent: TSESTree.Node | undefined = parentMap.get(current);
+    if (parent?.type === 'CallExpression' && current === node) return true;
+    if (parent?.type === 'AwaitExpression' && current === node) {
+      // If it is awaited, is the await checked?
+      return isChecked(parent, parentMap);
+    }
+    current = parent;
   }
   return false;
 }
@@ -60,13 +72,42 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
+    const parentMap = buildParentMap(ast);
+    const verifyVars = new Set<string>();
 
     walk(ast, {
+      ImportDeclaration(rawNode) {
+        const node = rawNode as TSESTree.ImportDeclaration;
+        if (node.source.type === 'Literal' && String(node.source.value).includes('jsonwebtoken')) {
+          for (const spec of node.specifiers) {
+            if (spec.type === 'ImportSpecifier' && spec.imported.name === 'verify') {
+              verifyVars.add(spec.local.name);
+            }
+          }
+        }
+      },
+      VariableDeclarator(rawNode) {
+        const node = rawNode as TSESTree.VariableDeclarator;
+        if (node.init && node.init.type === 'CallExpression') {
+          const ce = node.init as TSESTree.CallExpression;
+          if (isIdentifier(ce.callee) && ce.callee.name === 'require' && ce.arguments[0] && isStringLiteral(ce.arguments[0] as TSESTree.Expression)) {
+            if (String((ce.arguments[0] as TSESTree.StringLiteral).value).includes('jsonwebtoken')) {
+              if (node.id.type === 'ObjectPattern') {
+                for (const prop of node.id.properties) {
+                  if (prop.type === 'Property' && isIdentifier(prop.key) && prop.key.name === 'verify' && isIdentifier(prop.value)) {
+                    verifyVars.add(prop.value.name);
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
       CallExpression(rawNode, parent) {
         const node = rawNode as TSESTree.CallExpression;
-        if (!isJwtVerifyCall(node)) return;
+        if (!isJwtVerifyCall(node, verifyVars)) return;
         if (hasCallback(node)) return;
-        if (isChecked(parent, source, getLine(node))) return;
+        if (isChecked(node, parentMap)) return;
         findings.push({
           ruleId: 'security/jwt-unsafe-verify',
           severity: 'error',

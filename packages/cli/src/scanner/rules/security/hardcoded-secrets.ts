@@ -114,9 +114,9 @@ function checkVariableNamePattern(name: string, value: string): boolean {
   );
 }
 
-function checkObjectProperty(node: TSESTree.Property, source: string, filePath: string): Finding | null {
+function checkPropertyLike(node: TSESTree.Property | TSESTree.PropertyDefinition, source: string, filePath: string): Finding | null {
   if (node.computed) return null;
-  if (!isStringLiteral(node.value as TSESTree.Expression)) return null;
+  if (!node.value || !isStringLiteral(node.value as TSESTree.Expression)) return null;
   const value = String((node.value as TSESTree.StringLiteral).value);
   if (value.length < MIN_SECRET_VALUE_LENGTH + 1) return null;
   if (PLACEHOLDER_VALUES.test(value)) return null;
@@ -181,7 +181,13 @@ if (!JWT_SECRET) throw new Error('JWT_SECRET environment variable is required');
 
       Property(rawNode: TSESTree.Node) {
         const node = rawNode as TSESTree.Property;
-        const f = checkObjectProperty(node, source, filePath);
+        const f = checkPropertyLike(node, source, filePath);
+        if (f) findings.push(f);
+      },
+
+      PropertyDefinition(rawNode: TSESTree.Node) {
+        const node = rawNode as TSESTree.PropertyDefinition;
+        const f = checkPropertyLike(node, source, filePath);
         if (f) findings.push(f);
       },
 

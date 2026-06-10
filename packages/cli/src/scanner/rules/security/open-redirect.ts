@@ -46,19 +46,38 @@ function isStatusCode(node: TSESTree.Node): boolean {
 
 const REDIRECT_VALIDATION_FN_RE = /(?:is)?(?:allowed|valid|safe|permit|whitelist|sanitize|check|verify|trusted)/i;
 
-function hasRedirectValidation(source: string, varName: string, line: number): boolean {
-  const priorLines = source.split('\n').slice(Math.max(0, line - 15), line).join('\n');
-  // Allowlist check: ALLOWED.includes(varName) or ALLOWED.has(varName)
-  if (priorLines.includes(`.includes(${varName}`) || priorLines.includes(`.has(${varName}`)) return true;
-  // Path-only validation: both startsWith('/') AND startsWith('//') present = protocol-relative handled
-  if (
-    (priorLines.includes(`${varName}.startsWith('/')`) || priorLines.includes(`${varName}.startsWith("/")`)) &&
-    (priorLines.includes(`${varName}.startsWith('//')`) || priorLines.includes(`${varName}.startsWith("//")`))
-  ) return true;
-  // Custom validation function: isAllowedUrl(varName), validateRedirect(varName), etc.
-  const customValidationRe = new RegExp(`${REDIRECT_VALIDATION_FN_RE.source}[\\w]*\\(${varName}\\)`, 'i');
-  if (customValidationRe.test(priorLines)) return true;
-  return false;
+function hasRedirectValidation(node: TSESTree.Node, varName: string, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  let current: TSESTree.Node | undefined = node;
+  let hasGuard = false;
+  while (current) {
+    if (
+      current.type === 'IfStatement' ||
+      current.type === 'ConditionalExpression' ||
+      current.type === 'SwitchStatement' ||
+      current.type === 'LogicalExpression'
+    ) {
+      walk(current, {
+        CallExpression(rawNode) {
+          const cNode = rawNode as TSESTree.CallExpression;
+          if (isMemberExpression(cNode.callee)) {
+            const prop = cNode.callee.property;
+            if (isIdentifier(prop)) {
+              if (prop.name === 'includes' || prop.name === 'has') hasGuard = true;
+              if (prop.name === 'startsWith') {
+                if (isIdentifier(cNode.callee.object) && cNode.callee.object.name === varName) hasGuard = true;
+              }
+            }
+          } else if (isIdentifier(cNode.callee)) {
+            const name = cNode.callee.name;
+            if (REDIRECT_VALIDATION_FN_RE.test(name)) hasGuard = true;
+          }
+        }
+      });
+      if (hasGuard) break;
+    }
+    current = parentMap.get(current);
+  }
+  return hasGuard;
 }
 
 function checkResRedirect(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
@@ -91,7 +110,7 @@ function checkResRedirect(node: TSESTree.CallExpression, source: string, filePat
   if (!isUserInput(urlArg, taintResult, parentMap)) return null;
   if (isIdentifier(urlArg)) {
     const varName = (urlArg as TSESTree.Identifier).name;
-    if (hasRedirectValidation(source, varName, getLine(node))) return null;
+    if (hasRedirectValidation(node, varName, parentMap)) return null;
   }
 
   return {
