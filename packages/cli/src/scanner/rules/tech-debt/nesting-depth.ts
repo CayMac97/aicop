@@ -1,7 +1,7 @@
 import { TSESTree } from '@typescript-eslint/typescript-estree';
 import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
-import { extractSnippet } from '../../../utils/file-utils.js';
+import { extractSnippet, isTestFile } from '../../../utils/file-utils.js';
 import { getLine, getColumn } from '../../../utils/ast-helpers.js';
 
 const NESTING_NODES = new Set([
@@ -69,6 +69,7 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
+    if (isTestFile(filePath)) return findings;
 
     walk(ast, {
       enter(rawNode) {

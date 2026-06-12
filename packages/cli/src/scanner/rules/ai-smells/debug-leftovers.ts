@@ -1,10 +1,10 @@
 import { TSESTree } from '@typescript-eslint/typescript-estree';
 import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
-import { extractSnippet } from '../../../utils/file-utils.js';
+import { extractSnippet, isTestFile } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
 
-const CONSOLE_METHODS = new Set(['log', 'debug', 'warn', 'error', 'info', 'trace', 'dir', 'dirxml', 'table']);
+const CONSOLE_METHODS = new Set(['debug', 'trace', 'dir', 'dirxml', 'table']);
 
 function buildParentMap(ast: ParsedAST): Map<TSESTree.Node, TSESTree.Node> {
   const map = new Map<TSESTree.Node, TSESTree.Node>();
@@ -168,6 +168,9 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
+    if (isTestFile(filePath)) return findings;
+    const isCLI = source.startsWith('#!') || /[\\/](bin|cli)[\\/]/.test(filePath);
+    if (isCLI) return findings;
 
     const parentMap = buildParentMap(ast);
 

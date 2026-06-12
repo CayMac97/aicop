@@ -11,7 +11,7 @@ const ALLOWED_NAMES = new Set([
   'id', 'fn', 'cb', 'ok', 'ms', 'px', 'db',
 ]);
 
-const MIN_GENERIC_COUNT = 3;
+const MIN_GENERIC_COUNT = 5;
 const MIN_FUNCTION_LINES = 15;
 
 interface FuncRange {

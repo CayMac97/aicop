@@ -1,7 +1,7 @@
 import { TSESTree } from '@typescript-eslint/typescript-estree';
 import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
-import { extractSnippet } from '../../../utils/file-utils.js';
+import { extractSnippet, isTestFile } from '../../../utils/file-utils.js';
 import { isStringLiteral, isLiteral, getLine, getColumn, isIdentifier, isProperty, isMemberExpression } from '../../../utils/ast-helpers.js';
 
 function isDocumentationString(value: string): boolean {
@@ -170,6 +170,7 @@ if (!JWT_SECRET) throw new Error('JWT_SECRET environment variable is required');
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
+    if (isTestFile(filePath)) return findings;
 
     walk(ast, {
       Literal(rawNode: TSESTree.Node) {

@@ -28,6 +28,7 @@ export function isSupportedFile(filePath: string): boolean {
 /** Check if a file is a test file */
 export function isTestFile(filePath: string): boolean {
   const normalizedPath = filePath.replace(/\\/g, '/');
+  if (normalizedPath.includes('/fixtures/')) return false;
   return (
     /\.(test|spec)\.(ts|tsx|js|jsx)$/i.test(normalizedPath) ||
     /\/__tests__\//i.test(normalizedPath) ||

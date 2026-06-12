@@ -1,5 +1,6 @@
 import { TSESTree } from '@typescript-eslint/typescript-estree';
 import { Rule, Finding, ParsedAST } from '../types.js';
+import { isTestFile } from '../../../utils/file-utils.js';
 
 const WARN_LINES = 1000;
 const ERROR_LINES = 2000;
@@ -54,6 +55,7 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
+    if (isTestFile(filePath)) return findings;
     const logicalLines = countNonImportLogicalLines(source, ast);
     const exportCount = countExports(ast);
 

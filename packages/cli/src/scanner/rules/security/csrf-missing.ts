@@ -126,18 +126,17 @@ const rule: Rule = {
     if (hasJwt && !hasSession) return findings;
     if (unprotectedPostRoutes.length === 0) return findings;
 
-    for (const triggerNode of unprotectedPostRoutes) {
-      findings.push({
-        ruleId: 'security/csrf-missing',
-        severity: 'warn',
-        message: 'POST routes without CSRF protection — state-changing requests are forgeable',
-        file: filePath,
-        line: getLine(triggerNode),
-        column: getColumn(triggerNode),
-        snippet: extractSnippet(source, getLine(triggerNode)),
-        fix: 'Use csurf or csrf-csrf middleware on all state-changing routes',
-      });
-    }
+    const triggerNode = unprotectedPostRoutes[0];
+    findings.push({
+      ruleId: 'security/csrf-missing',
+      severity: 'warn',
+      message: 'File contains POST routes without global CSRF protection — state-changing requests are forgeable',
+      file: filePath,
+      line: getLine(triggerNode),
+      column: getColumn(triggerNode),
+      snippet: extractSnippet(source, getLine(triggerNode)),
+      fix: 'Use csurf or csrf-csrf middleware on all state-changing routes',
+    });
 
     return findings;
   },

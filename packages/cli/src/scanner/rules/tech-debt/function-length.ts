@@ -1,7 +1,7 @@
 import { TSESTree } from '@typescript-eslint/typescript-estree';
 import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
-import { extractSnippet } from '../../../utils/file-utils.js';
+import { extractSnippet, isTestFile } from '../../../utils/file-utils.js';
 import { getLine, getColumn } from '../../../utils/ast-helpers.js';
 const WARN_LINE_LIMIT = 60;
 const ERROR_LINE_LIMIT = 100;
@@ -38,11 +38,18 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
+    if (isTestFile(filePath)) return findings;
+
+    const totalLines = source.split('\n').length;
 
     walk(ast, {
       enter(rawNode) {
         if (!isFunctionNode(rawNode)) return;
         const funcNode = rawNode as TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression;
+        
+        // Ignore file-level wrappers (e.g. UMD wrappers) which are expressions
+        if (funcNode.type !== 'FunctionDeclaration' && funcNode.loc.start.line <= 5 && funcNode.loc.end.line >= totalLines - 5) return;
+        
         const lines = countFunctionLines(funcNode);
         if (lines <= WARN_LINE_LIMIT) return;
         const funcName = getFunctionName(funcNode);
