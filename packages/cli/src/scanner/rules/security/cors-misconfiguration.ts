@@ -9,6 +9,10 @@ function isWildcardOrigin(node: TSESTree.Expression): boolean {
   return isStringLiteral(node) && String((node as TSESTree.StringLiteral).value) === '*';
 }
 
+function isTrueOrigin(node: TSESTree.Expression): boolean {
+  return node.type === 'Literal' && (node as TSESTree.Literal).value === true;
+}
+
 function isRequestHeaderOrigin(node: TSESTree.Expression): boolean {
   if (!isMemberExpression(node)) return false;
   const me = node as TSESTree.MemberExpression;
@@ -106,6 +110,18 @@ function checkCorsObjectMisconfiguration(obj: TSESTree.ObjectExpression, node: T
       column: getColumn(node),
       snippet: extractSnippet(source, getLine(node)),
       fix: 'Use a specific origin allowlist with credentials: cors({ origin: "https://yourapp.com", credentials: true })',
+    };
+  }
+  if (isTrueOrigin(origin)) {
+    return {
+      ruleId: 'security/cors-misconfiguration',
+      severity: 'error',
+      message: 'CORS origin: true + credentials: true — reflects any origin, enabling credential theft',
+      file: filePath,
+      line: getLine(node),
+      column: getColumn(node),
+      snippet: extractSnippet(source, getLine(node)),
+      fix: 'Use a specific origin allowlist: cors({ origin: ["https://yourapp.com"], credentials: true })',
     };
   }
   if (isRequestHeaderOrigin(origin)) {
@@ -236,10 +252,25 @@ app.use(cors({
         const node = rawNode as TSESTree.CallExpression;
         const resF = checkResHeaderMisconfiguration(node, source, filePath, parentMap);
         if (resF) { findings.push(resF); return; }
+        
+        let corsOpts: TSESTree.ObjectExpression | null = null;
         const firstArg = node.arguments[0];
-        if (!firstArg || firstArg.type !== 'ObjectExpression') return;
-        const corsF = checkCorsObjectMisconfiguration(firstArg as TSESTree.ObjectExpression, node, source, filePath);
-        if (corsF) findings.push(corsF);
+        
+        if (
+          node.callee.type === 'MemberExpression' &&
+          isIdentifier(node.callee.property) &&
+          node.callee.property.name === 'register' &&
+          node.arguments[1]?.type === 'ObjectExpression'
+        ) {
+          corsOpts = node.arguments[1] as TSESTree.ObjectExpression;
+        } else if (firstArg?.type === 'ObjectExpression') {
+          corsOpts = firstArg as TSESTree.ObjectExpression;
+        }
+        
+        if (corsOpts) {
+          const corsF = checkCorsObjectMisconfiguration(corsOpts, node, source, filePath);
+          if (corsF) findings.push(corsF);
+        }
       },
     });
 

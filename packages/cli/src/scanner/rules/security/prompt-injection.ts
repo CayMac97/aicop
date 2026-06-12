@@ -5,7 +5,7 @@ import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
 import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult, getCrossFileTaints } from '../../../utils/taint-tracker.js';
 
-const AI_SDK_KEYWORDS = ['openai', 'anthropic', 'langchain'];
+const AI_SDK_KEYWORDS = ['openai', 'anthropic', 'langchain', 'gemini', 'genai', 'generative-ai'];
 const TARGET_PROPS = new Set(['content', 'prompt', 'input', 'message', 'messages', 'text']);
 const SANITIZER_PATTERN = /sanitize|validate|clean|filter|escape|purify/i;
 

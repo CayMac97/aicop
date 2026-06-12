@@ -51,6 +51,8 @@ function isChecked(node: TSESTree.Node, parentMap: Map<TSESTree.Node, TSESTree.N
     }
     const parent: TSESTree.Node | undefined = parentMap.get(current);
     if (parent?.type === 'CallExpression' && current === node) return true;
+    if (parent?.type === 'IfStatement' && (parent as TSESTree.IfStatement).test === current) return true;
+    if (parent?.type === 'ConditionalExpression' && (parent as TSESTree.ConditionalExpression).test === current) return true;
     if (parent?.type === 'AwaitExpression' && current === node) {
       // If it is awaited, is the await checked?
       return isChecked(parent, parentMap);

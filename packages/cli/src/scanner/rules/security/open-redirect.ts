@@ -84,8 +84,10 @@ function checkResRedirect(node: TSESTree.CallExpression, source: string, filePat
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
-  if ((me.object as TSESTree.Identifier).name !== 'res') return null;
-  if ((me.property as TSESTree.Identifier).name !== 'redirect') return null;
+  const objName = (me.object as TSESTree.Identifier).name;
+  if (objName !== 'res' && objName !== 'reply') return null;
+  const method = (me.property as TSESTree.Identifier).name;
+  if (method !== 'redirect' && method !== 'location') return null;
 
   const args = node.arguments;
   if (args.length === 0) return null;
@@ -116,7 +118,7 @@ function checkResRedirect(node: TSESTree.CallExpression, source: string, filePat
   return {
     ruleId: 'security/open-redirect',
     severity: 'error',
-    message: 'open redirect — user-controlled URL in res.redirect()',
+    message: `open redirect — user-controlled URL in res.${method}()`,
     file: filePath,
     line: getLine(node),
     column: getColumn(node),

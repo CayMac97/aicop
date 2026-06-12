@@ -2,7 +2,7 @@ import { TSESTree } from '@typescript-eslint/typescript-estree';
 import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
-import { isStringLiteral, isLiteral, getLine, getColumn, isIdentifier, isProperty } from '../../../utils/ast-helpers.js';
+import { isStringLiteral, isLiteral, getLine, getColumn, isIdentifier, isProperty, isMemberExpression } from '../../../utils/ast-helpers.js';
 
 function isDocumentationString(value: string): boolean {
   const up = value.toUpperCase();
@@ -27,7 +27,7 @@ const SECRET_VALUE_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
 ];
 
 const SECRET_NAME_PATTERNS = /(?:^(?:secret|token)$|api[_-]?key|apikey|jwt[_-]?secret|secret[_-]?key|[a-z_-]+secret|secret[a-z_-]+|password|passwd|pwd|auth[_-]?token|access[_-]?token|private[_-]?key)/i;
-const SECRET_OBJ_KEYS = /^(?:secret|password|passwd|pwd|token|apikey|api[_-]?key|authtoken|auth[_-]?token|privatekey|private[_-]?key|accesskey|access[_-]?key|clientsecret|client[_-]?secret|jwtsecret|jwt[_-]?secret|encryptionkey|encryption[_-]?key)$/i;
+const SECRET_OBJ_KEYS = /^(?:secret|password|passwd|pwd|token|apikey|api[_-]?key|authtoken|auth[_-]?token|privatekey|private[_-]?key|accesskey|access[_-]?key|secretkey|secret[_-]?key|clientsecret|client[_-]?secret|jwtsecret|jwt[_-]?secret|encryptionkey|encryption[_-]?key)$/i;
 const SAFE_PLACEHOLDER_PATTERN = /(?:example|placeholder|test|fake|dummy|sample|mock|todo|changeme|your[_-\s]?)/i;
 const PLACEHOLDER_VALUES = /(?:example|placeholder|test|fake|dummy|your[_\-\s]?|<.*?>|xxx)/i;
 // Public keys that are designed to be embedded in client-side code
@@ -212,6 +212,42 @@ if (!JWT_SECRET) throw new Error('JWT_SECRET environment variable is required');
           column: getColumn(node),
           snippet: extractSnippet(source, getLine(node)),
           fix: `Use process.env.${name.toUpperCase()} instead of hardcoding this value`,
+        });
+      },
+
+      CallExpression(rawNode: TSESTree.Node) {
+        const node = rawNode as TSESTree.CallExpression;
+        if (!isMemberExpression(node.callee)) return;
+        const me = node.callee as TSESTree.MemberExpression;
+        if (!isIdentifier(me.property) || me.property.name !== 'set') return;
+        
+        const keyArg = node.arguments[0];
+        const valArg = node.arguments[1];
+        if (!keyArg || !valArg) return;
+        if (!isStringLiteral(keyArg as TSESTree.Expression) || !isStringLiteral(valArg as TSESTree.Expression)) return;
+        
+        const keyName = String((keyArg as TSESTree.StringLiteral).value);
+        const value = String((valArg as TSESTree.StringLiteral).value);
+        
+        if (!SECRET_OBJ_KEYS.test(keyName)) return;
+        if (value.length < MIN_SECRET_VALUE_LENGTH + 1) return;
+        if (PLACEHOLDER_VALUES.test(value)) return;
+        if (isDocumentationString(value)) return;
+        if (PUBLIC_KEY_PATTERN.test(value)) return;
+        if (looksLikeKeyNameNotValue(value)) return;
+        if (looksLikeNaturalLanguage(value)) return;
+        if (looksLikeValidationOrTypeRule(value)) return;
+        if (value.startsWith('/')) return;
+        
+        findings.push({
+          ruleId: 'security/hardcoded-secrets',
+          severity: 'error',
+          message: `hardcoded value for "${keyName}" in set()`,
+          file: filePath,
+          line: getLine(node),
+          column: getColumn(node),
+          snippet: extractSnippet(source, getLine(node)),
+          fix: `Use process.env.${keyName.toUpperCase()} instead`,
         });
       },
     });

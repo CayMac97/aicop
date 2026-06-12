@@ -12,8 +12,10 @@ const MONGO_QUERY_METHODS = new Set([
   'findOne',
   'findOneAndUpdate',
   'findOneAndDelete',
+  'findOneAndReplace',
   'updateOne',
   'updateMany',
+  'replaceOne',
   'deleteOne',
   'deleteMany',
   'count',
@@ -21,7 +23,7 @@ const MONGO_QUERY_METHODS = new Set([
   'aggregate',
 ]);
 
-const REQ_INPUT_SOURCES = new Set(['body', 'query', 'params']);
+const REQ_INPUT_SOURCES = new Set(['body', 'query', 'params', 'headers', 'cookies']);
 
 function isReqSource(node: TSESTree.Node): boolean {
   if (!isMemberExpression(node)) return false;
@@ -139,6 +141,11 @@ function checkNodeForNoSQLInjection(
       return { isVuln: true, hasWhere: false };
     }
     const call = node as TSESTree.CallExpression;
+    if (isIdentifier(call.callee)) {
+      if (/^(?:validate|sanitize|check|clean|escape)/i.test(call.callee.name)) {
+        return { isVuln: false, hasWhere: false };
+      }
+    }
     for (const arg of call.arguments) {
       const res = checkNodeForNoSQLInjection(arg, taintResult, parentMap, visited);
       if (res.isVuln) return res;

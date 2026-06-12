@@ -67,7 +67,27 @@ function checkXml2jsUserInput(node: TSESTree.CallExpression, source: string, fil
     line: getLine(node),
     column: getColumn(node),
     snippet: extractSnippet(source, getLine(node)),
-    fix: 'Sanitize XML input before parsing and ensure external entities are disabled',
+    fix: 'Use xml2js securely, or prefer fast-xml-parser with safe defaults',
+  };
+}
+
+function checkXmldomParseFromString(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
+  if (!isMemberExpression(node.callee)) return null;
+  const me = node.callee as TSESTree.MemberExpression;
+  if (!isIdentifier(me.property) || me.property.name !== 'parseFromString') return null;
+  
+  const firstArg = node.arguments[0];
+  if (!firstArg || !isUserInput(firstArg, taintResult, parentMap)) return null;
+  
+  return {
+    ruleId: 'security/xxe-injection',
+    severity: 'error',
+    message: 'xmldom DOMParser XXE — DOMParser is vulnerable to XXE by default if not patched',
+    file: filePath,
+    line: getLine(node),
+    column: getColumn(node),
+    snippet: extractSnippet(source, getLine(node)),
+    fix: 'Use a secure XML parser, or ensure @xmldom/xmldom is updated to latest safe version',
   };
 }
 
@@ -110,8 +130,10 @@ const rule: Rule = {
         if (f1) { findings.push(f1); return; }
         const f2 = checkXml2jsUserInput(node, source, filePath, taintResult, parentMap);
         if (f2) { findings.push(f2); return; }
-        const f3 = checkUnsafeXmlRequire(node, source, filePath);
-        if (f3) findings.push(f3);
+        const f3 = checkXmldomParseFromString(node, source, filePath, taintResult, parentMap);
+        if (f3) { findings.push(f3); return; }
+        const f4 = checkUnsafeXmlRequire(node, source, filePath);
+        if (f4) findings.push(f4);
       },
     });
 

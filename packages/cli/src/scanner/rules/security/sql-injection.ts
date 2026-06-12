@@ -11,7 +11,7 @@ const HTML_TAG_PATTERN = /<(?:select|table|input|form|option|textarea)\b/i;
 const USER_INPUT_SOURCES = new Set(['params', 'body', 'query', 'headers', 'cookies']);
 const PARAMETERIZED_PATTERN = /\?\s*[,)]/;
 
-const DB_CALL_METHODS = new Set(['query', 'execute', 'raw', 'prepare', 'run', 'all', 'get']);
+const DB_CALL_METHODS = new Set(['query', 'execute', 'raw', 'prepare', 'run', 'all', 'get', 'any', 'one', 'none', 'many', 'manyOrNone', 'oneOrNone', 'result']);
 const SAFE_SINK_METHODS = new Set(['log', 'warn', 'error', 'info', 'debug', 'send', 'json', 'render', 'write', 'end', 'format', 'trace', 'dir', 'table', 'print']);
 const SAFE_SINK_ROOTS = new Set(['console', 'logger', 'log', 'res', 'response', 'winston', 'pino', 'bunyan']);
 
@@ -230,21 +230,37 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
       },
       CallExpression(rawNode) {
         const node = rawNode as TSESTree.CallExpression;
-        if (isMemberExpression(node.callee) && isIdentifier(node.callee.property) && node.callee.property.name === 'join') {
-          const obj = node.callee.object;
-          if (obj.type === 'ArrayExpression') {
-            const elements = (obj as TSESTree.ArrayExpression).elements;
-            const strings = elements.map(e => isStringLiteral(e) ? String((e as TSESTree.StringLiteral).value) : '').filter(Boolean);
-            if (strings.some(looksLikeSQL)) {
-              if (elements.some(e => e && isDynamicExpr(e as TSESTree.Node, taintResult, parentMap))) {
-                let reachesDb = false;
-                const ctx = findContext(node, parentMap);
-                reachesDb = ctx?.kind === 'db-call';
-                if (ctx?.kind === 'var' && ctx.varName) {
-                  reachesDb = dbCallVars.has(ctx.varName);
-                }
-                if (reachesDb) {
-                  tryFlag(node, 'SQL string built via Array.join() with user input — injection risk', 'Use parameterized queries or a query builder like Prisma, Knex, or TypeORM');
+        if (isMemberExpression(node.callee) && isIdentifier(node.callee.property)) {
+          const methodName = node.callee.property.name;
+          if (['where', 'andWhere', 'orWhere', 'having', 'andHaving', 'orHaving'].includes(methodName)) {
+            const firstArg = node.arguments[0];
+            if (firstArg) {
+              if (firstArg.type === 'BinaryExpression' && concatHasUserInput(firstArg as TSESTree.BinaryExpression, taintResult, parentMap)) {
+                tryFlag(node, `SQL injection risk in query builder — user input in ${methodName}() string concatenation`, 'Use parameterized conditions: where("user.id = :id", { id: req.query.id })');
+              } else if (firstArg.type === 'TemplateLiteral' && templateHasUserInput(firstArg as TSESTree.TemplateLiteral, taintResult, parentMap)) {
+                tryFlag(node, `SQL injection risk in query builder — user input in ${methodName}() template literal`, 'Use parameterized conditions: where("user.id = :id", { id: req.query.id })');
+              }
+            }
+          }
+          if (methodName === 'join' || methodName === 'concat') {
+            const obj = node.callee.object;
+            if (obj.type === 'ArrayExpression') {
+              let elements = [...(obj as TSESTree.ArrayExpression).elements];
+              if (methodName === 'concat') {
+                elements.push(...node.arguments);
+              }
+              const strings = elements.map(e => isStringLiteral(e) ? String((e as TSESTree.StringLiteral).value) : '').filter(Boolean);
+              if (strings.some(looksLikeSQL)) {
+                if (elements.some(e => e && isDynamicExpr(e as TSESTree.Node, taintResult, parentMap))) {
+                  let reachesDb = false;
+                  const ctx = findContext(node, parentMap);
+                  reachesDb = ctx?.kind === 'db-call';
+                  if (ctx?.kind === 'var' && ctx.varName) {
+                    reachesDb = dbCallVars.has(ctx.varName);
+                  }
+                  if (reachesDb) {
+                    tryFlag(node, `SQL string built via Array.${methodName}() with user input — injection risk`, 'Use parameterized queries or a query builder like Prisma, Knex, or TypeORM');
+                  }
                 }
               }
             }
@@ -338,27 +354,33 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
         },
         CallExpression(rawNode) {
           const node = rawNode as TSESTree.CallExpression;
-          if (isMemberExpression(node.callee) && isIdentifier(node.callee.property) && node.callee.property.name === 'join') {
-            const obj = node.callee.object;
-            if (obj.type === 'ArrayExpression') {
-              const elements = (obj as TSESTree.ArrayExpression).elements;
-              const strings = elements.map(e => isStringLiteral(e) ? String((e as TSESTree.StringLiteral).value) : '').filter(Boolean);
-              if (strings.some(looksLikeSQL)) {
-                const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map() };
-                if (elements.some(e => e && isDynamicExpr(e as TSESTree.Node, crossTaintResult, extParentMap))) {
-                  let reachesDb = false;
-                  const ctx = findContext(node, extParentMap);
-                  reachesDb = ctx?.kind === 'db-call';
-                  if (ctx?.kind === 'var' && ctx.varName) {
-                    const extDbCallVars = collectDbCallVars(crossCall.externalNode);
-                    reachesDb = extDbCallVars.has(ctx.varName);
-                  }
-                  if (reachesDb) {
-                    const dedupeKey = `${crossCall.externalFilePath}:${getLine(rawNode)}:join`;
-                    if (reportedExternalLocations.has(dedupeKey)) return;
-                    reportedExternalLocations.add(dedupeKey);
-                    tryFlagCrossFile(crossCall, node, 'Cross-File SQL Injection: User input concatenated via Array.join() into SQL query in imported function',
-                      'Parameterize the SQL query inside the imported function');
+          if (isMemberExpression(node.callee) && isIdentifier(node.callee.property)) {
+            const methodName = node.callee.property.name;
+            if (methodName === 'join' || methodName === 'concat') {
+              const obj = node.callee.object;
+              if (obj.type === 'ArrayExpression') {
+                let elements = [...(obj as TSESTree.ArrayExpression).elements];
+                if (methodName === 'concat') {
+                  elements.push(...node.arguments);
+                }
+                const strings = elements.map(e => isStringLiteral(e) ? String((e as TSESTree.StringLiteral).value) : '').filter(Boolean);
+                if (strings.some(looksLikeSQL)) {
+                  const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map() };
+                  if (elements.some(e => e && isDynamicExpr(e as TSESTree.Node, crossTaintResult, extParentMap))) {
+                    let reachesDb = false;
+                    const ctx = findContext(node, extParentMap);
+                    reachesDb = ctx?.kind === 'db-call';
+                    if (ctx?.kind === 'var' && ctx.varName) {
+                      const extDbCallVars = collectDbCallVars(crossCall.externalNode);
+                      reachesDb = extDbCallVars.has(ctx.varName);
+                    }
+                    if (reachesDb) {
+                      const dedupeKey = `${crossCall.externalFilePath}:${getLine(rawNode)}:${methodName}`;
+                      if (reportedExternalLocations.has(dedupeKey)) return;
+                      reportedExternalLocations.add(dedupeKey);
+                      tryFlagCrossFile(crossCall, node, `Cross-File SQL Injection: User input concatenated via Array.${methodName}() into SQL query in imported function`,
+                        'Parameterize the SQL query inside the imported function');
+                    }
                   }
                 }
               }

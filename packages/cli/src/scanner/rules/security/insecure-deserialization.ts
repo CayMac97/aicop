@@ -66,6 +66,39 @@ function checkUnserialize(node: TSESTree.CallExpression, source: string, filePat
   };
 }
 
+function checkBsonDeserialize(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+  if (!isMemberExpression(node.callee)) return null;
+  const me = node.callee as TSESTree.MemberExpression;
+  if (!isIdentifier(me.property) || me.property.name !== 'deserialize') return null;
+  if (isIdentifier(me.object) && me.object.name !== 'BSON') return null; // usually BSON.deserialize
+  
+  const optsArg = node.arguments[1];
+  if (!optsArg || optsArg.type !== 'ObjectExpression') return null;
+  
+  let hasEvalFunctions = false;
+  for (const prop of optsArg.properties) {
+    if (prop.type === 'Property' && isIdentifier(prop.key) && prop.key.name === 'evalFunctions') {
+      if (prop.value.type === 'Literal' && prop.value.value === true) {
+        hasEvalFunctions = true;
+      }
+    }
+  }
+  
+  if (hasEvalFunctions) {
+    return {
+      ruleId: 'security/insecure-deserialization',
+      severity: 'error',
+      message: 'BSON.deserialize() with evalFunctions: true allows RCE',
+      file: filePath,
+      line: getLine(node),
+      column: getColumn(node),
+      snippet: extractSnippet(source, getLine(node)),
+      fix: 'Disable evalFunctions or ensure input is strictly trusted. Executing functions from BSON is highly dangerous.',
+    };
+  }
+  return null;
+}
+
 function checkUnsafePackageRequire(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
   if (!isIdentifier(node.callee)) return null;
   if ((node.callee as TSESTree.Identifier).name !== 'require') return null;
@@ -117,10 +150,12 @@ const rule: Rule = {
       },
       CallExpression(rawNode) {
         const node = rawNode as TSESTree.CallExpression;
-        const deser = checkUnserialize(node, source, filePath);
-        if (deser) { findings.push(deser); return; }
-        const pkg = checkUnsafePackageRequire(node, source, filePath);
-        if (pkg) findings.push(pkg);
+        const finding1 = checkUnserialize(node, source, filePath);
+        if (finding1) { findings.push(finding1); return; }
+        const findingBson = checkBsonDeserialize(node, source, filePath);
+        if (findingBson) { findings.push(findingBson); return; }
+        const finding2 = checkUnsafePackageRequire(node, source, filePath);
+        if (finding2) findings.push(finding2);
       },
     });
 

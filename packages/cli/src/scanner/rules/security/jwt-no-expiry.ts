@@ -110,6 +110,64 @@ function checkJwtSign(node: TSESTree.CallExpression, source: string, filePath: s
   };
 }
 
+function checkCreateSigner(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+  if (!isIdentifier(node.callee) || node.callee.name !== 'createSigner') return null;
+  const args = node.arguments;
+  if (args.length === 0) return null;
+  const optionsArg = args[0];
+  if (optionsArg.type === 'Identifier' || optionsArg.type === 'SpreadElement') return null;
+  if (hasExpiryInOptions(optionsArg)) return null;
+  return {
+    ruleId: 'security/jwt-no-expiry',
+    severity: 'error',
+    message: 'fast-jwt createSigner() missing expiresIn',
+    file: filePath,
+    line: getLine(node),
+    column: getColumn(node),
+    snippet: extractSnippet(source, getLine(node)),
+    fix: 'Add expiresIn: createSigner({ key: "secret", expiresIn: 900000 })',
+  };
+}
+
+function checkJoseSignJWT(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+  if (!isMemberExpression(node.callee)) return null;
+  const me = node.callee as TSESTree.MemberExpression;
+  if (!isIdentifier(me.property) || me.property.name !== 'sign') return null;
+  
+  let current: TSESTree.Expression = me.object;
+  let isSignJWT = false;
+  let hasSetExp = false;
+  
+  while (current) {
+    if (current.type === 'NewExpression' && isIdentifier(current.callee) && current.callee.name === 'SignJWT') {
+      isSignJWT = true;
+      break;
+    }
+    if (current.type === 'CallExpression' && isMemberExpression(current.callee)) {
+      if (isIdentifier(current.callee.property)) {
+        if (current.callee.property.name === 'setExpirationTime') {
+          hasSetExp = true;
+        }
+      }
+      current = current.callee.object;
+    } else {
+      break;
+    }
+  }
+  
+  if (!isSignJWT || hasSetExp) return null;
+  
+  return {
+    ruleId: 'security/jwt-no-expiry',
+    severity: 'error',
+    message: 'jose SignJWT created without setExpirationTime()',
+    file: filePath,
+    line: getLine(node),
+    column: getColumn(node),
+    snippet: extractSnippet(source, getLine(node)),
+    fix: 'Add .setExpirationTime("2h") before .sign()',
+  };
+}
 const rule: Rule = {
   id: 'security/jwt-no-expiry',
   name: 'JWT Without Expiry',
@@ -132,6 +190,12 @@ const rule: Rule = {
         const node = rawNode as TSESTree.CallExpression;
         const finding = checkJwtSign(node, source, filePath);
         if (finding) findings.push(finding);
+        
+        const fastJwtFinding = checkCreateSigner(node, source, filePath);
+        if (fastJwtFinding) findings.push(fastJwtFinding);
+        
+        const joseFinding = checkJoseSignJWT(node, source, filePath);
+        if (joseFinding) findings.push(joseFinding);
       },
     });
 

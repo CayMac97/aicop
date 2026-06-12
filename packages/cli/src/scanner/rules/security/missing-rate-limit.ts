@@ -8,7 +8,7 @@ const AUTH_ROUTE_PATTERNS = [
   /\/login/i, /\/signin/i, /\/register/i, /\/signup/i,
   /\/forgot[-_]?password/i, /\/reset[-_]?password/i, /\/auth/i,
 ];
-const RATE_LIMIT_IDENTIFIERS = /rateLimit|rateLimiter|limitRate|throttle|slowDown|expressRateLimit|limiter/i;
+const RATE_LIMIT_IDENTIFIERS = /rateLimit|rateLimiter|limitRate|throttle|slowDown|expressRateLimit|limiter|brute/i;
 const HTTP_METHODS = new Set(['post', 'put', 'patch', 'delete']);
 
 function isAuthRoute(pathValue: string): boolean {
@@ -118,14 +118,17 @@ app.post('/forgot-password', authLimiter, async (req, res) => { ... });`,
         }
         
         const routePath = isRouteDefinition(node);
-        if (!routePath) return;
-        if (!isAuthRoute(routePath)) return;
-        if (middlewareIncludesRateLimit(node.arguments, rateLimitVars)) return;
-        if (seenEndpoints.has(routePath)) return;
-        seenEndpoints.add(routePath);
-        
-        // We delay creating findings until we've parsed everything to check hasGlobalRateLimit
-        (node as any)._missingRateLimitPath = routePath;
+        if (routePath && isAuthRoute(routePath) && !middlewareIncludesRateLimit(node.arguments, rateLimitVars) && !seenEndpoints.has(routePath)) {
+          seenEndpoints.add(routePath);
+          (node as any)._missingRateLimitPath = routePath;
+        }
+
+        const hapiFinding = checkHapiRoute(node, source, filePath);
+        if (hapiFinding) {
+          // Delay finding pushing to end just in case there's a global rate limit we detect later.
+          // For simplicity we'll just push it to a separate array or attach it.
+          (node as any)._missingHapiRateLimitFinding = hapiFinding;
+        }
       },
     });
 
@@ -146,11 +149,70 @@ app.post('/forgot-password', authLimiter, async (req, res) => { ... });`,
             fix: 'Install express-rate-limit and add: const limiter = rateLimit({ windowMs: 15*60*1000, max: 10 })',
           });
         }
+        if ((node as any)._missingHapiRateLimitFinding) {
+          findings.push((node as any)._missingHapiRateLimitFinding);
+        }
       }
     });
 
     return findings;
   },
 };
+
+function checkHapiRoute(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+  if (!isMemberExpression(node.callee)) return null;
+  const me = node.callee as TSESTree.MemberExpression;
+  if (!isIdentifier(me.property)) return null;
+  if (me.property.name !== 'route') return null;
+  
+  const arg = node.arguments[0];
+  if (!arg || arg.type !== 'ObjectExpression') return null;
+  
+  let pathStr: string | null = null;
+  let methodStr: string | null = null;
+  let hasRateLimitPlugin = false;
+  
+  for (const prop of arg.properties) {
+    if (prop.type !== 'Property') continue;
+    if (isIdentifier(prop.key)) {
+      if (prop.key.name === 'path' && isStringLiteral(prop.value as TSESTree.Expression)) {
+        pathStr = String((prop.value as TSESTree.StringLiteral).value);
+      } else if (prop.key.name === 'method' && isStringLiteral(prop.value as TSESTree.Expression)) {
+        methodStr = String((prop.value as TSESTree.StringLiteral).value).toLowerCase();
+      } else if ((prop.key.name === 'config' || prop.key.name === 'options') && prop.value.type === 'ObjectExpression') {
+        for (const configProp of prop.value.properties) {
+          if (configProp.type !== 'Property') continue;
+          if (isIdentifier(configProp.key) && configProp.key.name === 'plugins' && configProp.value.type === 'ObjectExpression') {
+             for (const pluginProp of configProp.value.properties) {
+               if (pluginProp.type !== 'Property') continue;
+               let pluginName = '';
+               if (isIdentifier(pluginProp.key)) pluginName = pluginProp.key.name;
+               else if (pluginProp.key.type === 'Literal') pluginName = String(pluginProp.key.value);
+               
+               if (RATE_LIMIT_IDENTIFIERS.test(pluginName)) {
+                 hasRateLimitPlugin = true;
+               }
+             }
+          }
+        }
+      }
+    }
+  }
+  
+  if (pathStr && methodStr && HTTP_METHODS.has(methodStr) && isAuthRoute(pathStr) && !hasRateLimitPlugin) {
+    return {
+      ruleId: 'security/missing-rate-limit',
+      severity: 'warn',
+      message: `Hapi auth endpoint "${pathStr}" has no rate limiting plugin configured`,
+      file: filePath,
+      line: getLine(node),
+      column: getColumn(node),
+      snippet: extractSnippet(source, getLine(node)),
+      fix: "Add 'hapi-rate-limit' or similar to the route's options.plugins configuration",
+    };
+  }
+  
+  return null;
+}
 
 export default rule;

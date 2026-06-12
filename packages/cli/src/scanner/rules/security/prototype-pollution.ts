@@ -6,7 +6,7 @@ import { getLine, getColumn, isIdentifier, isMemberExpression } from '../../../u
 import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult } from '../../../utils/taint-tracker.js';
 import { buildParentMap } from '../../ast-walker.js';
 
-const MERGE_FUNCTIONS = new Set(['merge', 'deepMerge', 'assign', 'extend', 'defaults', 'defaultsDeep']);
+const MERGE_FUNCTIONS = new Set(['merge', 'mergeWith', 'deepMerge', 'assign', 'extend', 'defaults', 'defaultsDeep']);
 const USER_INPUT_PROPS = new Set(['params', 'body', 'query', 'headers']);
 
 function isReqBody(node: TSESTree.Node): boolean {

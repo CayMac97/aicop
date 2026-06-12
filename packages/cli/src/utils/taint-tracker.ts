@@ -71,11 +71,14 @@ export function isDynamicExpr(n: TSESTree.Expression, taintResult: TaintResult, 
   }
   if (n.type === 'CallExpression') {
     const ce = n as TSESTree.CallExpression;
-    if (isMemberExpression(ce.callee) && isIdentifier(ce.callee.property) && ce.callee.property.name === 'join') {
-      if (ce.callee.object.type === 'ArrayExpression') {
+    if (isMemberExpression(ce.callee) && isIdentifier(ce.callee.property)) {
+      if (ce.callee.property.name === 'join' && ce.callee.object.type === 'ArrayExpression') {
         return ce.callee.object.elements.some(
           (e) => e && e.type !== 'SpreadElement' && isDynamicExpr(e as TSESTree.Expression, taintResult, parentMap)
         );
+      }
+      if (isIdentifier(ce.callee.object) && ce.callee.object.name === 'Object' && ce.callee.property.name === 'fromEntries') {
+        if (ce.arguments[0]) return isDynamicExpr(ce.arguments[0] as TSESTree.Expression, taintResult, parentMap);
       }
     }
   }
@@ -127,6 +130,9 @@ export function isTaintedExpr(node: TSESTree.Node, tainted: Set<string>): boolea
         const TAINT_PRESERVING_METHODS = new Set(['trim', 'toLowerCase', 'toUpperCase', 'substring', 'slice', 'replace', 'replaceAll', 'concat', 'toString', 'join', 'split']);
         if (TAINT_PRESERVING_METHODS.has(method)) {
           return isTaintedExpr(me.object, tainted);
+        }
+        if (isIdentifier(me.object) && me.object.name === 'Object' && method === 'fromEntries') {
+          if (call.arguments[0]) return isTaintedExpr(call.arguments[0], tainted);
         }
       }
     }

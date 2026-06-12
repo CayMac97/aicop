@@ -6,7 +6,7 @@ import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral }
 import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult, isDirectUserInputExpr, getCrossFileTaints } from '../../../utils/taint-tracker.js';
 import { buildParentMap } from '../../ast-walker.js';
 
-const VM_METHODS = new Set(['runInNewContext', 'runInThisContext']);
+const VM_METHODS = new Set(['runInNewContext', 'runInThisContext', 'runInContext', 'compileFunction']);
 const MATH_EVAL_METHODS = new Set(['eval', 'evaluate']);
 const MATH_OBJ_NAMES = new Set(['mathjs', 'math', 'Math']);
 

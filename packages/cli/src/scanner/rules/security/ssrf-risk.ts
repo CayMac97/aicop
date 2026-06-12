@@ -6,7 +6,7 @@ import { getLine, getColumn, isIdentifier, isMemberExpression } from '../../../u
 import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult, getCrossFileTaints } from '../../../utils/taint-tracker.js';
 import { buildParentMap } from '../../ast-walker.js';
 
-const HTTP_CLIENTS = new Set(['fetch', 'axios', 'got', 'request', 'superagent', 'undici', 'needle']);
+const HTTP_CLIENTS = new Set(['fetch', 'axios', 'got', 'request', 'superagent', 'undici', 'needle', 'urllib']);
 const AXIOS_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'request']);
 const USER_INPUT_PROPS = new Set(['params', 'body', 'query', 'headers']);
 
@@ -33,7 +33,7 @@ function isUserControlledArg(node: TSESTree.Node, taintResult: TaintResult, pare
   return false;
 }
 
-const DIRECT_HTTP_CLIENTS = new Set(['got', 'request', 'needle', 'nodeFetch', 'superagent', 'axios']);
+const DIRECT_HTTP_CLIENTS = new Set(['got', 'request', 'needle', 'nodeFetch', 'superagent', 'axios', 'urllib']);
 
 function isDirectHttpClientCall(node: TSESTree.CallExpression): string | null {
   if (!isIdentifier(node.callee)) return null;
@@ -50,7 +50,14 @@ function isHttpClientMethodCall(node: TSESTree.CallExpression): string | null {
   if (!HTTP_CLIENTS.has(obj) && obj !== 'http' && obj !== 'https') return null;
   if (!isIdentifier(me.property)) return null;
   const method = (me.property as TSESTree.Identifier).name;
-  const isValid = obj === 'axios' ? AXIOS_METHODS.has(method) : method === 'get' || method === 'request';
+  let isValid = false;
+  if (obj === 'axios') {
+    isValid = AXIOS_METHODS.has(method);
+  } else if (obj === 'undici') {
+    isValid = method === 'request' || method === 'fetch' || method === 'stream' || method === 'pipeline';
+  } else {
+    isValid = method === 'get' || method === 'request';
+  }
   return isValid ? `${obj}.${method}` : null;
 }
 
@@ -126,6 +133,55 @@ function checkHttpCall(node: TSESTree.CallExpression, source: string, filePath: 
   };
 }
 
+function checkWebSocket(node: TSESTree.NewExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
+  if (!isIdentifier(node.callee) || (node.callee.name !== 'WebSocket' && node.callee.name !== 'ws')) return null;
+  const urlArg = node.arguments[0];
+  if (!urlArg || !isUserControlledArg(urlArg, taintResult, parentMap)) return null;
+  if (isIdentifier(urlArg)) {
+    const varName = (urlArg as TSESTree.Identifier).name;
+    if (hasUrlAllowlistValidation(node, varName, parentMap)) return null;
+  }
+  return {
+    ruleId: 'security/ssrf-risk',
+    severity: 'error',
+    message: `WebSocket created with a URL derived from user input — SSRF risk`,
+    file: filePath,
+    line: getLine(node),
+    column: getColumn(node),
+    snippet: extractSnippet(source, getLine(node)),
+    fix: 'Validate WebSocket URLs against an allowlist before establishing connections.',
+  };
+}
+
+function checkPageGoto(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
+  if (!isMemberExpression(node.callee)) return null;
+  const me = node.callee as TSESTree.MemberExpression;
+  if (!isIdentifier(me.property)) return null;
+  const methodName = (me.property as TSESTree.Identifier).name;
+  if (methodName !== 'goto' && methodName !== 'setContent') return null; // usually page.goto
+  
+  if (!isIdentifier(me.object) || (me.object.name !== 'page' && me.object.name !== 'browser')) return null;
+
+  const urlArg = node.arguments[0];
+  if (!urlArg || !isUserControlledArg(urlArg, taintResult, parentMap)) return null;
+
+  if (isIdentifier(urlArg)) {
+    const varName = (urlArg as TSESTree.Identifier).name;
+    if (hasUrlAllowlistValidation(node, varName, parentMap)) return null;
+  }
+
+  return {
+    ruleId: 'security/ssrf-risk',
+    severity: 'error',
+    message: `${me.object.name}.${methodName}() called with user-controlled input — SSRF / HTML injection risk`,
+    file: filePath,
+    line: getLine(node),
+    column: getColumn(node),
+    snippet: extractSnippet(source, getLine(node)),
+    fix: 'Validate URLs against an allowlist before navigating headless browsers to them.',
+  };
+}
+
 const rule: Rule = {
   id: 'security/ssrf-risk',
   name: 'SSRF Risk',
@@ -141,9 +197,16 @@ const rule: Rule = {
     const parentMap = buildParentMap(ast);
 
     walk(ast, {
+      NewExpression(rawNode) {
+        const finding = checkWebSocket(rawNode as TSESTree.NewExpression, source, filePath, taintResult, parentMap);
+        if (finding) findings.push(finding);
+      },
       CallExpression(rawNode) {
         const finding = checkHttpCall(rawNode as TSESTree.CallExpression, source, filePath, taintResult, parentMap);
         if (finding) findings.push(finding);
+        
+        const pageFinding = checkPageGoto(rawNode as TSESTree.CallExpression, source, filePath, taintResult, parentMap);
+        if (pageFinding) findings.push(pageFinding);
       },
     });
 

@@ -4,7 +4,7 @@ import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isStringLiteral, isCallExpression } from '../../../utils/ast-helpers.js';
 
-const SESSION_PACKAGES = new Set(['express-session', 'cookie-session']);
+const SESSION_PACKAGES = new Set(['express-session', 'cookie-session', '@fastify/secure-session', '@fastify/session', 'fastify-session', 'koa-session', 'koa-generic-session']);
 
 function getRequireArg(node: TSESTree.CallExpression): string | null {
   if (!isIdentifier(node.callee) || node.callee.name !== 'require') return null;
@@ -23,7 +23,7 @@ function findProp(obj: TSESTree.ObjectExpression, key: string): TSESTree.Propert
   return null;
 }
 
-function checkSessionOptions(node: TSESTree.CallExpression, source: string, filePath: string): Finding[] {
+function checkSessionOptions(node: TSESTree.CallExpression, source: string, filePath: string, pkgName?: string): Finding[] {
   const findings: Finding[] = [];
   const optArg = node.arguments[0];
   if (!optArg || optArg.type !== 'ObjectExpression') return findings;
@@ -58,9 +58,12 @@ function checkSessionOptions(node: TSESTree.CallExpression, source: string, file
   }
 
   const cookieProp = findProp(opts, 'cookie');
-  if (cookieProp && cookieProp.value.type === 'ObjectExpression') {
-    const cookieObj = cookieProp.value as TSESTree.ObjectExpression;
+  const hasSpread = opts.properties.some((p) => p.type === 'SpreadElement');
+  
+  const isTopLevelCookieOpts = pkgName === 'cookie-session' || pkgName === 'koa-session' || pkgName === 'koa-generic-session';
+  const cookieObj = isTopLevelCookieOpts ? opts : (cookieProp && cookieProp.value.type === 'ObjectExpression' ? cookieProp.value as TSESTree.ObjectExpression : null);
 
+  if (cookieObj) {
     const httpOnlyProp = findProp(cookieObj, 'httpOnly');
     if (httpOnlyProp && httpOnlyProp.value.type === 'Literal') {
       const val = (httpOnlyProp.value as TSESTree.Literal).value;
@@ -96,18 +99,19 @@ function checkSessionOptions(node: TSESTree.CallExpression, source: string, file
         }
       }
     } else if (!hasSpread) {
+      const lineNode = isTopLevelCookieOpts ? opts : cookieProp!;
       findings.push({
         ruleId: 'security/insecure-session',
         severity: 'warn',
         message: 'session cookie secure option missing — defaults to false (transmitted over HTTP)',
         file: filePath,
-        line: getLine(cookieProp),
-        column: getColumn(cookieProp),
-        snippet: extractSnippet(source, getLine(cookieProp)),
-        fix: 'Set secure:true in production — use: cookie: { secure: process.env.NODE_ENV === "production" }',
+        line: getLine(lineNode),
+        column: getColumn(lineNode),
+        snippet: extractSnippet(source, getLine(lineNode)),
+        fix: isTopLevelCookieOpts ? 'Set secure:true in production' : 'Set secure:true in production — use: cookie: { secure: process.env.NODE_ENV === "production" }',
       });
     }
-  } else if (!cookieProp && !hasSpread) {
+  } else if (!hasSpread) {
     findings.push({
       ruleId: 'security/insecure-session',
       severity: 'warn',
@@ -120,19 +124,20 @@ function checkSessionOptions(node: TSESTree.CallExpression, source: string, file
     });
   }
 
-  const resaveProp = findProp(opts, 'resave');
-  const hasSpread = opts.properties.some((p) => p.type === 'SpreadElement');
-  if (!resaveProp && !hasSpread) {
-    findings.push({
-      ruleId: 'security/insecure-session',
-      severity: 'warn',
-      message: 'session missing resave option — set resave:false to prevent unnecessary session saves',
-      file: filePath,
-      line: getLine(node),
-      column: getColumn(node),
-      snippet: extractSnippet(source, getLine(node)),
-      fix: 'Add resave:false and saveUninitialized:false to session options',
-    });
+  if (!isTopLevelCookieOpts) {
+    const resaveProp = findProp(opts, 'resave');
+    if (!resaveProp && !hasSpread) {
+      findings.push({
+        ruleId: 'security/insecure-session',
+        severity: 'warn',
+        message: 'session missing resave option — set resave:false to prevent unnecessary session saves',
+        file: filePath,
+        line: getLine(node),
+        column: getColumn(node),
+        snippet: extractSnippet(source, getLine(node)),
+        fix: 'Add resave:false and saveUninitialized:false to session options',
+      });
+    }
   }
 
   return findings;
@@ -149,7 +154,7 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
-    const sessionVarNames = new Set<string>();
+    const sessionVars = new Map<string, string>();
 
     walk(ast, {
       VariableDeclarator(rawNode) {
@@ -157,28 +162,50 @@ const rule: Rule = {
         if (!decl.init || !isCallExpression(decl.init)) return;
         const pkg = getRequireArg(decl.init as TSESTree.CallExpression);
         if (pkg && SESSION_PACKAGES.has(pkg) && isIdentifier(decl.id)) {
-          sessionVarNames.add((decl.id as TSESTree.Identifier).name);
+          sessionVars.set((decl.id as TSESTree.Identifier).name, pkg);
         }
       },
       ImportDeclaration(rawNode) {
         const decl = rawNode as TSESTree.ImportDeclaration;
-        if (!SESSION_PACKAGES.has(String(decl.source.value))) return;
+        const pkg = String(decl.source.value);
+        if (!SESSION_PACKAGES.has(pkg)) return;
         for (const spec of decl.specifiers) {
           if (spec.type === 'ImportDefaultSpecifier') {
-            sessionVarNames.add(spec.local.name);
+            sessionVars.set(spec.local.name, pkg);
           }
         }
       },
     });
 
-    if (sessionVarNames.size === 0) return findings;
+    if (sessionVars.size === 0) return findings;
 
     walk(ast, {
       CallExpression(rawNode) {
         const node = rawNode as TSESTree.CallExpression;
-        if (!isIdentifier(node.callee)) return;
-        if (!sessionVarNames.has((node.callee as TSESTree.Identifier).name)) return;
-        findings.push(...checkSessionOptions(node, source, filePath));
+        if (isIdentifier(node.callee) && sessionVars.has(node.callee.name)) {
+          findings.push(...checkSessionOptions(node, source, filePath, sessionVars.get(node.callee.name)));
+        } else if (
+          node.callee.type === 'MemberExpression' &&
+          isIdentifier(node.callee.property) &&
+          node.callee.property.name === 'register' &&
+          node.arguments.length >= 2
+        ) {
+          const firstArg = node.arguments[0];
+          let pkgName: string | undefined;
+          if (isIdentifier(firstArg) && sessionVars.has(firstArg.name)) {
+            pkgName = sessionVars.get(firstArg.name);
+          } else if (firstArg.type === 'CallExpression') {
+            const reqArg = getRequireArg(firstArg as TSESTree.CallExpression);
+            if (reqArg && SESSION_PACKAGES.has(reqArg)) pkgName = reqArg;
+          }
+          if (pkgName && node.arguments[1].type === 'ObjectExpression') {
+             const dummyNode = {
+               ...node,
+               arguments: [node.arguments[1]]
+             } as TSESTree.CallExpression;
+             findings.push(...checkSessionOptions(dummyNode, source, filePath, pkgName));
+          }
+        }
       },
     });
 

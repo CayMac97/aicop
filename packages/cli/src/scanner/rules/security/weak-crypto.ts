@@ -61,7 +61,7 @@ function checkCreateCipher(node: TSESTree.CallExpression, source: string, filePa
   const algArg = node.arguments[0];
   if (!algArg || !isStringLiteral(algArg as TSESTree.Expression)) return null;
   const alg = String((algArg as TSESTree.StringLiteral).value).toLowerCase();
-  if (!alg.includes('rc4') && !alg.includes('des') && !alg.includes('rc2')) return null;
+  if (!alg.includes('rc4') && !alg.includes('des') && !alg.includes('rc2') && !alg.includes('bf')) return null;
   return {
     ruleId: 'security/weak-crypto',
     severity: 'error',
@@ -130,6 +130,32 @@ function checkMd5Call(node: TSESTree.CallExpression, source: string, filePath: s
     snippet: extractSnippet(source, getLine(node)),
     fix: passwordContext ? 'Use bcrypt or argon2 for passwords' : 'Use stronger crypto primitives',
     fixCode: passwordContext ? BCRYPT_FIX_SNIPPET : HASH_FIX_CODE,
+  };
+}
+
+function checkPbkdf2(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+  if (!isMemberExpression(node.callee)) return null;
+  const me = node.callee as TSESTree.MemberExpression;
+  if (!isIdentifier(me.property)) return null;
+  const method = (me.property as TSESTree.Identifier).name;
+  if (method !== 'pbkdf2' && method !== 'pbkdf2Sync') return null;
+
+  const iterationsArg = node.arguments[2]; // pbkdf2(password, salt, iterations, keylen, digest)
+  if (!iterationsArg || iterationsArg.type !== 'Literal') return null;
+  
+  const iterations = Number((iterationsArg as TSESTree.Literal).value);
+  if (isNaN(iterations) || iterations >= 100000) return null;
+
+  return {
+    ruleId: 'security/weak-crypto',
+    severity: 'error',
+    message: `pbkdf2 iteration count is too low (${iterations}) — use at least 100,000`,
+    file: filePath,
+    line: getLine(node),
+    column: getColumn(node),
+    snippet: extractSnippet(source, getLine(node)),
+    fix: 'Increase pbkdf2 iterations to at least 100,000 to defend against brute-force attacks',
+    fixCode: `crypto.pbkdf2(password, salt, 100000, 64, 'sha512', (err, derivedKey) => { ... })`,
   };
 }
 
@@ -223,14 +249,21 @@ const rule: Rule = {
     walk(ast, {
       CallExpression(rawNode) {
         const node = rawNode as TSESTree.CallExpression;
-        const hashF = checkCreateHash(node, source, filePath);
-        if (hashF) { findings.push(hashF); return; }
-        const cipherF = checkCreateCipher(node, source, filePath);
-        if (cipherF) { findings.push(cipherF); return; }
-        const md5F = checkMd5Call(node, source, filePath);
-        if (md5F) { findings.push(md5F); return; }
-        const reqF = checkWeakRequire(node, source, filePath);
-        if (reqF) { findings.push(reqF); return; }
+        const f1 = checkCreateHash(node, source, filePath);
+        if (f1) findings.push(f1);
+
+        const f2 = checkCreateCipher(node, source, filePath);
+        if (f2) findings.push(f2);
+
+        const f3 = checkWeakRequire(node, source, filePath);
+        if (f3) findings.push(f3);
+
+        const f4 = checkMd5Call(node, source, filePath);
+        if (f4) findings.push(f4);
+
+        const f5 = checkPbkdf2(node, source, filePath);
+        if (f5) findings.push(f5);
+
         const bcryptF = checkBcryptSaltRounds(node, source, filePath);
         if (bcryptF) findings.push(bcryptF);
       },

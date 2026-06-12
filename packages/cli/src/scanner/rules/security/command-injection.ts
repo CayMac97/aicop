@@ -6,7 +6,7 @@ import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral }
 import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult, getCrossFileTaints } from '../../../utils/taint-tracker.js';
 import { buildParentMap } from '../../ast-walker.js';
 
-const EXEC_FUNCTIONS = new Set(['exec', 'execSync', 'spawn', 'spawnSync', 'execFile', 'execFileSync']);
+const EXEC_FUNCTIONS = new Set(['exec', 'spawn', 'execSync', 'spawnSync', 'execFile', 'execFileSync', 'sync']);
 const USER_INPUT_PROPS = new Set(['body', 'query', 'params', 'headers']);
 
 function isReqPropUserInput(node: TSESTree.MemberExpression): boolean {
@@ -147,7 +147,8 @@ function hasChildProcessImport(ast: ParsedAST): boolean {
   let uses = false;
   walk(ast, {
     ImportDeclaration(node) {
-      if ((node as TSESTree.ImportDeclaration).source.value === 'child_process' || (node as TSESTree.ImportDeclaration).source.value === 'node:child_process') {
+      const src = String((node as TSESTree.ImportDeclaration).source.value);
+      if (src === 'child_process' || src === 'node:child_process' || src === 'cross-spawn' || src === 'shelljs') {
         uses = true;
       }
     },
@@ -155,7 +156,7 @@ function hasChildProcessImport(ast: ParsedAST): boolean {
       const call = node as TSESTree.CallExpression;
       if (isIdentifier(call.callee) && call.callee.name === 'require' && call.arguments[0] && isStringLiteral(call.arguments[0])) {
         const val = (call.arguments[0] as TSESTree.StringLiteral).value;
-        if (val === 'child_process' || val === 'node:child_process') uses = true;
+        if (val === 'child_process' || val === 'node:child_process' || val === 'cross-spawn' || val === 'shelljs') uses = true;
       }
     }
   });

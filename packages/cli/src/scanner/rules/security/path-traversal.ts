@@ -11,6 +11,8 @@ const FS_DANGER_METHODS = new Set([
   'appendFile', 'appendFileSync', 'unlink', 'unlinkSync',
   'rmdir', 'rmdirSync', 'stat', 'statSync', 'access', 'accessSync',
   'open', 'openSync', 'createReadStream', 'createWriteStream',
+  'copyFile', 'copyFileSync', 'rename', 'renameSync',
+  'mkdir', 'mkdirSync', 'readdir', 'readdirSync'
 ]);
 const USER_INPUT_PROPS = new Set(['params', 'body', 'query', 'headers', 'cookies']);
 
@@ -114,7 +116,47 @@ function checkFsCall(node: TSESTree.CallExpression, source: string, filePath: st
   };
 }
 
+function checkSendFile(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
+  if (!isMemberExpression(node.callee)) return null;
+  const me = node.callee as TSESTree.MemberExpression;
+  if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
+  const objName = (me.object as TSESTree.Identifier).name;
+  if (objName !== 'res' && objName !== 'reply') return null;
+  const method = (me.property as TSESTree.Identifier).name;
+  if (method !== 'sendFile' && method !== 'download') return null;
 
+  const arg = node.arguments[0];
+  if (!arg || !isUserInputExpr(arg, taintResult, parentMap)) return null;
+
+  let current: TSESTree.Node | undefined = node;
+  let hasGuard = false;
+  while (current) {
+    if (
+      current.type === 'IfStatement' ||
+      current.type === 'ConditionalExpression' ||
+      current.type === 'SwitchStatement' ||
+      current.type === 'LogicalExpression'
+    ) {
+      // In a real implementation we'd check if the guard is sufficient
+      hasGuard = true;
+      break;
+    }
+    current = parentMap.get(current);
+  }
+
+  if (hasGuard) return null;
+
+  return {
+    ruleId: 'security/path-traversal',
+    severity: 'error',
+    message: `res.${method}() with user-controlled path — traversal / arbitrary file read risk`,
+    file: filePath,
+    line: getLine(node),
+    column: getColumn(node),
+    snippet: extractSnippet(source, getLine(node)),
+    fix: 'Validate paths before sending files, or use the `root` option in res.sendFile() to restrict directory access.',
+  };
+}
 
 function checkPathJoin(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
@@ -218,6 +260,10 @@ const rule: Rule = {
         const node = rawNode as TSESTree.CallExpression;
         const fsF = checkFsCall(node, source, filePath, taintResult, parentMap);
         if (fsF) { findings.push(fsF); return; }
+        
+        const sendF = checkSendFile(node, source, filePath, taintResult, parentMap);
+        if (sendF) { findings.push(sendF); return; }
+
         const pathF = checkPathJoin(node, source, filePath, taintResult, parentMap);
         if (pathF) {
           // Verify if it's used immediately in a safe way without guards

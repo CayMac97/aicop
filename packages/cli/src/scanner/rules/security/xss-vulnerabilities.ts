@@ -174,20 +174,49 @@ function getHtmlPropValue(node: TSESTree.JSXAttribute): TSESTree.Node | null {
   return null;
 }
 
-function checkDangerouslySetInnerHTML(node: TSESTree.JSXAttribute, source: string, filePath: string, sanitizedVars: Set<string>): Finding | null {
+function checkDangerouslySetInnerHTML(node: TSESTree.JSXAttribute, source: string, filePath: string, sanitizedVars: Set<string>, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   if (node.name.type !== 'JSXIdentifier') return null;
   if ((node.name as TSESTree.JSXIdentifier).name !== 'dangerouslySetInnerHTML') return null;
   const htmlVal = getHtmlPropValue(node);
   if (htmlVal && isSanitizedNode(htmlVal, sanitizedVars)) return null;
+  if (htmlVal && isStaticString(htmlVal as TSESTree.Expression)) return null;
+  if (!htmlVal || !isUserInput(htmlVal, taintResult, parentMap)) return null;
   return {
     ruleId: 'security/xss-vulnerabilities',
     severity: 'error',
-    message: 'dangerouslySetInnerHTML used without explicit sanitization check',
+    message: 'dangerouslySetInnerHTML used with user-controlled input — XSS risk',
     file: filePath,
     line: getLine(node),
     column: getColumn(node),
     snippet: extractSnippet(source, getLine(node)),
     fix: 'Wrap with DOMPurify.sanitize(): dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(html) }}',
+  };
+}
+
+function checkVueVHtml(node: TSESTree.JSXAttribute, source: string, filePath: string, sanitizedVars: Set<string>, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
+  if (node.name.type !== 'JSXIdentifier') return null;
+  const name = (node.name as TSESTree.JSXIdentifier).name;
+  if (name !== 'v-html' && name !== 'domPropsInnerHTML') return null;
+  
+  if (!node.value) return null;
+  let valNode: TSESTree.Node = node.value;
+  if (valNode.type === 'JSXExpressionContainer') {
+    valNode = (valNode as TSESTree.JSXExpressionContainer).expression;
+  }
+  
+  if (isSanitizedNode(valNode, sanitizedVars)) return null;
+  if (isStaticString(valNode as TSESTree.Expression)) return null;
+  if (!isUserInput(valNode, taintResult, parentMap)) return null;
+  
+  return {
+    ruleId: 'security/xss-vulnerabilities',
+    severity: 'error',
+    message: 'Vue v-html or domPropsInnerHTML used with user-controlled input — XSS risk',
+    file: filePath,
+    line: getLine(node),
+    column: getColumn(node),
+    snippet: extractSnippet(source, getLine(node)),
+    fix: 'Use DOMPurify to sanitize the HTML before rendering: v-html="DOMPurify.sanitize(userInput)"',
   };
 }
 
@@ -253,6 +282,30 @@ function checkResSend(node: TSESTree.CallExpression, source: string, filePath: s
   };
 }
 
+function checkJQueryHtmlAndAppend(node: TSESTree.CallExpression, source: string, filePath: string, sanitizedVars: Set<string>, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
+  if (!isMemberExpression(node.callee)) return null;
+  const me = node.callee as TSESTree.MemberExpression;
+  if (!isIdentifier(me.property)) return null;
+  const method = me.property.name;
+  if (method !== 'html' && method !== 'append' && method !== 'prepend' && method !== 'wrap' && method !== 'replaceWith') return null;
+  
+  const arg = node.arguments[0];
+  if (!arg) return null;
+  if (isSanitizedNode(arg, sanitizedVars)) return null;
+  if (!isUserInput(arg, taintResult, parentMap)) return null;
+
+  return {
+    ruleId: 'security/xss-vulnerabilities',
+    severity: 'error',
+    message: `jQuery/Cheerio .${method}() with user-controlled input — XSS risk`,
+    file: filePath,
+    line: getLine(node),
+    column: getColumn(node),
+    snippet: extractSnippet(source, getLine(node)),
+    fix: `Sanitize with DOMPurify.sanitize() before passing to .${method}() or use .text() instead`,
+  };
+}
+
 const rule: Rule = {
   id: 'security/xss-vulnerabilities',
   name: 'XSS Vulnerabilities',
@@ -290,6 +343,9 @@ const rule: Rule = {
         const adjHtml = checkInsertAdjacentHTML(node, source, filePath, taintResult, parentMap);
         if (adjHtml) { findings.push(adjHtml); return; }
 
+        const jqueryXss = checkJQueryHtmlAndAppend(node, source, filePath, sanitizedVars, taintResult, parentMap);
+        if (jqueryXss) { findings.push(jqueryXss); return; }
+
         const resSend = checkResSend(node, source, filePath, taintResult, parentMap);
         if (resSend) {
           findings.push(resSend);
@@ -317,8 +373,11 @@ const rule: Rule = {
         }
       },
       JSXAttribute(rawNode) {
-        const finding = checkDangerouslySetInnerHTML(rawNode as TSESTree.JSXAttribute, source, filePath, sanitizedVars);
-        if (finding) findings.push(finding);
+        const reactFinding = checkDangerouslySetInnerHTML(rawNode as TSESTree.JSXAttribute, source, filePath, sanitizedVars, taintResult, parentMap);
+        if (reactFinding) findings.push(reactFinding);
+        
+        const vueFinding = checkVueVHtml(rawNode as TSESTree.JSXAttribute, source, filePath, sanitizedVars, taintResult, parentMap);
+        if (vueFinding) findings.push(vueFinding);
       },
     });
 
