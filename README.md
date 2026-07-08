@@ -1,4 +1,5 @@
-<img width="570" height="633" alt="image" src="https://github.com/user-attachments/assets/51c4cb3b-1c16-4db6-88a5-57580b626b85" />
+<img width="639" height="314" alt="image" src="https://github.com/user-attachments/assets/d2e0448f-62ca-43dc-a3f5-988625b6bfac" />
+
 # 🛡 AICop
 
 **Your AI wrote bugs. AICop finds them.
