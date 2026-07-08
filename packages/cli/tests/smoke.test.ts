@@ -206,13 +206,13 @@ describe('aicop-ignore inline suppression', () => {
   const IGNORE_WRONG = join(FIXTURES, 'should-flag', 'ignore-wrong-rule.ts');
 
   it('suppresses findings when // aicop-ignore precedes the line', async () => {
-    const result = await scan(makeScanOpts(IGNORE_CLEAN, { severity: 'info', ruleId: 'security/hardcoded-secrets' }));
+    const result = await scan(makeScanOpts(IGNORE_CLEAN, { severity: 'info', ruleId: 'tech-debt/console-log' }));
     const findings = result.files.flatMap((f) => f.findings);
-    expect(findings.filter((f) => f.ruleId === 'security/hardcoded-secrets')).toHaveLength(0);
+    expect(findings.filter((f) => f.ruleId === 'tech-debt/console-log')).toHaveLength(0);
   });
 
   it('suppresses when // aicop-ignore rule-id matches', async () => {
-    const result = await scan(makeScanOpts(IGNORE_CLEAN, { severity: 'info' }));
+    const result = await scan(makeScanOpts(IGNORE_CLEAN, { severity: 'info', ruleId: 'security/hardcoded-secrets' }));
     const findings = result.files.flatMap((f) => f.findings);
     expect(findings.filter((f) => f.ruleId === 'security/hardcoded-secrets')).toHaveLength(0);
   });

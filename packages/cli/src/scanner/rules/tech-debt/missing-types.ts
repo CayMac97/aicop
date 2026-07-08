@@ -41,28 +41,8 @@ function checkFunctionParams(
       });
     }
   }
-  return findings;
-}
 
-function checkTsIgnore(source: string, filePath: string): Finding[] {
-  const findings: Finding[] = [];
-  const lines = source.split('\n');
-  lines.forEach((line, idx) => {
-    const trimmed = line.trim();
-    if (trimmed.startsWith('// @ts-ignore') || trimmed.startsWith('// @ts-expect-error')) {
-      const directive = trimmed.startsWith('// @ts-ignore') ? '@ts-ignore' : '@ts-expect-error';
-      findings.push({
-        ruleId: 'tech-debt/missing-types',
-        severity: 'warn',
-        message: `${directive} directive suppresses type errors — fix the underlying issue instead`,
-        file: filePath,
-        line: idx + 1,
-        column: 0,
-        snippet: trimmed,
-        fix: 'Fix the type error properly rather than suppressing it. Use type assertions or proper interfaces.',
-      });
-    }
-  });
+
   return findings;
 }
 

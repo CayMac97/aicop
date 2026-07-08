@@ -1,6 +1,7 @@
 import { glob } from 'glob';
 import path from 'node:path';
 import { statSync, openSync, readSync, closeSync } from 'node:fs';
+import picomatch from 'picomatch';
 import { VibescanConfig } from './rules/types.js';
 import { logger } from '../utils/logger.js';
 
@@ -179,7 +180,7 @@ function withinSizeLimit(filePath: string): boolean {
     }
     return true;
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -195,23 +196,8 @@ export interface FileCollectorOptions {
 function matchesExcludePattern(filePath: string, pattern: string): boolean {
   const normalized = filePath.replace(/\\/g, '/');
   const p = pattern.replace(/\\/g, '/');
-  // **/dir/** → check for /dir/ segment
-  const segMatch = p.match(/^\*\*\/([^*]+)\/\*\*$/);
-  if (segMatch) return normalized.includes(`/${segMatch[1]}/`);
-  // **/*.ext or **/*.{ext1,ext2}
-  const extMatch = p.match(/^\*\*\/\*\.(.+)$/);
-  if (extMatch) {
-    const ext = extMatch[1];
-    if (ext.startsWith('{') && ext.endsWith('}')) {
-      const exts = ext.slice(1, -1).split(',');
-      return exts.some((e) => normalized.endsWith(`.${e.trim()}`));
-    }
-    return normalized.endsWith(`.${ext}`);
-  }
-  // **/dir/ → check segment
-  const dirMatch = p.match(/^\*\*\/([^*]+)\/$/);
-  if (dirMatch) return normalized.includes(`/${dirMatch[1]}/`);
-  return false;
+  const isMatch = picomatch(p, { dot: true, matchBase: true });
+  return isMatch(normalized);
 }
 
 function resolveScanBase(scanPath: string): { base: string; singleFile: string | null } {
@@ -257,7 +243,12 @@ export async function collectFiles(options: FileCollectorOptions): Promise<strin
 
     const results: string[] = [];
     for (const pattern of includePatterns) {
-      const matches = await glob(pattern, {
+      // If the pattern has no glob magic characters, it might be an exact path (like from git diff).
+      // We escape it so it's not treated as a glob pattern if it contains [id] or similar.
+      const isLiteral = !pattern.match(/[*?{}(|!+@]/);
+      const searchPattern = isLiteral ? pattern.replace(/([*?[\]{}()|!+@])/g, '\\$1') : pattern;
+
+      const matches = await glob(searchPattern, {
         cwd: normalizedBase,
         ignore: normalizedExcludes,
         absolute: true,

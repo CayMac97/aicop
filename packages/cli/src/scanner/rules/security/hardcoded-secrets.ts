@@ -2,7 +2,7 @@ import { TSESTree } from '@typescript-eslint/typescript-estree';
 import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet, isTestFile } from '../../../utils/file-utils.js';
-import { isStringLiteral, isLiteral, getLine, getColumn, isIdentifier, isProperty, isMemberExpression } from '../../../utils/ast-helpers.js';
+import { isStringLiteral, isLiteral, getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
 
 function isDocumentationString(value: string): boolean {
   const up = value.toUpperCase();
@@ -78,7 +78,6 @@ function checkLiteralForSecrets(node: TSESTree.Literal, source: string, filePath
 const ERROR_MESSAGE_WORDS = /\b(invalid|incorrect|wrong|failed|error|denied|unauthorized|forbidden|not found|missing|required|expired|bad|no |please|must|cannot|can't|don't|doesn't|enter|provide)\b/i;
 
 function looksLikeNaturalLanguage(value: string): boolean {
-  if (value.split(' ').length >= 3) return true;
   if (value.split(' ').length >= 2 && ERROR_MESSAGE_WORDS.test(value)) return true;
   return false;
 }

@@ -55,11 +55,11 @@ runs:
     - name: Run AICop scan
       shell: bash
       run: |
-        ARGS="$INPUT_PATH --severity $INPUT_SEVERITY --format $INPUT_FORMAT --ci"
+        ARGS=("$INPUT_PATH" --severity "$INPUT_SEVERITY" --format "$INPUT_FORMAT" --ci)
         if [ -n "$INPUT_OUTPUT" ]; then
-          ARGS="$ARGS --output $INPUT_OUTPUT"
+          ARGS+=(--output "$INPUT_OUTPUT")
         fi
-        aicop scan $ARGS
+        aicop scan "${ARGS[@]}"
       env:
         INPUT_PATH: ${{ inputs.path }}
         INPUT_SEVERITY: ${{ inputs.severity }}

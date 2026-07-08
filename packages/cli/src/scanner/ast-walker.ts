@@ -57,3 +57,40 @@ export function buildParentMap(root: TSESTree.Node | TSESTree.Program): Map<TSES
   });
   return parentMap;
 }
+
+export type AsyncNodeHandler = (node: TSESTree.Node, parent: TSESTree.Node | null) => Promise<void>;
+
+export interface AsyncWalkVisitor {
+  enter?: AsyncNodeHandler;
+  exit?: AsyncNodeHandler;
+  [nodeType: string]: AsyncNodeHandler | undefined;
+}
+
+export async function asyncWalk(root: TSESTree.Node | TSESTree.Program, visitor: AsyncWalkVisitor, parent: TSESTree.Node | null = null): Promise<void> {
+  if (visitor.enter) {
+    await visitor.enter(root as TSESTree.Node, parent);
+  }
+  const typeHandler = visitor[root.type];
+  if (typeHandler) {
+    await typeHandler(root as TSESTree.Node, parent);
+  }
+
+  const nodeRecord = root as unknown as Record<string, unknown>;
+  for (const key of Object.keys(nodeRecord)) {
+    if (SKIP_KEYS.has(key)) continue;
+    const value = nodeRecord[key];
+    if (Array.isArray(value)) {
+      for (const child of value) {
+        if (child !== null && typeof child === 'object' && 'type' in child) {
+          await asyncWalk(child as TSESTree.Node, visitor, root as TSESTree.Node);
+        }
+      }
+    } else if (value !== null && typeof value === 'object' && 'type' in value) {
+      await asyncWalk(value as TSESTree.Node, visitor, root as TSESTree.Node);
+    }
+  }
+
+  if (visitor.exit) {
+    await visitor.exit(root as TSESTree.Node, parent);
+  }
+}

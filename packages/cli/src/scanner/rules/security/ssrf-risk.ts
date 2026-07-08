@@ -2,7 +2,7 @@ import { TSESTree } from '@typescript-eslint/typescript-estree';
 import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
-import { getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
+import { getLine, getColumn, isIdentifier, isMemberExpression, unwrapNode } from '../../../utils/ast-helpers.js';
 import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult, getCrossFileTaints } from '../../../utils/taint-tracker.js';
 import { buildParentMap } from '../../ast-walker.js';
 
@@ -19,6 +19,12 @@ function isUserControlledArg(node: TSESTree.Node, taintResult: TaintResult, pare
   if (node.type === 'BinaryExpression') {
     const be = node as TSESTree.BinaryExpression;
     return isUserControlledArg(be.left, taintResult, parentMap) || isUserControlledArg(be.right, taintResult, parentMap);
+  }
+  if (node.type === 'NewExpression') {
+    const ne = node as TSESTree.NewExpression;
+    if (isIdentifier(ne.callee) && (ne.callee.name === 'URL' || ne.callee.name === 'Request')) {
+      return ne.arguments.some(arg => isUserControlledArg(arg, taintResult, parentMap));
+    }
   }
   if (!isMemberExpression(node)) return false;
   const me = node as TSESTree.MemberExpression;
@@ -71,28 +77,35 @@ function hasUrlAllowlistValidation(node: TSESTree.Node, varName: string, parentM
       current.type === 'SwitchStatement' ||
       current.type === 'LogicalExpression'
     ) {
-      walk(current, {
-        NewExpression(rawNode) {
-          const nNode = rawNode as TSESTree.NewExpression;
-          if (isIdentifier(nNode.callee) && nNode.callee.name === 'URL') {
-            if (nNode.arguments[0] && isIdentifier(nNode.arguments[0]) && nNode.arguments[0].name === varName) {
-              hasGuard = true;
+      let conditionNode: TSESTree.Node | undefined;
+      if (current.type === 'IfStatement') conditionNode = current.test;
+      else if (current.type === 'ConditionalExpression') conditionNode = current.test;
+      else if (current.type === 'LogicalExpression') conditionNode = current.left;
+      
+      if (conditionNode) {
+        walk(conditionNode, {
+          NewExpression(rawNode) {
+            const nNode = rawNode as TSESTree.NewExpression;
+            if (isIdentifier(nNode.callee) && nNode.callee.name === 'URL') {
+              if (nNode.arguments[0] && isIdentifier(nNode.arguments[0]) && nNode.arguments[0].name === varName) {
+                hasGuard = true;
+              }
             }
-          }
-        },
-        CallExpression(rawNode) {
-          const cNode = rawNode as TSESTree.CallExpression;
-          if (isMemberExpression(cNode.callee)) {
-            const prop = cNode.callee.property;
-            if (isIdentifier(prop)) {
-              if (prop.name === 'test' || prop.name === 'includes' || prop.name === 'has') hasGuard = true;
-              if (prop.name === 'startsWith') {
-                if (isIdentifier(cNode.callee.object) && cNode.callee.object.name === varName) hasGuard = true;
+          },
+          CallExpression(rawNode) {
+            const cNode = rawNode as TSESTree.CallExpression;
+            if (isMemberExpression(cNode.callee)) {
+              const prop = cNode.callee.property;
+              if (isIdentifier(prop)) {
+                if (prop.name === 'test' || prop.name === 'includes' || prop.name === 'has') hasGuard = true;
+                if (prop.name === 'startsWith') {
+                  if (isIdentifier(cNode.callee.object) && cNode.callee.object.name === varName) hasGuard = true;
+                }
               }
             }
           }
-        }
-      });
+        });
+      }
       if (hasGuard) break;
     }
     current = parentMap.get(current);
@@ -115,11 +128,6 @@ function checkHttpCall(node: TSESTree.CallExpression, source: string, filePath: 
   if (isIdentifier(urlArg)) {
     const varName = (urlArg as TSESTree.Identifier).name;
     if (hasUrlAllowlistValidation(node, varName, parentMap)) return null;
-  } else if (urlArg.type === 'NewExpression') {
-    const newExpr = urlArg as TSESTree.NewExpression;
-    if (isIdentifier(newExpr.callee) && newExpr.callee.name === 'URL') {
-      return null;
-    }
   }
   return {
     ruleId: 'security/ssrf-risk',
@@ -198,14 +206,14 @@ const rule: Rule = {
 
     walk(ast, {
       NewExpression(rawNode) {
-        const finding = checkWebSocket(rawNode as TSESTree.NewExpression, source, filePath, taintResult, parentMap);
+        const finding = checkWebSocket(unwrapNode(rawNode) as TSESTree.NewExpression, source, filePath, taintResult, parentMap);
         if (finding) findings.push(finding);
       },
       CallExpression(rawNode) {
-        const finding = checkHttpCall(rawNode as TSESTree.CallExpression, source, filePath, taintResult, parentMap);
+        const finding = checkHttpCall(unwrapNode(rawNode) as TSESTree.CallExpression, source, filePath, taintResult, parentMap);
         if (finding) findings.push(finding);
         
-        const pageFinding = checkPageGoto(rawNode as TSESTree.CallExpression, source, filePath, taintResult, parentMap);
+        const pageFinding = checkPageGoto(unwrapNode(rawNode) as TSESTree.CallExpression, source, filePath, taintResult, parentMap);
         if (pageFinding) findings.push(pageFinding);
       },
     });
@@ -217,11 +225,12 @@ const rule: Rule = {
       const extParentMap = buildParentMap(crossCall.externalNode);
       walk(crossCall.externalNode, {
         CallExpression(rawNode) {
-          const node = rawNode as TSESTree.CallExpression;
+          const node = unwrapNode(rawNode) as TSESTree.CallExpression;
+          if (node.type !== 'CallExpression') return;
           const dedupeKey = `${crossCall.externalFilePath}:${getLine(node)}`;
           if (reportedExternalLocations.has(dedupeKey)) return;
           
-          const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map() };
+          const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map(), sanitizedExpressions: new Set<string>() };
           const finding = checkHttpCall(node, source, crossCall.externalFilePath, crossTaintResult, extParentMap);
           if (finding) {
             reportedExternalLocations.add(dedupeKey);

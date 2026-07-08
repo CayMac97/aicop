@@ -3,10 +3,12 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isStringLiteral, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
-import { buildContextualTaintMap, buildParentMap, isDynamicExpr } from '../../../utils/taint-tracker.js';
+import { buildContextualTaintMap, buildParentMap, isDynamicExpr, TaintResult } from '../../../utils/taint-tracker.js';
 
-const NESTED_QUANTIFIER = /\([^)]*[+*?][^)]*\)[+*]/;
-const OVERLAPPING_ALTERNATION = /\(([^|)]+\|[^)]+)\)[+*]/;
+// Simplistic check for catastrophic backtracking patterns
+// This is not a full ReDoS analyzer, just catches the most obvious nested quantifiers like (a+)+
+const NESTED_QUANTIFIER = /(?:\([^)]+(?:\+|\*)\)[^)]*)+(?:\+|\*)/;
+const BAD_PATTERN = /([a-zA-Z0-9_-]+)\1+(?:\+|\*)/; // simple repetition `a+a+`
 
 type RegexLiteral = TSESTree.Literal & {
   regex?: {
@@ -18,9 +20,6 @@ type RegexLiteral = TSESTree.Literal & {
 function analyzeRegexPattern(pattern: string): string | null {
   if (NESTED_QUANTIFIER.test(pattern)) {
     return 'Nested quantifiers detected — catastrophic backtracking possible (e.g., (a+)+)';
-  }
-  if (OVERLAPPING_ALTERNATION.test(pattern)) {
-    return 'Overlapping alternation with quantifier — ReDoS risk (e.g., (a|aa)+)';
   }
   return null;
 }
@@ -109,7 +108,23 @@ function hasLengthCheck(node: TSESTree.Node, parentMap: Map<TSESTree.Node, TSEST
       current.type === 'LogicalExpression' ||
       current.type === 'SwitchStatement'
     ) {
-      return true;
+      let conditionNode: TSESTree.Node | undefined;
+      if (current.type === 'IfStatement') conditionNode = current.test;
+      else if (current.type === 'ConditionalExpression') conditionNode = current.test;
+      else if (current.type === 'LogicalExpression') conditionNode = current.left;
+      
+      let hasLengthGuard = false;
+      if (conditionNode) {
+        walk(conditionNode, {
+          MemberExpression(rawNode) {
+            const me = rawNode as TSESTree.MemberExpression;
+            if (isIdentifier(me.property) && me.property.name === 'length') {
+              hasLengthGuard = true;
+            }
+          }
+        });
+      }
+      if (hasLengthGuard) return true;
     }
     current = parentMap.get(current);
   }

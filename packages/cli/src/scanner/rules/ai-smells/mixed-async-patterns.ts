@@ -57,14 +57,22 @@ function analyzeFunctionAsync(funcNode: TSESTree.FunctionDeclaration | TSESTree.
       const me = node.callee as TSESTree.MemberExpression;
       if (!isIdentifier(me.property)) return;
       const methodName = (me.property as TSESTree.Identifier).name;
-      // Fire-and-forget: somePromise.catch/then(fn) as standalone statement is intentional
-      if ((methodName === 'then' || methodName === 'catch') && parent?.type !== 'ExpressionStatement') {
+      // Fire-and-forget: somePromise.then(fn) as standalone statement is intentional
+      if (methodName === 'then' && parent?.type !== 'ExpressionStatement') {
         info.hasThenCatch = true;
       }
     },
   });
 
   return info;
+}
+
+function isSimpleReturn(funcNode: TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression): boolean {
+  const body = funcNode.body;
+  if (!body) return false;
+  if (body.type !== 'BlockStatement') return true;
+  const stmts = (body as TSESTree.BlockStatement).body.filter((s) => s.type !== 'EmptyStatement');
+  return stmts.length === 1 && stmts[0].type === 'ReturnStatement';
 }
 
 function returnsOnlyCallExpression(funcNode: TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression): boolean {
@@ -149,6 +157,7 @@ function checkAsyncNoAwait(
   const funcNode = info.node as TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression;
   if (funcNode.generator) return null;
   if (returnsOnlyCallExpression(funcNode)) return null;
+  if (isSimpleReturn(funcNode)) return null;
   if (isEmptyOrStubBody(funcNode)) return null;
   if (returnsPromiseOrObservable(funcNode)) return null;
   if (returnsNewPromise(funcNode)) return null;

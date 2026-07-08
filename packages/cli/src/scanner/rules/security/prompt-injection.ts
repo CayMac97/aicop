@@ -108,11 +108,6 @@ function buildParentMap(ast: ParsedAST): Map<TSESTree.Node, TSESTree.Node> {
   return map;
 }
 
-function isSanitizedContext(node: TSESTree.Node, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
-  // Removing upward traversal. A call to an LLM is NOT safe just because its output is sanitized.
-  // Input sanitization is handled by removing the sanitized variables from taintResult.
-  return false;
-}
 
 const rule: Rule = {
   id: 'security/prompt-injection',
@@ -153,8 +148,6 @@ const rule: Rule = {
         if (!isAiMethodCall(node)) return;
         
         // Ensure not in try/catch or wrapper
-        if (isSanitizedContext(node, parentMap)) return;
-        
         let isVuln = false;
         for (const arg of node.arguments) {
           if (arg.type === 'ObjectExpression' && containsTaintedTargetProp(arg, taintResult, parentMap)) {
@@ -192,14 +185,12 @@ const rule: Rule = {
           const node = rawNode as TSESTree.CallExpression;
           if (!isAiMethodCall(node)) return;
           
-          if (isSanitizedContext(node, extParentMap)) return;
-
           const dedupeKey = `${crossCall.externalFilePath}:${getLine(node)}`;
           if (reportedExternalLocations.has(dedupeKey)) return;
           
           let isVuln = false;
           for (const arg of node.arguments) {
-            const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map() };
+            const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map(), sanitizedExpressions: new Set<string>() };
             if (arg.type === 'ObjectExpression' && containsTaintedTargetProp(arg, crossTaintResult, extParentMap)) {
               isVuln = true;
             } else if (isTainted(arg, crossTaintResult, extParentMap)) {

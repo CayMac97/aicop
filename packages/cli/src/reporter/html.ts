@@ -2,12 +2,8 @@ import { ScanResult, FileScanResult, Finding, Severity } from '../scanner/rules/
 import { getScoreLabel, getScoreEmoji } from '../scanner/rules/ai-smells/ai-confidence-scorer.js';
 
 function escapeHtml(str: string | null | undefined): string {
-  return (str ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
+  const map: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+  return (str ?? '').replace(/[&<>"']/g, m => map[m]);
 }
 
 const SEVERITY_COLORS: Record<Severity, string> = {
@@ -40,7 +36,7 @@ function renderFindingCard(finding: Finding): string {
 }
 
 function renderFileSection(file: FileScanResult): string {
-  if (file.findings.length === 0) return '';
+  if (file.findings.length === 0 && !file.parseError) return '';
   const scoreEmoji = getScoreEmoji(file.aiScore);
   const scoreLabel = getScoreLabel(file.aiScore);
   const errorCount = file.findings.filter((f) => f.severity === 'error').length;
@@ -54,11 +50,13 @@ function renderFileSection(file: FileScanResult): string {
           <span class="counts">
             ${errorCount > 0 ? `<span style="color:#ef4444">${errorCount} errors</span>` : ''}
             ${warnCount > 0 ? `<span style="color:#f59e0b">${warnCount} warnings</span>` : ''}
+            ${file.aiScore < 100 ? `<span class="score-pill score-${file.aiScore}">AI Score: ${file.aiScore}/100</span>` : ''}
           </span>
         </div>
       </div>
+      ${file.parseError ? `<div class="finding" style="border-left: 3px solid #f59e0b; background: rgba(245,158,11,0.1)"><div class="message"><strong>Parse Error:</strong> ${escapeHtml(file.parseError)}</div></div>` : ''}
       <div class="findings-list">
-        ${file.findings.map(renderFindingCard).join('')}
+        ${file.findings.map(renderFindingCard).join('\n')}
       </div>
     </section>`;
 }

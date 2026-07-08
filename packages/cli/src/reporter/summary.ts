@@ -1,46 +1,10 @@
 import chalk from 'chalk';
 import boxen from 'boxen';
-import fs from 'fs';
 import path from 'path';
 import { ScanResult } from '../scanner/rules/types.js';
 
 
-const BASELINE_FILE = '.aicop-baseline.json';
-
-export interface BaselineData {
-  aiScore: number;
-  errorCount: number;
-  warnCount: number;
-  filesScanned: number;
-  date: string;
-}
-
-export function readBaseline(cwd: string): BaselineData | null {
-  try {
-    const raw = fs.readFileSync(path.join(cwd, BASELINE_FILE), 'utf-8');
-    return JSON.parse(raw) as BaselineData;
-  } catch {
-    return null;
-  }
-}
-
-export function writeBaseline(cwd: string, result: ScanResult): void {
-  const data: BaselineData = {
-    aiScore: result.aiScore,
-    errorCount: result.errorCount,
-    warnCount: result.warnCount,
-    filesScanned: result.filesScanned,
-    date: new Date().toISOString().slice(0, 10),
-  };
-  fs.writeFileSync(path.join(cwd, BASELINE_FILE), JSON.stringify(data, null, 2));
-}
-
-function formatScoreDelta(current: number, baseline: number): string {
-  const delta = current - baseline;
-  if (delta === 0) return chalk.dim('  (no change from baseline)');
-  if (delta < 0) return chalk.green(`  ↓ ${Math.abs(delta)} pts better than baseline (was ${baseline})`);
-  return chalk.red(`  ↑ ${delta} pts worse than baseline (was ${baseline})`);
-}
+import { loadBaseline, formatBaselineDelta } from '../baseline.js';
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -105,9 +69,9 @@ function buildSummaryContent(result: ScanResult): string {
   const colorFn = scoreColor(score);
   lines.push(`   Overall AIScore™: ${colorFn(`${score}/100`)}  ${emoji}  "${label}"`);
 
-  const baseline = readBaseline(process.cwd());
+  const baseline = loadBaseline(process.cwd());
   if (baseline) {
-    lines.push(formatScoreDelta(score, baseline.aiScore));
+    lines.push(formatBaselineDelta(score, baseline));
   }
   lines.push('');
 

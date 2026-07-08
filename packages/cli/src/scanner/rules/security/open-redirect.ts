@@ -50,13 +50,17 @@ function hasRedirectValidation(node: TSESTree.Node, varName: string, parentMap: 
   let current: TSESTree.Node | undefined = node;
   let hasGuard = false;
   while (current) {
-    if (
-      current.type === 'IfStatement' ||
-      current.type === 'ConditionalExpression' ||
-      current.type === 'SwitchStatement' ||
-      current.type === 'LogicalExpression'
-    ) {
-      walk(current, {
+    let guardNode: TSESTree.Node | null = null;
+    if (current.type === 'IfStatement' || current.type === 'ConditionalExpression') {
+      guardNode = (current as any).test;
+    } else if (current.type === 'SwitchStatement') {
+      guardNode = (current as any).discriminant;
+    } else if (current.type === 'LogicalExpression') {
+      guardNode = (current as any).left;
+    }
+
+    if (guardNode) {
+      walk(guardNode, {
         CallExpression(rawNode) {
           const cNode = rawNode as TSESTree.CallExpression;
           if (isMemberExpression(cNode.callee)) {

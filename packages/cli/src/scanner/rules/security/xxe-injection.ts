@@ -2,7 +2,7 @@ import { TSESTree } from '@typescript-eslint/typescript-estree';
 import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
-import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral } from '../../../utils/ast-helpers.js';
+import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral, unwrapNode } from '../../../utils/ast-helpers.js';
 import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult } from '../../../utils/taint-tracker.js';
 import { buildParentMap } from '../../ast-walker.js';
 
@@ -19,7 +19,8 @@ function hasNoentTrue(opts: TSESTree.ObjectExpression): boolean {
   });
 }
 
-function isUserInput(node: TSESTree.Node, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+function isUserInput(rawNode: TSESTree.Node, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  const node = unwrapNode(rawNode);
   if (isNodeContextuallyTainted(node, taintResult, parentMap)) return true;
   if (!isMemberExpression(node)) return false;
   const me = node as TSESTree.MemberExpression;
@@ -125,7 +126,8 @@ const rule: Rule = {
 
     walk(ast, {
       CallExpression(rawNode: TSESTree.Node) {
-        const node = rawNode as TSESTree.CallExpression;
+        const node = unwrapNode(rawNode) as TSESTree.CallExpression;
+        if (node.type !== 'CallExpression') return;
         const f1 = checkLibXmlJsNoent(node, source, filePath);
         if (f1) { findings.push(f1); return; }
         const f2 = checkXml2jsUserInput(node, source, filePath, taintResult, parentMap);

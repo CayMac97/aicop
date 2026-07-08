@@ -1,11 +1,15 @@
 import { TSESTree } from '@typescript-eslint/typescript-estree';
 import { Rule, Finding } from '../types.js';
+import { extractSnippet } from '../../../utils/file-utils.js';
 
 export const nextjsMissingInputValidation: Rule = {
   id: 'security/nextjs-missing-input-validation',
   category: 'security',
   severity: 'warn',
+  name: 'Next.js Missing Input Validation',
   description: 'Server Actions and Route Handlers should validate input using a schema library (e.g. Zod)',
+  why: 'Unvalidated input in Server Actions can lead to injection attacks and other security vulnerabilities.',
+  fix: 'Use Zod, Valibot, or Yup to validate incoming parameters.',
   check(ast: TSESTree.Node, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
     
@@ -27,15 +31,23 @@ export const nextjsMissingInputValidation: Rule = {
       return findings;
     }
 
-    const exportedAsyncFunctions: TSESTree.FunctionDeclaration[] | TSESTree.ArrowFunctionExpression[] = [];
+    const exportedAsyncFunctions: (TSESTree.FunctionDeclaration | TSESTree.ArrowFunctionExpression | TSESTree.FunctionExpression)[] = [];
 
     function traverse(node: TSESTree.Node) {
       if (node.type === 'ExportNamedDeclaration') {
         if (node.declaration?.type === 'FunctionDeclaration' && node.declaration.async && node.declaration.params.length > 0) {
+          const name = node.declaration.id?.name || '';
+          if (isRoute && !['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(name)) return;
+          if (!hasUseServer && !isActionFile && !isRoute) return;
           exportedAsyncFunctions.push(node.declaration);
         } else if (node.declaration?.type === 'VariableDeclaration') {
           for (const decl of node.declaration.declarations) {
             if (decl.init && (decl.init.type === 'ArrowFunctionExpression' || decl.init.type === 'FunctionExpression') && decl.init.async && decl.init.params.length > 0) {
+               if (decl.id.type === 'Identifier') {
+                 const name = decl.id.name;
+                 if (isRoute && !['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(name)) continue;
+                 if (!hasUseServer && !isActionFile && !isRoute) continue;
+               }
                // @ts-ignore
                exportedAsyncFunctions.push(decl.init);
             }
@@ -70,7 +82,9 @@ export const nextjsMissingInputValidation: Rule = {
           severity: 'warn',
           line: func.loc.start.line,
           column: func.loc.start.column,
-          suggestion: 'Use Zod, Valibot, or Yup to validate incoming parameters.',
+          snippet: extractSnippet(source, func.loc.start.line),
+          file: filePath,
+          fix: 'Use Zod, Valibot, or Yup to validate incoming parameters.',
         });
       }
     }

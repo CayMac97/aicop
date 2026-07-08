@@ -5,10 +5,59 @@ import { walk } from '../ast-walker.js';
 import { PARSE_OPTIONS } from '../scan-file.js';
 import { globalSymbolTable, ExportInfo } from './global-symbol-table.js';
 
+class LRUCache<K, V> {
+  private max: number;
+  private map = new Map<K, V>();
+  constructor(max: number) { this.max = max; }
+  get(key: K): V | undefined {
+    if (!this.map.has(key)) return undefined;
+    const val = this.map.get(key)!;
+    this.map.delete(key);
+    this.map.set(key, val);
+    return val;
+  }
+  set(key: K, val: V): void {
+    if (this.map.has(key)) this.map.delete(key);
+    else if (this.map.size >= this.max) {
+      const firstKey = this.map.keys().next().value;
+      if (firstKey !== undefined) this.map.delete(firstKey);
+    }
+    this.map.set(key, val);
+  }
+  has(key: K): boolean { return this.map.has(key); }
+  clear(): void { this.map.clear(); }
+}
+
+export function isNodeSafe(node: TSESTree.Node, name: string): boolean {
+  if (/escape|sanitize|validate|clean|check/i.test(name)) {
+    return true;
+  }
+  let safe = false;
+  if (node.type === 'FunctionDeclaration' || node.type === 'ArrowFunctionExpression' || node.type === 'FunctionExpression') {
+    const funcNode = node as any;
+    if (funcNode.body) {
+      walk(funcNode.body, {
+        CallExpression(cNode) {
+          const call = cNode as TSESTree.CallExpression;
+          let calleeName = '';
+          if (call.callee.type === 'Identifier') calleeName = call.callee.name;
+          else if (call.callee.type === 'MemberExpression' && call.callee.property.type === 'Identifier') {
+            calleeName = call.callee.property.name;
+          }
+          if (calleeName && /escape|sanitize|validate|clean|check/i.test(calleeName)) {
+            safe = true;
+          }
+        }
+      });
+    }
+  }
+  return safe;
+}
+
 class CrossFileCache {
-  // Map<absoluteFilePath, Map<exportName, ExportInfo>>
-  private parsedFiles = new Map<string, Map<string, ExportInfo>>();
-  private fileSources = new Map<string, string>();
+  // LRUCache<absoluteFilePath, Map<exportName, ExportInfo>>
+  private parsedFiles = new LRUCache<string, Map<string, ExportInfo>>(50);
+  private fileSources = new LRUCache<string, string>(50);
 
   public clear(): void {
     this.parsedFiles.clear();
@@ -47,13 +96,14 @@ class CrossFileCache {
     return info ? info.node : null;
   }
 
-  private parseAndCacheFile(filePath: string) {
+  private parseAndCacheFile(rawFilePath: string) {
+    const filePath = rawFilePath.replace(/\\/g, '/');
     const exportsMap = new Map<string, ExportInfo>();
     this.parsedFiles.set(filePath, exportsMap); // set immediately to prevent infinite recursion on circular imports
 
     let source = '';
     try {
-      source = readFileContent(filePath);
+      source = this.getFileSource(filePath) || readFileContent(filePath);
       this.fileSources.set(filePath, source);
     } catch {
       return; // Could not read file
@@ -71,6 +121,26 @@ class CrossFileCache {
     }
 
     const _this = this;
+
+    const localDeclarations = new Map<string, TSESTree.Node>();
+    walk(ast, {
+      FunctionDeclaration(node) {
+        const decl = node as TSESTree.FunctionDeclaration;
+        if (decl.id) localDeclarations.set(decl.id.name, decl);
+      },
+      VariableDeclarator(node) {
+        const decl = node as TSESTree.VariableDeclarator;
+        if (decl.id.type === 'Identifier' && decl.init) {
+          if (
+            decl.init.type === 'ArrowFunctionExpression' ||
+            decl.init.type === 'FunctionExpression'
+          ) {
+            localDeclarations.set(decl.id.name, decl.init);
+          }
+        }
+      }
+    });
+
     walk(ast, {
       ExportNamedDeclaration(node) {
         const decl = (node as TSESTree.ExportNamedDeclaration);
@@ -78,8 +148,9 @@ class CrossFileCache {
         if (decl.declaration) {
           const d = decl.declaration;
           if (d.type === 'FunctionDeclaration' && d.id) {
-            exportsMap.set(d.id.name, { filePath, name: d.id.name, node: d });
-            globalSymbolTable.addExport(filePath, d.id.name, d);
+            const isSafe = isNodeSafe(d, d.id.name);
+            exportsMap.set(d.id.name, { filePath, name: d.id.name, node: d, isSafe });
+            globalSymbolTable.addExport(filePath, d.id.name, d, isSafe);
           } else if (d.type === 'VariableDeclaration') {
             for (const declarator of d.declarations) {
               if (declarator.id.type === 'Identifier' && declarator.init) {
@@ -87,24 +158,39 @@ class CrossFileCache {
                   declarator.init.type === 'ArrowFunctionExpression' ||
                   declarator.init.type === 'FunctionExpression'
                 ) {
-                  exportsMap.set(declarator.id.name, { filePath, name: declarator.id.name, node: declarator.init });
-                  globalSymbolTable.addExport(filePath, declarator.id.name, declarator.init);
+                  const isSafe = isNodeSafe(declarator.init, declarator.id.name);
+                  exportsMap.set(declarator.id.name, { filePath, name: declarator.id.name, node: declarator.init, isSafe });
+                  globalSymbolTable.addExport(filePath, declarator.id.name, declarator.init, isSafe);
                 }
               }
             }
           }
         }
         
-        if (decl.source) {
+        if (decl.source && decl.source.type === 'Literal') {
           const sourceModule = (decl.source as TSESTree.StringLiteral).value;
           for (const specifier of decl.specifiers) {
             if (specifier.type === 'ExportSpecifier') {
               const localName = specifier.local.name;
               const exportedName = specifier.exported.name;
-              const resolvedNode = _this.getExport(sourceModule, filePath, localName);
+              const extInfo = _this.getExportInfo(sourceModule, filePath, localName);
+              if (extInfo) {
+                const isSafe = isNodeSafe(extInfo.node, exportedName);
+                exportsMap.set(exportedName, { filePath: extInfo.filePath, name: exportedName, node: extInfo.node, isSafe });
+                globalSymbolTable.addExport(filePath, exportedName, extInfo.node, isSafe, extInfo.filePath);
+              }
+            }
+          }
+        } else {
+          for (const specifier of decl.specifiers) {
+            if (specifier.type === 'ExportSpecifier') {
+              const localName = specifier.local.name;
+              const exportedName = specifier.exported.name;
+              const resolvedNode = localDeclarations.get(localName);
               if (resolvedNode) {
-                exportsMap.set(exportedName, { filePath, name: exportedName, node: resolvedNode });
-                globalSymbolTable.addExport(filePath, exportedName, resolvedNode);
+                const isSafe = isNodeSafe(resolvedNode, exportedName);
+                exportsMap.set(exportedName, { filePath, name: exportedName, node: resolvedNode, isSafe });
+                globalSymbolTable.addExport(filePath, exportedName, resolvedNode, isSafe);
               }
             }
           }
@@ -117,8 +203,76 @@ class CrossFileCache {
           decl.type === 'ArrowFunctionExpression' ||
           decl.type === 'FunctionExpression'
         ) {
-          exportsMap.set('default', { filePath, name: 'default', node: decl });
-          globalSymbolTable.addExport(filePath, 'default', decl);
+          const isSafe = isNodeSafe(decl, 'default');
+          exportsMap.set('default', { filePath, name: 'default', node: decl, isSafe });
+          globalSymbolTable.addExport(filePath, 'default', decl, isSafe);
+        } else if (decl.type === 'Identifier') {
+          const localName = (decl as TSESTree.Identifier).name;
+          const resolvedNode = localDeclarations.get(localName);
+          if (resolvedNode) {
+            const isSafe = isNodeSafe(resolvedNode, 'default');
+            exportsMap.set('default', { filePath, name: 'default', node: resolvedNode, isSafe });
+            globalSymbolTable.addExport(filePath, 'default', resolvedNode, isSafe);
+          }
+        }
+      },
+      ExportAllDeclaration(node) {
+        const decl = node as TSESTree.ExportAllDeclaration;
+        if (decl.source && decl.source.type === 'Literal') {
+          const sourceModule = decl.source.value as string;
+          const absolutePath = resolveLocalModule(sourceModule, filePath);
+          if (absolutePath) {
+            if (!_this.parsedFiles.has(absolutePath)) {
+              _this.parseAndCacheFile(absolutePath);
+            }
+            const sourceExports = _this.parsedFiles.get(absolutePath);
+            if (sourceExports) {
+              for (const [name, info] of sourceExports.entries()) {
+                if (name !== 'default') {
+                  exportsMap.set(name, info);
+                  globalSymbolTable.addExport(filePath, name, info.node, info.isSafe, info.filePath);
+                }
+              }
+            }
+          }
+        }
+      },
+      AssignmentExpression(node) {
+        const expr = node as TSESTree.AssignmentExpression;
+        if (expr.left.type === 'MemberExpression') {
+          const me = expr.left as TSESTree.MemberExpression;
+          if (me.object.type === 'Identifier' && me.object.name === 'module' && me.property.type === 'Identifier' && me.property.name === 'exports') {
+            if (expr.right.type === 'FunctionExpression' || expr.right.type === 'ArrowFunctionExpression' || expr.right.type === 'Identifier') {
+              const rightNode = expr.right.type === 'Identifier' ? (localDeclarations.get(expr.right.name) || expr.right) : expr.right;
+              const isSafe = isNodeSafe(rightNode, 'default');
+              exportsMap.set('default', { filePath, name: 'default', node: rightNode, isSafe });
+              globalSymbolTable.addExport(filePath, 'default', rightNode, isSafe);
+            } else if (expr.right.type === 'ObjectExpression') {
+              for (const prop of expr.right.properties) {
+                if (prop.type === 'Property' && prop.key.type === 'Identifier') {
+                  const rightNode = prop.value.type === 'Identifier' ? (localDeclarations.get(prop.value.name) || prop.value) : prop.value;
+                  const isSafe = isNodeSafe(rightNode, prop.key.name);
+                  exportsMap.set(prop.key.name, { filePath, name: prop.key.name, node: rightNode, isSafe });
+                  globalSymbolTable.addExport(filePath, prop.key.name, rightNode, isSafe);
+                }
+              }
+            }
+          } else if (me.object.type === 'MemberExpression') {
+            const meObj = me.object as TSESTree.MemberExpression;
+            if (meObj.object.type === 'Identifier' && meObj.object.name === 'module' && meObj.property.type === 'Identifier' && meObj.property.name === 'exports' && me.property.type === 'Identifier') {
+              const name = me.property.name;
+              const rightNode = expr.right.type === 'Identifier' ? (localDeclarations.get(expr.right.name) || expr.right) : expr.right;
+              const isSafe = isNodeSafe(rightNode, name);
+              exportsMap.set(name, { filePath, name, node: rightNode, isSafe });
+              globalSymbolTable.addExport(filePath, name, rightNode, isSafe);
+            }
+          } else if (me.object.type === 'Identifier' && me.object.name === 'exports' && me.property.type === 'Identifier') {
+            const name = me.property.name;
+            const rightNode = expr.right.type === 'Identifier' ? (localDeclarations.get(expr.right.name) || expr.right) : expr.right;
+            const isSafe = isNodeSafe(rightNode, name);
+            exportsMap.set(name, { filePath, name, node: rightNode, isSafe });
+            globalSymbolTable.addExport(filePath, name, rightNode, isSafe);
+          }
         }
       }
     });

@@ -59,10 +59,10 @@ export function formatBaselineDelta(current: number, baseline: BaselineData): st
   if (delta === 0) {
     return chalk.dim(`   Baseline: no change (${baseline.aiScore}/100 on ${savedDate})`);
   }
-  if (delta < 0) {
-    // Score went down = improvement
-    return chalk.green(`   Baseline: ↓ ${Math.abs(delta)} pts better than baseline (was ${baseline.aiScore}/100 on ${savedDate})`);
+  if (delta > 0) {
+    // Score went up = improvement
+    return chalk.green(`   Baseline: ↑ +${delta} pts better than baseline (was ${baseline.aiScore}/100 on ${savedDate})`);
   }
-  // Score went up = regression
-  return chalk.red(`   Baseline: ↑ +${delta} pts worse than baseline (was ${baseline.aiScore}/100 on ${savedDate})`);
+  // Score went down = regression
+  return chalk.red(`   Baseline: ↓ ${Math.abs(delta)} pts worse than baseline (was ${baseline.aiScore}/100 on ${savedDate})`);
 }

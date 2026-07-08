@@ -1,6 +1,6 @@
 {
   "name": "aicop-workspace",
-  "version": "1.0.11",
+  "version": "1.1.2",
   "private": true,
   "workspaces": [
     "packages/cli",
@@ -15,6 +15,6 @@
     "dev": "npm run dev --workspace=packages/cli"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   }
 }

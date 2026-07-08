@@ -60,6 +60,8 @@ function mergeWithDefaults(obj: Record<string, unknown>): VibescanConfig {
     thresholds: { ...DEFAULT_CONFIG.thresholds, ...(obj.thresholds as VibescanConfig['thresholds'] ?? {}) },
     output: { ...DEFAULT_CONFIG.output, ...(obj.output as VibescanConfig['output'] ?? {}) },
     includeExamples: typeof obj.includeExamples === 'boolean' ? obj.includeExamples : undefined,
+    testPatterns: Array.isArray(obj.testPatterns) ? obj.testPatterns as string[] : DEFAULT_CONFIG.testPatterns,
+    testOverrides: obj.testOverrides ? { ...DEFAULT_CONFIG.testOverrides, ...(obj.testOverrides as Record<string, Severity | 'off'>) } : DEFAULT_CONFIG.testOverrides,
   };
 }
 

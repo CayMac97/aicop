@@ -5,7 +5,7 @@ import { walk } from '../scanner/ast-walker.js';
 
 export const DebugLeftoversFixer: RuleFixer = {
   ruleId: 'ai-smell/debug-leftovers',
-  fix(source: string, ast: ParsedAST, findings: Finding[]): FixReplacement[] {
+  fix(_source: string, ast: ParsedAST, findings: Finding[]): FixReplacement[] {
     const replacements: FixReplacement[] = [];
 
     const consoleFindings = findings.filter(f => f.message.includes('console.'));

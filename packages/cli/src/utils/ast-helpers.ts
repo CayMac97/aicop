@@ -89,3 +89,17 @@ export function matchesCall(
 export function matchesDirectCall(node: TSESTree.CallExpression, name: string): boolean {
   return isIdentifier(node.callee) && node.callee.name === name;
 }
+
+/** Unwrap TSAsExpression, TSNonNullExpression, TSTypeAssertion, and ChainExpression */
+export function unwrapNode(node: TSESTree.Node): TSESTree.Node {
+  let current = node;
+  while (
+    current.type === 'TSAsExpression' ||
+    current.type === 'TSNonNullExpression' ||
+    current.type === 'TSTypeAssertion' ||
+    current.type === 'ChainExpression'
+  ) {
+    current = (current as any).expression;
+  }
+  return current;
+}

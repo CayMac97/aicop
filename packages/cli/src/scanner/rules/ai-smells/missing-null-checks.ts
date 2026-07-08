@@ -6,30 +6,9 @@ import { getLine, getColumn, isIdentifier, isMemberExpression, isCallExpression 
 
 const DB_FIND_METHODS = new Set(['findOne', 'findById', 'findFirst', 'findUnique', 'first']);
 
-const REQ_RES_PROPS = new Set(['body', 'user', 'params', 'query', 'files', 'locals', 'session', 'cookies', 'headers', 'nextUrl', 'signal', 'url', 'method']);
-const REQ_ROOT_NAMES = new Set(['req', 'res', 'request', 'response']);
 
-function isReqOrResAccess(node: TSESTree.MemberExpression): boolean {
-  const obj = node.object;
-  if (isIdentifier(obj) && REQ_ROOT_NAMES.has((obj as TSESTree.Identifier).name)) return true;
-  if (isMemberExpression(obj)) {
-    const me = obj as TSESTree.MemberExpression;
-    if (!isIdentifier(me.object)) return false;
-    const root = (me.object as TSESTree.Identifier).name;
-    return REQ_ROOT_NAMES.has(root) || (isIdentifier(me.property) && REQ_RES_PROPS.has((me.property as TSESTree.Identifier).name));
-  }
-  return false;
-}
 
-function hasNullSafetyInSnippet(snippet: string, varName: string): boolean {
-  return snippet.includes(`${varName}.length`)
-    || snippet.includes(`${varName}?.`)
-    || snippet.includes('?.')
-    || snippet.includes('??')
-    || snippet.includes(`${varName} &&`)
-    || snippet.includes(`${varName}[0] &&`)
-    || snippet.includes(`${varName}[0]!`);
-}
+
 
 
 
@@ -40,19 +19,7 @@ function isDbFindCall(node: TSESTree.CallExpression): boolean {
   return DB_FIND_METHODS.has((me.property as TSESTree.Identifier).name);
 }
 
-function unwrapAwait(node: TSESTree.Expression | TSESTree.PrivateIdentifier): TSESTree.Expression | TSESTree.PrivateIdentifier {
-  return node.type === 'AwaitExpression' ? node.argument : node;
-}
 
-function isMysqlQueryCall(node: TSESTree.Node): boolean {
-  if (!isCallExpression(node)) return false;
-  const call = node as TSESTree.CallExpression;
-  if (!isMemberExpression(call.callee)) return false;
-  const me = call.callee as TSESTree.MemberExpression;
-  if (!isIdentifier(me.property)) return false;
-  const method = (me.property as TSESTree.Identifier).name;
-  return method === 'query' || method === 'execute';
-}
 
 
 

@@ -5,7 +5,7 @@ import { walk } from '../scanner/ast-walker.js';
 
 export const JwtNoExpiryFixer: RuleFixer = {
   ruleId: 'security/jwt-no-expiry',
-  fix(source: string, ast: ParsedAST, findings: Finding[]): FixReplacement[] {
+  fix(_source: string, ast: ParsedAST, findings: Finding[]): FixReplacement[] {
     const replacements: FixReplacement[] = [];
     
     const fixableFindings = findings.filter(f => f.message.includes('missing expiresIn'));
@@ -39,7 +39,7 @@ export const JwtNoExpiryFixer: RuleFixer = {
             if (props.length === 0) {
               replacements.push({
                 start: optionsArg.range[0] + 1,
-                end: optionsArg.range[1] - 1,
+                end: optionsArg.range[0] + 1,
                 text: ` expiresIn: '15m' `
               });
             } else {

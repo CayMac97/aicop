@@ -1,5 +1,5 @@
 // aicop-ignore
-const JWT_SECRET = 'super-secret-jwt-signing-key-xyz';
+console.log('This should be ignored by the blanket ignore');
 
 // aicop-ignore security/hardcoded-secrets
 const DB_PASSWORD = 'db-password-should-be-suppressed';

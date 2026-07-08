@@ -17,30 +17,29 @@ aicop scan ./src
 
 ## 🆚 AICop vs. Vibecop
 
-Mit Version 1.0.9 vollzieht AICop den Schritt von einem starren Scanner zu einem transparenten Analyse-Tool für KI-generierten JavaScript/TypeScript-Code. Während Konkurrenz-Tools wie *Vibecop* durch Python-Support und CI-native Features bei polyglotten Projekten punkten, fokussiert sich AICop auf tiefgreifende AST-Analysen (38+ Regeln), automatisierte Fix-Prompts und ein feingranulares Test-Environment-Handling. 
+Mit Version 1.1.2 baut AICop seine Position als spezialisiertes Analyse-Tool für KI-generierten JavaScript/TypeScript-Code weiter aus. Während *Vibecop* als hochgradig poliertes Produktionswerkzeug mit Python-Support, Agent-Integration, SARIF, npm-Provenance und nativer CI/CD-Integration glänzt, fokussiert sich AICop stattdessen tiefgreifend auf AST-Analysen im JavaScript/TypeScript-Ökosystem (41+ Regeln), Cross-File-Injections und automatisierte Fix-Prompts.
 
 ### Feature- & Genauigkeits-Vergleich
 
 <div align="center">
 
-| Metrik / Feature | aicop 1.0.8 (alt) | aicop 1.0.9 (aktuell) | vibecop 0.4.3 |
-| :--- | :---: | :---: | :---: |
-| **Aktive Regeln** | 38 | 38 | ~ 12 |
-| **Testcode Findings (Accuracy)** | 4 | 4 | 3 |
-| **Erkennung: Hardcoded Secrets** | 🟢 ✓ | 🟢 ✓ | 🟢 ✓ |
-| **Erkennung: eval() usage** | 🟢 ✓ | 🟢 ✓ | 🟢 ✓ |
-| **Erkennung: TODO-Stubs** | 🟢 ✓ (2x) | 🟢 ✓ (2x) | 🟡 ✓ (1x) |
-| **Erkennung: SQL-Injection** | 🔴 ✗ | 🔴 ✗ | 🔴 ✗ |
-| | | | |
-| **Transparenz (`--explain`)** | 🔴 ✗ | 🟢 ✓ (Pattern + Confidence) | 🔴 ✗ |
-| **Metrik-System** | 🟡 Aufgerundet (manipulierbar) | 🟢 Absolut (Math.floor, ehrlich) | 🔴 ✗ |
-| **Test-File Handling** | 🔴 Blind ignoriert | 🟢 Konfigurierbare Overrides | 🔴 ✗ |
-| **Benchmarking-Daten** | 🔴 Synthetisch | 🟢 Echter LLM-Output | - |
-| | | | |
-| **CLI Tools (Fix-Prompt, Badge)** | 🟢 ✓ | 🟢 ✓ (Verbessert) | 🔴 ✗ |
-| **Diff Scanning / Baseline** | 🟢 ✓ | 🟢 ✓ | 🟡 Nur Diff |
-| **CI/IDE Integration** | 🔴 ✗ | 🔴 ✗ | 🟢 SARIF & MCP Server |
-| **Sprachen** | JS/TS | JS/TS | 🟢 JS/TS/Python |
+| Metrik / Feature | aicop 1.1.2 (aktuell) | vibecop 0.4.3 |
+| :--- | :---: | :---: |
+| **Fokus** | JS/TS AST-Deep-Scans, AI-Smells | Polyglot, CI-Pipeline, Production-Tooling |
+| **Aktive Regeln (JS/TS)** | 41 | ~ 12 |
+| **Erkennung: Hardcoded Secrets** | 🟢 ✓ | 🟢 ✓ |
+| **Erkennung: eval() usage** | 🟢 ✓ | 🟢 ✓ |
+| **Erkennung: TODO-Stubs** | 🟢 ✓ (2x) | 🟡 ✓ (1x) |
+| **Erkennung: Cross-File SQL-Injection** | 🟢 ✓ | 🔴 ✗ |
+| | | |
+| **Transparenz (`--explain`)** | 🟢 ✓ (Pattern + Confidence) | 🔴 ✗ |
+| **Metrik-System** | 🟢 Absolut (Math.floor, ehrlich) | 🔴 ✗ |
+| **Test-File Handling** | 🟢 Konfigurierbare Overrides | 🔴 ✗ |
+| | | |
+| **CLI Tools (Fix-Prompt, Badge)** | 🟢 ✓ | 🔴 ✗ |
+| **CI/IDE Integration** | 🔴 ✗ | 🟢 SARIF & MCP Server |
+| **Produktionsreife (npm audit, etc.)** | 🟡 In Entwicklung | 🟢 Sehr Hoch |
+| **Sprachen** | JS/TS | 🟢 JS/TS/Python |
 
 </div>
 
@@ -91,7 +90,7 @@ Mit Version 1.0.9 vollzieht AICop den Schritt von einem starren Scanner zu einem
 
     <!-- Legend -->
     <rect x="250" y="350" width="12" height="12" fill="rgba(16, 185, 129, 0.4)" stroke="#10b981" stroke-width="2"/>
-    <text x="270" y="361" font-family="sans-serif" font-size="12" fill="#334155">aicop 1.0.9</text>
+    <text x="270" y="361" font-family="sans-serif" font-size="12" fill="#334155">aicop 1.0.11</text>
     
     <rect x="250" y="370" width="12" height="12" fill="rgba(234, 88, 12, 0.2)" stroke="#ea580c" stroke-width="2"/>
     <text x="270" y="381" font-family="sans-serif" font-size="12" fill="#334155">vibecop 0.4.3</text>
@@ -100,9 +99,9 @@ Mit Version 1.0.9 vollzieht AICop den Schritt von einem starren Scanner zu einem
 
 ### Wer sollte was nutzen?
 
-* **Nutze AICop, wenn** du primär JavaScript/TypeScript verwendest, tiefe AST-Scans für AI-Smells brauchst und Code-Qualität durch den "AI Score" gamifizieren willst.
-* **Nutze Vibecop, wenn** du polyglotte Projekte (Python/JS) hast und tiefe CI-Integration via SARIF oder MCP-Server benötigst.
-* **Beide kombinieren?** Durchaus sinnvoll: AICop für tiefe Smell-Analysen lokal, Vibecop für CI/CD-Pipelines und Python-Repos.
+* **Nutze Vibecop, wenn** du ein produktionsreifes Tool für polyglotte Projekte suchst und tiefe CI-Integration via SARIF, MCP oder Agent-Workflows benötigst.
+* **Nutze AICop, wenn** du dedizierten Fokus auf JS/TS-Security, Cross-File-Injections und AI-Code-Smells suchst.
+* **Beide kombinieren?** Durchaus sinnvoll: AICop für tiefe Smell-Analysen lokal, Vibecop für produktionsreife CI/CD-Pipelines und breite Abdeckung.
 
 ---
 ## Table of Contents
@@ -128,7 +127,7 @@ AICop parses every `.ts`, `.tsx`, `.js`, `.jsx` file into a full AST and runs **
 
 | Category | Count | What it catches |
 |---|---|---|
-| 🔒 Security | 17 | Hardcoded secrets, SQL/command/prompt injection, XSS, eval, JWT no expiry, CORS misconfig, SSRF, path traversal, weak crypto, ReDoS, prototype pollution, missing rate limits, open redirect, insecure deserialisation, XXE injection, Next.js input validation |
+| 🔒 Security | 23 | Hardcoded secrets, SQL/command/prompt injection, XSS, eval, JWT no expiry, CORS misconfig, SSRF, path traversal, weak crypto, ReDoS, prototype pollution, missing rate limits, open redirect, insecure deserialisation, XXE injection, Next.js input validation, CSRF missing, insecure session, NoSQL injection |
 | 🤖 AI Smells | 12 | Hallucinated APIs, Next.js client/server confusion, dead code, TODO stubs, copy-paste patterns, debug leftovers, mixed async, missing null checks, generic variable names, magic numbers, inconsistent error handling, AI confidence score |
 | 🧹 Tech Debt | 6 | Cyclomatic complexity, function length, nesting depth, god files, hardcoded config, missing types |
 
@@ -142,7 +141,7 @@ npx aicop scan ./src      # one-off, no install needed
 pnpm dlx aicop scan ./src # pnpm
 ```
 
-Requires **Node.js ≥ 18**.
+Requires **Node.js ≥ 20**.
 
 ---
 

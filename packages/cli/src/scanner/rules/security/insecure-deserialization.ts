@@ -4,7 +4,7 @@ import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral } from '../../../utils/ast-helpers.js';
 
-const UNSAFE_DESER_PACKAGES = new Set(['node-serialize', 'serialize-javascript', 'js-yaml']);
+const UNSAFE_DESER_PACKAGES = new Set(['node-serialize', 'js-yaml']);
 
 function isStaticArg(node: TSESTree.Node): boolean {
   if (node.type === 'Literal') return true;

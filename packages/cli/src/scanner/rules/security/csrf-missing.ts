@@ -41,12 +41,14 @@ function isWebhookRoute(node: TSESTree.CallExpression): boolean {
   return WEBHOOK_PATH_RE.test(String((firstArg as TSESTree.StringLiteral).value));
 }
 
-function isExpressPostRoute(node: TSESTree.CallExpression): boolean {
+function isExpressStateChangingRoute(node: TSESTree.CallExpression): boolean {
   if (isHttpClientCall(node)) return false;
   if (isWebhookRoute(node)) return false;
   if (!isMemberExpression(node.callee)) return false;
   const me = node.callee as TSESTree.MemberExpression;
-  return isIdentifier(me.property) && (me.property as TSESTree.Identifier).name === 'post';
+  if (!isIdentifier(me.property)) return false;
+  const name = (me.property as TSESTree.Identifier).name;
+  return name === 'post' || name === 'put' || name === 'patch' || name === 'delete';
 }
 
 function isCsrfArg(arg: TSESTree.Node): boolean {
@@ -81,7 +83,7 @@ const rule: Rule = {
   name: 'CSRF Protection Missing',
   category: 'security',
   severity: 'warn',
-  description: 'Detects Express apps with POST routes or session middleware but no CSRF protection',
+  description: 'Detects Express apps with state-changing routes or session middleware but no CSRF protection',
   why: 'Without CSRF protection, state-changing requests can be forged by malicious third-party sites, leading to unauthorized actions on behalf of authenticated users.',
   fix: 'Use csurf or csrf-csrf middleware on all state-changing routes',
 
@@ -92,7 +94,7 @@ const rule: Rule = {
     let hasSession = false;
     let hasJwt = false;
     let hasGlobalCsrf = false;
-    const unprotectedPostRoutes: TSESTree.CallExpression[] = [];
+    const unprotectedRoutes: TSESTree.CallExpression[] = [];
 
     walk(ast, {
       CallExpression(rawNode) {
@@ -106,8 +108,8 @@ const rule: Rule = {
           return;
         }
         if (isGlobalUseWithCsrf(node)) { hasGlobalCsrf = true; return; }
-        if (isExpressPostRoute(node) && !routeHasCsrfMiddleware(node)) {
-          unprotectedPostRoutes.push(node);
+        if (isExpressStateChangingRoute(node) && !routeHasCsrfMiddleware(node)) {
+          unprotectedRoutes.push(node);
         }
       },
       ImportDeclaration(rawNode) {
@@ -124,13 +126,13 @@ const rule: Rule = {
     if (!hasExpressImport && !hasSession) return findings;
     // JWT/stateless APIs don't use cookies so CSRF doesn't apply
     if (hasJwt && !hasSession) return findings;
-    if (unprotectedPostRoutes.length === 0) return findings;
+    if (unprotectedRoutes.length === 0) return findings;
 
-    const triggerNode = unprotectedPostRoutes[0];
+    const triggerNode = unprotectedRoutes[0];
     findings.push({
       ruleId: 'security/csrf-missing',
       severity: 'warn',
-      message: 'File contains POST routes without global CSRF protection — state-changing requests are forgeable',
+      message: 'File contains state-changing routes (POST/PUT/PATCH/DELETE) without global CSRF protection — state-changing requests are forgeable',
       file: filePath,
       line: getLine(triggerNode),
       column: getColumn(triggerNode),

@@ -4,6 +4,9 @@ import fs from 'fs-extra';
 /** Read a file's content as UTF-8 string */
 export function readFileContent(filePath: string): string {
   try {
+    const stats = fs.statSync(filePath);
+    if (stats.isDirectory()) throw new Error("Path is a directory");
+    if (stats.size > 10 * 1024 * 1024) throw new Error(`File is too large (${stats.size} bytes)`);
     return fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
     throw new Error(`Failed to read file "${filePath}": ${String(err)}`);
@@ -51,8 +54,9 @@ export function isConfigFile(filePath: string): boolean {
  */
 export function extractSnippet(source: string, line: number, contextLines = 1): string {
   const lines = source.split('\n');
-  const startIdx = Math.max(0, line - 1 - contextLines);
-  const endIdx = Math.min(lines.length - 1, line - 1 + contextLines);
+  const maxIdx = Math.max(0, lines.length - 1);
+  const startIdx = Math.max(0, Math.min(maxIdx, line - 1 - contextLines));
+  const endIdx = Math.max(0, Math.min(maxIdx, line - 1 + contextLines));
   return lines.slice(startIdx, endIdx + 1).join('\n');
 }
 

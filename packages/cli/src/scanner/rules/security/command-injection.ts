@@ -44,15 +44,19 @@ function hasVarAllowlistCheck(node: TSESTree.Node, varName: string, parentMap: M
   let current: TSESTree.Node | undefined = node;
   let hasGuard = false;
   while (current) {
-    if (
-      current.type === 'IfStatement' ||
-      current.type === 'ConditionalExpression' ||
-      current.type === 'SwitchStatement' ||
-      current.type === 'LogicalExpression'
-    ) {
+    let guardNode: TSESTree.Node | null = null;
+    if (current.type === 'IfStatement' || current.type === 'ConditionalExpression') {
+      guardNode = (current as any).test;
+    } else if (current.type === 'SwitchStatement') {
+      guardNode = (current as any).discriminant;
+    } else if (current.type === 'LogicalExpression') {
+      guardNode = (current as any).left;
+    }
+
+    if (guardNode) {
       let usesVarName = false;
       let usesValidationMethod = false;
-      walk(current, {
+      walk(guardNode, {
         Identifier(rawNode) {
           if ((rawNode as TSESTree.Identifier).name === varName) usesVarName = true;
           const name = (rawNode as TSESTree.Identifier).name;
@@ -101,20 +105,32 @@ function checkExecCall(node: TSESTree.CallExpression, source: string, filePath: 
   if (!firstArg) return null;
   
   let isVulnerable = false;
-  if (argContainsUserInput(firstArg, taintResult, parentMap)) {
-    isVulnerable = true;
-    
-    // Suppress when all tainted template expressions are validated via allowlist
-    if (firstArg.type === 'TemplateLiteral') {
-      const tl = firstArg as TSESTree.TemplateLiteral;
-      const taintedExprs = tl.expressions.filter((e) => isUserInput(e, taintResult, parentMap));
-      if (
-        taintedExprs.length > 0 &&
-        taintedExprs.every((e) =>
-          isIdentifier(e) && hasVarAllowlistCheck(node, (e as TSESTree.Identifier).name, parentMap),
-        )
-      ) {
-        isVulnerable = false;
+  if (firstArg) {
+    if (argContainsUserInput(firstArg, taintResult, parentMap)) {
+      isVulnerable = true;
+      if (firstArg.type === 'TemplateLiteral') {
+        const tl = firstArg as TSESTree.TemplateLiteral;
+        const taintedExprs = tl.expressions.filter((e) => isUserInput(e, taintResult, parentMap));
+        if (
+          taintedExprs.length > 0 &&
+          taintedExprs.every((e) =>
+            isIdentifier(e) && hasVarAllowlistCheck(node, (e as TSESTree.Identifier).name, parentMap),
+          )
+        ) {
+          isVulnerable = false;
+        }
+      } else if (isIdentifier(firstArg)) {
+        if (hasVarAllowlistCheck(node, firstArg.name, parentMap)) {
+          isVulnerable = false;
+        }
+      } else if (isMemberExpression(firstArg)) {
+        let me: TSESTree.Node = firstArg;
+        while (isMemberExpression(me)) me = (me as TSESTree.MemberExpression).object;
+        if (isIdentifier(me)) {
+          if (hasVarAllowlistCheck(node, me.name, parentMap)) {
+            isVulnerable = false;
+          }
+        }
       }
     }
   }
@@ -131,7 +147,7 @@ function checkExecCall(node: TSESTree.CallExpression, source: string, filePath: 
 
   if (!isVulnerable) return null;
 
-  return {
+  const finding: Finding = {
     ruleId: 'security/command-injection',
     severity: 'error',
     message: `command injection risk — user input in ${funcName}() call`,
@@ -141,6 +157,7 @@ function checkExecCall(node: TSESTree.CallExpression, source: string, filePath: 
     snippet: extractSnippet(source, getLine(node)),
     fix: 'Validate and whitelist input before passing to child_process functions',
   };
+  return finding;
 }
 
 function hasChildProcessImport(ast: ParsedAST): boolean {
@@ -198,7 +215,7 @@ const rule: Rule = {
           const dedupeKey = `${crossCall.externalFilePath}:${getLine(node)}`;
           if (reportedExternalLocations.has(dedupeKey)) return;
           
-          const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map() };
+          const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map(), sanitizedExpressions: new Set<string>() };
           const extParentMap = buildParentMap(crossCall.externalNode);
           const f = checkExecCall(node, source, crossCall.externalFilePath, true, crossTaintResult, extParentMap);
           if (f) {

@@ -66,7 +66,7 @@ export const DEFAULT_CONFIG: VibescanConfig = {
     format: 'terminal',
     htmlReportPath: '.aicop/report.html',
   },
-  testPatterns: ["**/*.test.{js,ts,jsx,tsx}", "**/*.spec.{js,ts,jsx,tsx}", "**/__tests__/**", "**/fixtures/**"],
+  testPatterns: ["**/*.test.{js,ts,jsx,tsx}", "**/*.spec.{js,ts,jsx,tsx}", "**/__tests__/**", "**/test/**/*", "**/tests/**/*", "**/fixtures/**/*"],
   testOverrides: {
     "security/hardcoded-secrets": "warn",
     "security/eval-usage": "warn",
@@ -74,6 +74,9 @@ export const DEFAULT_CONFIG: VibescanConfig = {
     "ai-smell/missing-null-checks": "off",
     "ai-smell/copy-paste-patterns": "off",
     "security/xss-vulnerabilities": "warn",
-    "security/regex-dos": "warn"
+    "security/regex-dos": "warn",
+    "security/missing-rate-limit": "off",
+    "security/open-redirect": "off",
+    "security/cors-misconfiguration": "off"
   }
 };

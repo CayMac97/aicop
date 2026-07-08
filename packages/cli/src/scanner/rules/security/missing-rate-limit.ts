@@ -21,6 +21,7 @@ function isRouteDefinition(node: TSESTree.CallExpression): string | null {
   if (!isIdentifier(me.property)) return null;
   const method = (me.property as TSESTree.Identifier).name.toLowerCase();
   if (!HTTP_METHODS.has(method)) return null;
+  if (node.arguments.length < 2) return null;
   const pathArg = node.arguments[0];
   if (!pathArg || !isStringLiteral(pathArg as TSESTree.Expression)) return null;
   return String((pathArg as TSESTree.StringLiteral).value);

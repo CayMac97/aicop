@@ -77,7 +77,7 @@ export async function applyFixes(result: ScanResult, opts: FixEngineOptions = {}
           modified = true;
         }
       } catch (e) {
-        // Ignored
+        process.stderr.write(chalk.red(`[FIXER ERROR] ${ruleId} failed on ${fileResult.relativePath}: ${(e as Error).message}\n`));
       }
     }
 
@@ -90,25 +90,34 @@ export async function applyFixes(result: ScanResult, opts: FixEngineOptions = {}
       }
 
       // Apply replacements descending by start
-      allReplacements.sort((a, b) => b.start - a.start);
+      allReplacements.sort((a, b) => (b.start - a.start) || (b.end - a.end));
       let newSource = source;
+      let lastStart = Infinity;
+      let validReplacements = 0;
+      
       for (const r of allReplacements) {
+        if (r.end > lastStart) {
+          process.stderr.write(chalk.yellow(`[FIXER WARN] Overlapping fix skipped in ${fileResult.relativePath}\n`));
+          continue;
+        }
         newSource = newSource.slice(0, r.start) + r.text + newSource.slice(r.end);
+        lastStart = r.start;
+        validReplacements++;
       }
 
       if (!opts.dryRun) {
         fs.writeFileSync(fullPath, newSource, 'utf8');
       }
       
-      const fixCount = allReplacements.length; // Approximate
+      const fixCount = validReplacements;
       totalFixed += fixCount;
       
       const prefix = opts.dryRun ? chalk.yellow('[DRY-RUN]') : chalk.green('[FIXED]');
-      console.log(`${prefix} Applied ${fixCount} fix(es) in ${fileResult.relativePath}`);
+      process.stdout.write(`${prefix} Applied ${fixCount} fix(es) in ${fileResult.relativePath}\n`);
     }
   }
 
   if (totalFixed > 0 && !opts.dryRun) {
-    console.log(chalk.blue(`ℹ Backups saved to ${backupDir}`));
+    process.stdout.write(chalk.blue(`ℹ Backups saved to ${backupDir}\n`));
   }
 }

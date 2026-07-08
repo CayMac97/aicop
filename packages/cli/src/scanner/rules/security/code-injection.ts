@@ -40,15 +40,19 @@ function hasAllowlistCheck(node: TSESTree.Node, varName: string, parentMap: Map<
   let current: TSESTree.Node | undefined = node;
   let hasGuard = false;
   while (current) {
-    if (
-      current.type === 'IfStatement' ||
-      current.type === 'ConditionalExpression' ||
-      current.type === 'SwitchStatement' ||
-      current.type === 'LogicalExpression'
-    ) {
+    let guardNode: TSESTree.Node | null = null;
+    if (current.type === 'IfStatement' || current.type === 'ConditionalExpression') {
+      guardNode = (current as any).test;
+    } else if (current.type === 'SwitchStatement') {
+      guardNode = (current as any).discriminant;
+    } else if (current.type === 'LogicalExpression') {
+      guardNode = (current as any).left;
+    }
+
+    if (guardNode) {
       let usesVarName = false;
       let usesValidationMethod = false;
-      walk(current, {
+      walk(guardNode, {
         Identifier(rawNode) {
           if ((rawNode as TSESTree.Identifier).name === varName) usesVarName = true;
           const name = (rawNode as TSESTree.Identifier).name;
@@ -126,7 +130,7 @@ const rule: Rule = {
           const dedupeKey = `${crossCall.externalFilePath}:${getLine(node)}`;
           if (reportedExternalLocations.has(dedupeKey)) return;
           
-          const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map() };
+          const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map(), sanitizedExpressions: new Set<string>() };
           
           let finding: Finding | null = null;
           let msgType = '';

@@ -42,9 +42,14 @@ function formatFinding(finding: Finding, ci: boolean, showExplain?: boolean): st
   lines.push(`${prefix}  [${finding.ruleId}]  line ${finding.line}`);
 
   const snippetLines = finding.snippet.split('\n');
-  for (const sl of snippetLines) {
+  const maxLines = 5;
+  for (let i = 0; i < Math.min(snippetLines.length, maxLines); i++) {
+    const sl = snippetLines[i];
     const formatted = ci ? `| ${sl}` : chalk.dim(`│  ${sl}`);
     lines.push(formatted);
+  }
+  if (snippetLines.length > maxLines) {
+    lines.push(ci ? `| ... (${snippetLines.length - maxLines} more lines)` : chalk.dim(`│  ... (${snippetLines.length - maxLines} more lines)`));
   }
   lines.push(ci ? `| ^ ${finding.message}` : chalk.dim(`│  ^ `) + finding.message);
 
@@ -88,7 +93,7 @@ export function formatBySeverity(result: ScanResult, severity: Severity, ci: boo
   }
 
   if (sections.length === 0) {
-    return chalk.dim(`  No ${severity} findings.\n`);
+    return ci ? `  No ${severity} findings.\n` : chalk.dim(`  No ${severity} findings.\n`);
   }
 
   const separator = renderFileSeparator(ci);

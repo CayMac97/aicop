@@ -2,11 +2,11 @@ import { TSESTree } from '@typescript-eslint/typescript-estree';
 import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet, readFileContent } from '../../../utils/file-utils.js';
-import { isStringLiteral, getLine, getColumn, isMemberExpression, isIdentifier } from '../../../utils/ast-helpers.js';
-import { buildTaintMap, buildContextualTaintMap, getCrossFileTaints, TaintResult, isNodeContextuallyTainted, isDynamicExpr, buildParentMap } from '../../../utils/taint-tracker.js';
+import { isStringLiteral, getLine, getColumn, isMemberExpression, isIdentifier, unwrapNode } from '../../../utils/ast-helpers.js';
+import { buildContextualTaintMap, isNodeContextuallyTainted, isDynamicExpr, buildParentMap, TaintResult, getCrossFileTaints } from '../../../utils/taint-tracker.js';
 import { crossFileCache } from '../../cross-file/cross-file-resolver.js';
 
-const SQL_VERB_PATTERN = /\b(SELECT|INSERT\s+INTO|UPDATE\s+\w|DELETE\s+FROM|DROP\s+TABLE|CREATE\s+TABLE|ALTER\s+TABLE|EXEC(?:UTE)?)\b/i;
+const SQL_VERB_PATTERN = /\b(SELECT|INSERT\s+INTO|UPDATE\s+\w+|DELETE\s+FROM|DROP\s+TABLE|CREATE\s+TABLE|ALTER\s+TABLE|EXEC(?:UTE)?)\b/i;
 const HTML_TAG_PATTERN = /<(?:select|table|input|form|option|textarea)\b/i;
 const USER_INPUT_SOURCES = new Set(['params', 'body', 'query', 'headers', 'cookies']);
 const PARAMETERIZED_PATTERN = /\?\s*[,)]/;
@@ -19,7 +19,8 @@ function isExpressionNode(node: TSESTree.Expression | TSESTree.PrivateIdentifier
   return node.type !== 'PrivateIdentifier';
 }
 
-function isUserInputExpression(node: TSESTree.Expression): boolean {
+function isUserInputExpression(rawNode: TSESTree.Expression): boolean {
+  const node = unwrapNode(rawNode) as TSESTree.Expression;
   if (!isMemberExpression(node)) return false;
   const me = node as TSESTree.MemberExpression;
   if (!isMemberExpression(me.object)) return false;
@@ -229,7 +230,8 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
         }
       },
       CallExpression(rawNode) {
-        const node = rawNode as TSESTree.CallExpression;
+        const node = unwrapNode(rawNode) as TSESTree.CallExpression;
+        if (node.type !== 'CallExpression') return;
         if (isMemberExpression(node.callee) && isIdentifier(node.callee.property)) {
           const methodName = node.callee.property.name;
           if (['where', 'andWhere', 'orWhere', 'having', 'andHaving', 'orHaving'].includes(methodName)) {
@@ -249,9 +251,9 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
               if (methodName === 'concat') {
                 elements.push(...node.arguments);
               }
-              const strings = elements.map(e => isStringLiteral(e) ? String((e as TSESTree.StringLiteral).value) : '').filter(Boolean);
+              const strings = elements.map(e => e && isStringLiteral(e as TSESTree.Node) ? String((e as TSESTree.StringLiteral).value) : '').filter(Boolean);
               if (strings.some(looksLikeSQL)) {
-                if (elements.some(e => e && isDynamicExpr(e as TSESTree.Node, taintResult, parentMap))) {
+                if (elements.some(e => e && isDynamicExpr(e as TSESTree.Expression, taintResult, parentMap))) {
                   let reachesDb = false;
                   const ctx = findContext(node, parentMap);
                   reachesDb = ctx?.kind === 'db-call';
@@ -305,7 +307,7 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
           if (reportedExternalLocations.has(dedupeKey)) return;
           
           const raw = node.quasis.map((q) => q.value.raw).join('');
-          const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map() };
+          const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map(), sanitizedExpressions: new Set<string>() };
           if (!looksLikeSQL(raw) || !templateHasUserInput(node, crossTaintResult, extParentMap)) return;
           
           reportedExternalLocations.add(dedupeKey);
@@ -320,7 +322,7 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
           if (reportedExternalLocations.has(dedupeKey)) return;
 
           const strings = extractLiterals(node);
-          const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map() };
+          const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map(), sanitizedExpressions: new Set<string>() };
           if (!strings.some(looksLikeSQL) || !concatHasUserInput(node, crossTaintResult, extParentMap)) return;
           
           reportedExternalLocations.add(dedupeKey);
@@ -331,7 +333,7 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
           const node = rawNode as TSESTree.AssignmentExpression;
           if (node.operator !== '+=') return;
           if (!isExpressionNode(node.right)) return;
-          const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map() };
+          const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map(), sanitizedExpressions: new Set<string>() };
           if (!isDynamicExpr(node.right, crossTaintResult, extParentMap)) return;
           
           let reachesDb = false;
@@ -353,7 +355,8 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
             'Parameterize the SQL query inside the imported function');
         },
         CallExpression(rawNode) {
-          const node = rawNode as TSESTree.CallExpression;
+          const node = unwrapNode(rawNode) as TSESTree.CallExpression;
+          if (node.type !== 'CallExpression') return;
           if (isMemberExpression(node.callee) && isIdentifier(node.callee.property)) {
             const methodName = node.callee.property.name;
             if (methodName === 'join' || methodName === 'concat') {
@@ -363,10 +366,10 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
                 if (methodName === 'concat') {
                   elements.push(...node.arguments);
                 }
-                const strings = elements.map(e => isStringLiteral(e) ? String((e as TSESTree.StringLiteral).value) : '').filter(Boolean);
+                const strings = elements.map(e => e && isStringLiteral(e as TSESTree.Node) ? String((e as TSESTree.StringLiteral).value) : '').filter(Boolean);
                 if (strings.some(looksLikeSQL)) {
-                  const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map() };
-                  if (elements.some(e => e && isDynamicExpr(e as TSESTree.Node, crossTaintResult, extParentMap))) {
+                  const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map(), sanitizedExpressions: new Set<string>() };
+                  if (elements.some(e => e && isDynamicExpr(e as TSESTree.Expression, crossTaintResult, extParentMap))) {
                     let reachesDb = false;
                     const ctx = findContext(node, extParentMap);
                     reachesDb = ctx?.kind === 'db-call';

@@ -26,7 +26,7 @@ export default defineConfig([
   },
   {
     // ── Library entry (no shebang — used by VSCode extension) ────────────
-    entry: { lib: 'src/lib.ts' },
+    entry: { lib: 'src/lib.ts', worker: 'src/scanner/worker.ts' },
     format: ['cjs'],
     target: 'node20',
     platform: 'node',

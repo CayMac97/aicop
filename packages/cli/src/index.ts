@@ -1,19 +1,3 @@
-import { isMainThread, parentPort, workerData } from 'node:worker_threads';
-if (!isMainThread && parentPort) {
-  const { scanFile, getEnabledRules } = require('./scanner/scan-file.js') as typeof import('./scanner/scan-file.js');
-  const { crossFileCache } = require('./scanner/cross-file/cross-file-resolver.js') as typeof import('./scanner/cross-file/cross-file-resolver.js');
-  const data = workerData as any;
-  if (data.preloadedSources) {
-    crossFileCache.initWithSources(data.preloadedSources);
-  }
-  const rules = getEnabledRules(data.config);
-  for (const file of data.files) {
-    const result = scanFile(file, data.basePath, rules, data.config, data.minSeverity, data.noAiScore, undefined, data.includeTests);
-    parentPort.postMessage({ type: 'result', result });
-  }
-  parentPort.postMessage({ type: 'done' });
-  process.exit(0);
-}
 
 import { Command } from 'commander';
 import chalk from 'chalk';
@@ -23,7 +7,8 @@ import { existsSync } from 'fs';
 import { scan } from './scanner/index.js';
 import { scanDiff } from './diff/index.js';
 import { report, printHeader } from './reporter/index.js';
-import { renderSummary, renderFixPromptHint, writeBaseline, readBaseline } from './reporter/summary.js';
+import { renderSummary, renderFixPromptHint } from './reporter/summary.js';
+import { loadBaseline, saveBaseline } from './baseline.js';
 import { loadConfig } from './config/loader.js';
 import { DEFAULT_CONFIG } from './config/defaults.js';
 import { LogLevel, setLogLevel, setCiMode } from './utils/logger.js';
@@ -48,7 +33,7 @@ function addScanOptions(cmd: Command): Command {
     .option('--dry-run', 'Show what would be fixed without modifying files')
     .option('--watch', 'Watch for file changes and re-scan')
     .option('--ci', 'CI mode — no colors, no spinners, exit code reflects threshold status')
-    .option('--format <format>', 'Output format: terminal | html | json', 'terminal')
+    .option('--format <format>', 'Output format: terminal | html | json')
     .option('--output <path>', 'Write report to file instead of stdout')
     .option('--severity <level>', 'Minimum severity to report: error | warn | info', 'warn')
     .option('--config <path>', 'Path to config file')
@@ -74,12 +59,18 @@ program
   .command('init')
   .description('Generate a .aicoprc.json config file in the current directory')
   .action(async () => {
-    const configPath = path.join(process.cwd(), '.aicoprc.json');
-    const { writeFile: wf } = await import('./utils/file-utils.js');
-    await wf(configPath, JSON.stringify(DEFAULT_CONFIG, null, 2));
-    process.stdout.write(chalk.green('✓') + ` .aicoprc.json created at ${configPath}\n`);
-    process.stdout.write(chalk.dim('Edit this file to customize rules, thresholds, and output settings.\n'));
-    process.stdout.write(chalk.dim('Tip: aicop also auto-discovers .aicoprc.js, aicop.config.js, or an "aicop" key in package.json\n'));
+    try {
+      const configPath = path.join(process.cwd(), '.aicoprc.json');
+      if (existsSync(configPath)) {
+        console.log(chalk.yellow('Config file already exists.'));
+        process.exit(0);
+      }
+      await writeFile(configPath, JSON.stringify(DEFAULT_CONFIG, null, 2) + '\n');
+      console.log(chalk.green('Created .aicoprc.json with default configuration.'));
+    } catch (err) {
+      console.error(chalk.red(`Failed to initialize config: ${String(err)}`));
+      process.exit(1);
+    }
   });
 
 program
@@ -102,13 +93,13 @@ program
         watch: false,
       });
       spinner.stop();
-      writeBaseline(process.cwd(), result);
+      saveBaseline(result, VERSION, process.cwd());
       process.stdout.write(
         chalk.green('✓') + ` Baseline saved: AIScore™ ${chalk.bold(String(result.aiScore))}/100 ` +
         chalk.dim(`(${result.errorCount} errors, ${result.warnCount} warnings, ${result.filesScanned} files)\n`) +
         chalk.dim('  Every future scan will show the delta against this baseline.\n')
       );
-      const existing = readBaseline(process.cwd());
+      const existing = loadBaseline(process.cwd());
       void existing;
     } catch (err) {
       spinner.fail('Baseline scan failed');
@@ -133,7 +124,7 @@ program
   .command('diff [ref]')
   .description('Scan only files changed since <ref> (default: auto-detected default branch)')
   .option('--ci', 'CI mode')
-  .option('--format <format>', 'Output format', 'terminal')
+  .option('--format <format>', 'Output format')
   .option('--output <path>', 'Write report to file')
   .option('--severity <level>', 'Minimum severity', 'info')
   .option('--config <path>', 'Config file path')
@@ -143,11 +134,15 @@ program
     const ci = Boolean(opts.ci);
     if (ci) setCiMode(true);
 
+    opts.format = (opts.format as ScanOptions['format']) ?? config.output?.format ?? 'terminal';
+    opts.output = opts.output ?? (opts.format === 'html' ? config.output?.htmlReportPath : undefined);
+
     const scanOptions: ScanOptions = {
       path: '.',
       config,
       severity: (opts.severity as Severity) ?? 'info',
-      format: (opts.format as ScanOptions['format']) ?? 'terminal',
+      format: opts.format as ScanOptions['format'],
+      output: opts.output,
       ci,
       fix: false,
       noAiScore: false,
@@ -160,7 +155,7 @@ program
       spinner?.succeed('Diff scan complete');
       process.stdout.write(chalk.bold.cyan(diffHeader) + '\n\n');
       await report(result, {
-        format: (opts.format as OutputFormat) ?? 'terminal',
+        format: opts.format as OutputFormat,
         ci,
         outputPath: opts.output,
         version: VERSION,
@@ -200,8 +195,9 @@ program
   .option('--format <format>', 'Output format: terminal | html', 'html')
   .option('--output <path>', 'Output file path')
   .action(async (opts: { input: string; format: string; output?: string }) => {
-    const { readFileContent } = await import('./utils/file-utils.js');
-    const raw = await readFileContent(opts.input);
+    try {
+      const { readFileContent } = await import('./utils/file-utils.js');
+      const raw = await readFileContent(opts.input);
     let parsed: Record<string, unknown>;
     try {
       parsed = JSON.parse(raw) as Record<string, unknown>;
@@ -216,6 +212,10 @@ program
       outputPath: opts.output,
       version: VERSION,
     });
+    } catch (err) {
+      process.stderr.write(chalk.red(`\nError: ${String(err)}\n`));
+      process.exit(1);
+    }
   });
 
 program
@@ -444,6 +444,8 @@ async function runScan(targetPath: string, opts: CliOptions): Promise<void> {
 
   const displaySeverity: Severity = (opts.severity as Severity) ?? 'warn';
   const scanOptions = buildScanOptions(resolvedTarget, config, opts, displaySeverity);
+  opts.format = scanOptions.format;
+  opts.output = scanOptions.output;
 
   const isFileFormat = (opts.format as string) === 'json' || (opts.format as string) === 'html';
   const spinner = (ci || isFileFormat) ? null : ora(chalk.dim('Collecting files...')).start();

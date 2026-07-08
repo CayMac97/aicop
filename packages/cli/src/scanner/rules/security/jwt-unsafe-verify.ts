@@ -46,6 +46,9 @@ function isChecked(node: TSESTree.Node, parentMap: Map<TSESTree.Node, TSESTree.N
       return true;
     }
     // CallExpression is checked if it's the parent (e.g. passing to another func), but we only check immediate parent for that
+    if (current.type === 'TryStatement') {
+      return true; // jwt.verify() in try/catch is intentionally used for its throw behavior
+    }
     if (current.type === 'FunctionDeclaration' || current.type === 'FunctionExpression' || current.type === 'ArrowFunctionExpression') {
       break; // stop at function boundary
     }
@@ -105,7 +108,7 @@ const rule: Rule = {
           }
         }
       },
-      CallExpression(rawNode, parent) {
+      CallExpression(rawNode) {
         const node = rawNode as TSESTree.CallExpression;
         if (!isJwtVerifyCall(node, verifyVars)) return;
         if (hasCallback(node)) return;

@@ -33,7 +33,7 @@ export function applyTestOverrides(finding: Finding, config: VibescanConfig, fil
     return finding;
   }
   
-  const isTest = picomatch.isMatch(filePath.replace(/\\/g, '/'), config.testPatterns, { dot: true, matchBase: true });
+  const isTest = picomatch.isMatch(filePath.replace(/\\/g, '/'), config.testPatterns, { dot: true });
   if (!isTest) return finding;
 
   const override = config.testOverrides[finding.ruleId];
@@ -51,11 +51,16 @@ export function applyIgnoreComments(findings: Finding[], source: string): Findin
     const sameLineMatch = sameLine.match(/\/\/\s*aicop-ignore(?:\s+(\S+))?/);
     if (sameLineMatch) {
       const specifiedRule = sameLineMatch[1];
-      if (!specifiedRule || specifiedRule === f.ruleId) return false;
+      if (specifiedRule === f.ruleId) return false;
+      if (!specifiedRule && !f.ruleId.startsWith('security/')) return false;
     }
     const prevLine = lineIdx > 0 ? (lines[lineIdx - 1] ?? '').trim() : '';
-    if (prevLine === '// aicop-ignore') return false;
-    if (prevLine === `// aicop-ignore ${f.ruleId}`) return false;
+    const prevLineMatch = prevLine.match(/^\/\/\s*aicop-ignore(?:\s+(\S+))?/);
+    if (prevLineMatch) {
+      const specifiedRule = prevLineMatch[1];
+      if (specifiedRule === f.ruleId) return false;
+      if (!specifiedRule && !f.ruleId.startsWith('security/')) return false;
+    }
     return true;
   });
 }
@@ -67,7 +72,7 @@ export function applyConfigSeverity(finding: Finding, config: VibescanConfig): F
   const SEV_BY_ORDER = ['error', 'warn', 'info'] as const;
   const configLevel = SEV_ORDER[configured] ?? 1;
   const findingLevel = SEV_ORDER[finding.severity] ?? 1;
-  const finalLevel = Math.max(configLevel, findingLevel);
+  const finalLevel = Math.min(configLevel, findingLevel);
   return { ...finding, severity: SEV_BY_ORDER[finalLevel] ?? finding.severity };
 }
 
@@ -106,7 +111,7 @@ export function scanFile(
   minSeverity: Severity,
   noAiScore: boolean,
   preloadedSource?: string,
-  preloadedAst?: TSESTree.Node | TSESTree.Program,
+  preloadedAst?: TSESTree.Program,
   includeTests?: boolean,
 ): FileScanResult {
   const relativePath = getRelativePath(filePath, basePath);
@@ -138,8 +143,12 @@ export function scanFile(
 
   for (const rule of rules) {
     try {
-      const ruleFindings = rule.check(ast, source, filePath);
-      rawFindings.push(...ruleFindings);
+      const result = rule.check(ast, source, filePath);
+      if (result && Array.isArray(result)) {
+        rawFindings.push(...result);
+      } else if (result) {
+        rawFindings.push(result as Finding);
+      }
     } catch (err) {
       logger.debug(`Rule ${rule.id} failed on ${relativePath}: ${String(err)}`);
     }
@@ -149,9 +158,9 @@ export function scanFile(
   rawFindings.push(...contextFindings);
 
   const findings = applyIgnoreComments(suppressImportWarnings(rawFindings), source)
+    .map((f) => applyConfigSeverity(f, config))
     .map((f) => applyTestOverrides(f, config, filePath, includeTests ?? false))
     .filter((f): f is Finding => f !== null)
-    .map((f) => applyConfigSeverity(f, config))
     .filter((f) => meetsMinSeverity(f, minSeverity))
     .sort((a, b) => {
       const order = { error: 0, warn: 1, info: 2 };
@@ -160,6 +169,5 @@ export function scanFile(
     });
 
   const aiScore = noAiScore ? 0 : computeAiScore(findings);
-
   return { filePath, relativePath, findings, aiScore };
 }

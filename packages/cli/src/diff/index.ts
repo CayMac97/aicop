@@ -21,8 +21,8 @@ export async function scanDiff(
 
   let changedFiles: string[] = [];
   try {
-    const diffSummary = await git.diff(['--name-only', ref, '--']);
-    const stagedSummary = await git.diff(['--name-only', '--cached', '--']);
+    const diffSummary = await git.diff(['--name-only', '--relative', ref, '--']);
+    const stagedSummary = await git.diff(['--name-only', '--relative', '--cached', '--']);
     changedFiles = [
       ...diffSummary.split('\n'),
       ...stagedSummary.split('\n'),
@@ -39,8 +39,15 @@ export async function scanDiff(
     logger.info(`No changed files found since ${ref}`);
   }
 
-  const supportedExtensions = /\.(ts|tsx|js|jsx)$/;
+  const supportedExtensions = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
   const filteredFiles = changedFiles.filter((f) => supportedExtensions.test(f));
+
+  if (filteredFiles.length === 0) {
+    return {
+      result: { files: [], aiScore: 100, errorCount: 0, warnCount: 0, infoCount: 0, filesScanned: 0, scanDurationMs: 0, categoryScores: { security: 100, aiSmell: 100, techDebt: 100 }, topIssues: [], skippedVendorFiles: 0, parseErrors: 0, totalFindings: 0, filesWithIssues: 0 },
+      diffHeader: buildDiffHeader(ref, []),
+    };
+  }
 
   const diffOptions: ScanOptions = {
     ...options,

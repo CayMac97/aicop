@@ -55,6 +55,7 @@ function isUserInputExpr(node: TSESTree.Node, taintResult: TaintResult, parentMa
 function isSuspiciousString(n: TSESTree.Node): boolean {
   if (!isStringLiteral(n)) return false;
   const val = String((n as TSESTree.StringLiteral).value);
+  if (val.includes('<') && val.includes('>')) return false; // Likely HTML (XSS payload), not a file path
   return val.includes('/') || val.includes('\\') || val.includes('dir') || val.includes('path') || val.includes('file');
 }
 
@@ -87,16 +88,23 @@ function checkFsCall(node: TSESTree.CallExpression, source: string, filePath: st
       current.type === 'SwitchStatement' ||
       current.type === 'LogicalExpression'
     ) {
-      walk(current, {
-        CallExpression(cNode) {
-          const call = cNode as TSESTree.CallExpression;
-          if (isMemberExpression(call.callee) && isIdentifier(call.callee.property)) {
-            if (call.callee.property.name === 'startsWith') {
-              hasGuard = true;
+      let conditionNode: TSESTree.Node | undefined;
+      if (current.type === 'IfStatement') conditionNode = current.test;
+      else if (current.type === 'ConditionalExpression') conditionNode = current.test;
+      else if (current.type === 'LogicalExpression') conditionNode = current.left;
+      
+      if (conditionNode) {
+        walk(conditionNode, {
+          CallExpression(cNode) {
+            const call = cNode as TSESTree.CallExpression;
+            if (isMemberExpression(call.callee) && isIdentifier(call.callee.property)) {
+              if (call.callee.property.name === 'startsWith') {
+                hasGuard = true;
+              }
             }
           }
-        }
-      });
+        });
+      }
       if (hasGuard) break;
     }
     current = parentMap.get(current);
@@ -137,9 +145,26 @@ function checkSendFile(node: TSESTree.CallExpression, source: string, filePath: 
       current.type === 'SwitchStatement' ||
       current.type === 'LogicalExpression'
     ) {
-      // In a real implementation we'd check if the guard is sufficient
-      hasGuard = true;
-      break;
+      // res.sendFile isn't guarded simply by being in an if statement.
+      // Need real path validation.
+      let conditionNode: TSESTree.Node | undefined;
+      if (current.type === 'IfStatement') conditionNode = current.test;
+      else if (current.type === 'ConditionalExpression') conditionNode = current.test;
+      else if (current.type === 'LogicalExpression') conditionNode = current.left;
+
+      if (conditionNode) {
+        walk(conditionNode, {
+          CallExpression(cNode) {
+            const call = cNode as TSESTree.CallExpression;
+            if (isMemberExpression(call.callee) && isIdentifier(call.callee.property)) {
+              if (call.callee.property.name === 'startsWith' || call.callee.property.name === 'resolve') {
+                hasGuard = true;
+              }
+            }
+          }
+        });
+      }
+      if (hasGuard) break;
     }
     current = parentMap.get(current);
   }
@@ -177,16 +202,23 @@ function checkPathJoin(node: TSESTree.CallExpression, source: string, filePath: 
       current.type === 'SwitchStatement' ||
       current.type === 'LogicalExpression'
     ) {
-      walk(current, {
-        CallExpression(cNode) {
-          const call = cNode as TSESTree.CallExpression;
-          if (isMemberExpression(call.callee) && isIdentifier(call.callee.property)) {
-            if (call.callee.property.name === 'startsWith') {
-              hasGuard = true;
+      let conditionNode: TSESTree.Node | undefined;
+      if (current.type === 'IfStatement') conditionNode = current.test;
+      else if (current.type === 'ConditionalExpression') conditionNode = current.test;
+      else if (current.type === 'LogicalExpression') conditionNode = current.left;
+      
+      if (conditionNode) {
+        walk(conditionNode, {
+          CallExpression(cNode) {
+            const call = cNode as TSESTree.CallExpression;
+            if (isMemberExpression(call.callee) && isIdentifier(call.callee.property)) {
+              if (call.callee.property.name === 'startsWith') {
+                hasGuard = true;
+              }
             }
           }
-        }
-      });
+        });
+      }
       if (hasGuard) break;
     }
     current = parentMap.get(current);
@@ -206,16 +238,9 @@ function checkPathJoin(node: TSESTree.CallExpression, source: string, filePath: 
   };
 }
 
-function isPathLikeString(node: TSESTree.Node): boolean {
-  if (!isStringLiteral(node)) return false;
-  const val = String((node as TSESTree.StringLiteral).value);
-  return val.startsWith('/') || val.startsWith('./') || val.startsWith('../');
-}
 
-function isDirnameOrRelPath(node: TSESTree.Node): boolean {
-  if (isIdentifier(node) && (node as TSESTree.Identifier).name === '__dirname') return true;
-  return isPathLikeString(node);
-}
+
+
 
 function checkPathConcatBinary(node: TSESTree.BinaryExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   if (node.operator !== '+') return null;
@@ -330,7 +355,7 @@ const rule: Rule = {
           const dedupeKey = `${crossCall.externalFilePath}:${getLine(node)}`;
           if (reportedExternalLocations.has(dedupeKey)) return;
           
-          const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map() };
+          const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map(), sanitizedExpressions: new Set<string>() };
           const fsF = checkFsCall(node, source, crossCall.externalFilePath, crossTaintResult, extParentMap);
           if (fsF) {
             reportedExternalLocations.add(dedupeKey);

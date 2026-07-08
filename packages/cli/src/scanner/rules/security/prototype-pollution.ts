@@ -41,8 +41,9 @@ function collectLocalObjectVars(ast: ParsedAST): Set<string> {
   return vars;
 }
 
-function checkForInLoop(node: TSESTree.ForInStatement, source: string, filePath: string, localObjectVars: Set<string>): Finding | null {
+function checkForInLoop(node: TSESTree.ForInStatement, source: string, filePath: string, localObjectVars: Set<string>, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   if (node.right.type === 'Identifier' && localObjectVars.has((node.right as TSESTree.Identifier).name)) return null;
+  if (!isUserInputArg(node.right, taintResult, parentMap)) return null;
   const body = node.body;
   const stmts = body.type === 'BlockStatement'
     ? (body as TSESTree.BlockStatement).body
@@ -171,7 +172,7 @@ const rule: Rule = {
         if (finding) findings.push(finding);
       },
       ForInStatement(rawNode) {
-        const finding = checkForInLoop(rawNode as TSESTree.ForInStatement, source, filePath, localObjectVars);
+        const finding = checkForInLoop(rawNode as TSESTree.ForInStatement, source, filePath, localObjectVars, taintResult, parentMap);
         if (finding) findings.push(finding);
       },
     });

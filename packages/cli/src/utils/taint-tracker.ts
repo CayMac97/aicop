@@ -69,6 +69,14 @@ export function isDynamicExpr(n: TSESTree.Expression, taintResult: TaintResult, 
     return isDynamicExpr(be.left as TSESTree.Expression, taintResult, parentMap) ||
            isDynamicExpr(be.right as TSESTree.Expression, taintResult, parentMap);
   }
+  if (n.type === 'LogicalExpression') {
+    const le = n as TSESTree.LogicalExpression;
+    return isDynamicExpr(le.left as TSESTree.Expression, taintResult, parentMap) ||
+           isDynamicExpr(le.right as TSESTree.Expression, taintResult, parentMap);
+  }
+  if (n.type === 'AwaitExpression') {
+    return isDynamicExpr((n as TSESTree.AwaitExpression).argument as TSESTree.Expression, taintResult, parentMap);
+  }
   if (n.type === 'CallExpression') {
     const ce = n as TSESTree.CallExpression;
     if (isMemberExpression(ce.callee) && isIdentifier(ce.callee.property)) {
@@ -86,6 +94,20 @@ export function isDynamicExpr(n: TSESTree.Expression, taintResult: TaintResult, 
 }
 
 const REQ_USER_INPUT_PROPS = new Set(['body', 'query', 'params', 'headers', 'cookies']);
+
+function astToString(node: TSESTree.Node): string | null {
+  if (isIdentifier(node)) return node.name;
+  if (node.type === 'ThisExpression') return 'this';
+  if (isMemberExpression(node)) {
+    const obj = astToString(node.object);
+    let prop = '';
+    if (isIdentifier(node.property)) prop = node.property.name;
+    else if (node.property.type === 'Literal') prop = String(node.property.value);
+    
+    if (obj && prop) return `${obj}.${prop}`;
+  }
+  return null;
+}
 
 export function isDirectUserInputExpr(node: TSESTree.Node): boolean {
   if (node.type === 'TSAsExpression' || node.type === 'TSNonNullExpression') {
@@ -109,17 +131,33 @@ export function isDirectUserInputExpr(node: TSESTree.Node): boolean {
   return false;
 }
 
-export function isTaintedExpr(node: TSESTree.Node, tainted: Set<string>): boolean {
+export function isTaintedExpr(node: TSESTree.Node, tainted: Set<string>, sanitizedExpressions: Set<string>): boolean {
   if (isDirectUserInputExpr(node)) return true;
   if (isTaintedNode(node, tainted)) return true;
+  
+  const str = astToString(node);
+  if (str && sanitizedExpressions.has(str)) return false;
+
+  if (isMemberExpression(node)) {
+    let current: TSESTree.Node = node;
+    while (isMemberExpression(current)) current = current.object;
+    if (isTaintedExpr(current, tainted, sanitizedExpressions)) return true;
+  }
+
   if (node.type === 'ArrayExpression') {
-    return node.elements.some(e => e && e.type !== 'SpreadElement' && isTaintedExpr(e, tainted));
+    return node.elements.some(e => e && e.type !== 'SpreadElement' && isTaintedExpr(e, tainted, sanitizedExpressions));
   }
   if (node.type === 'BinaryExpression' && node.operator === '+') {
-    return isTaintedExpr(node.left, tainted) || isTaintedExpr(node.right, tainted);
+    return isTaintedExpr(node.left, tainted, sanitizedExpressions) || isTaintedExpr(node.right, tainted, sanitizedExpressions);
+  }
+  if (node.type === 'LogicalExpression') {
+    return isTaintedExpr(node.left, tainted, sanitizedExpressions) || isTaintedExpr(node.right, tainted, sanitizedExpressions);
+  }
+  if (node.type === 'AwaitExpression') {
+    return isTaintedExpr((node as TSESTree.AwaitExpression).argument, tainted, sanitizedExpressions);
   }
   if (node.type === 'TemplateLiteral') {
-    return node.expressions.some(expr => isTaintedExpr(expr, tainted));
+    return node.expressions.some(expr => isTaintedExpr(expr, tainted, sanitizedExpressions));
   }
   if (node.type === 'CallExpression') {
     const call = node as TSESTree.CallExpression;
@@ -127,35 +165,37 @@ export function isTaintedExpr(node: TSESTree.Node, tainted: Set<string>): boolea
       const me = call.callee as TSESTree.MemberExpression;
       if (isIdentifier(me.property)) {
         const method = me.property.name;
-        const TAINT_PRESERVING_METHODS = new Set(['trim', 'toLowerCase', 'toUpperCase', 'substring', 'slice', 'replace', 'replaceAll', 'concat', 'toString', 'join', 'split']);
+        const TAINT_PRESERVING_METHODS = new Set(['trim', 'toLowerCase', 'toUpperCase', 'substring', 'slice', 'replace', 'replaceAll', 'concat', 'toString', 'join', 'split', 'map', 'filter', 'reduce', 'flat', 'flatMap']);
         if (TAINT_PRESERVING_METHODS.has(method)) {
-          return isTaintedExpr(me.object, tainted);
+          return isTaintedExpr(me.object, tainted, sanitizedExpressions);
         }
         if (isIdentifier(me.object) && me.object.name === 'Object' && method === 'fromEntries') {
-          if (call.arguments[0]) return isTaintedExpr(call.arguments[0], tainted);
+          if (call.arguments[0]) return isTaintedExpr(call.arguments[0], tainted, sanitizedExpressions);
         }
       }
     }
     if (isIdentifier(call.callee) && (call.callee.name === 'String' || call.callee.name === 'Number')) {
-      if (call.arguments[0]) return isTaintedExpr(call.arguments[0], tainted);
+      if (call.arguments[0]) return isTaintedExpr(call.arguments[0], tainted, sanitizedExpressions);
     }
   }
   return false;
 }
 
-export function buildTaintMap(ast: ParsedAST): Set<string> {
+export function buildTaintMap(ast: ParsedAST): { tainted: Set<string>, sanitizedExpressions: Set<string> } {
   const tainted = new Set<string>();
+  const sanitizedExpressions = new Set<string>();
 
   walk(ast, {
-    // aicop-ignore tech-debt/cyclomatic-complexity
-    VariableDeclarator(rawNode, parentNode) {
+    VariableDeclarator(rawNode) {
       const node = rawNode as TSESTree.VariableDeclarator;
       if (!node.init) return;
 
       if (node.id.type === 'Identifier') {
         const name = (node.id as TSESTree.Identifier).name;
-        if (isTaintedExpr(node.init, tainted)) {
+        if (isTaintedExpr(node.init, tainted, sanitizedExpressions)) {
           tainted.add(name);
+        } else if (node.init.type === 'CallExpression' && isIdentifier(node.init.callee) && node.init.callee.name === 'sanitize') {
+          sanitizedExpressions.add(name);
         }
         return;
       }
@@ -180,36 +220,23 @@ export function buildTaintMap(ast: ParsedAST): Set<string> {
       const node = rawNode as TSESTree.AssignmentExpression;
       if (node.left.type === 'Identifier') {
         const name = (node.left as TSESTree.Identifier).name;
-        if (isTaintedExpr(node.right, tainted)) {
+        if (isTaintedExpr(node.right, tainted, sanitizedExpressions)) {
           tainted.add(name);
+        } else {
+          tainted.delete(name);
         }
       } else if (node.left.type === 'MemberExpression') {
         const me = node.left as TSESTree.MemberExpression;
         if (isIdentifier(me.object)) {
-          if (isTaintedExpr(node.right, tainted)) {
+          if (isTaintedExpr(node.right, tainted, sanitizedExpressions)) {
             tainted.add((me.object as TSESTree.Identifier).name);
           }
         }
       }
-    },
-
-    CallExpression(rawNode) {
-      const node = rawNode as TSESTree.CallExpression;
-      if (isMemberExpression(node.callee) && isIdentifier(node.callee.object) && node.callee.object.name === 'Object') {
-        if (isIdentifier(node.callee.property) && node.callee.property.name === 'assign') {
-          if (node.arguments.length >= 2) {
-            const firstArg = node.arguments[0];
-            const sources = node.arguments.slice(1);
-            if (isIdentifier(firstArg) && sources.some(s => isTaintedExpr(s, tainted))) {
-              tainted.add(firstArg.name);
-            }
-          }
-        }
-      }
-    },
+    }
   });
 
-  return tainted;
+  return { tainted, sanitizedExpressions };
 }
 
 export function isTaintedNode(node: TSESTree.Node, tainted: Set<string>): boolean {
@@ -219,17 +246,17 @@ export function isTaintedNode(node: TSESTree.Node, tainted: Set<string>): boolea
   return isIdentifier(node) && tainted.has((node as TSESTree.Identifier).name);
 }
 
-export function isArgTainted(node: TSESTree.Node, tainted: Set<string>): boolean {
-  if (isTaintedNode(node, tainted) || isTaintedExpr(node, tainted)) return true;
+export function isArgTainted(node: TSESTree.Node, tainted: Set<string>, sanitized: Set<string>): boolean {
+  if (isTaintedNode(node, tainted) || isTaintedExpr(node, tainted, sanitized)) return true;
   if (node.type === 'ObjectExpression') {
     return (node as TSESTree.ObjectExpression).properties.some(p => {
-      if (p.type === 'Property') return isArgTainted(p.value, tainted);
-      if (p.type === 'SpreadElement') return isArgTainted(p.argument, tainted);
+      if (p.type === 'Property') return isArgTainted(p.value, tainted, sanitized);
+      if (p.type === 'SpreadElement') return isArgTainted(p.argument, tainted, sanitized);
       return false;
     });
   }
   if (node.type === 'ArrayExpression') {
-    return (node as TSESTree.ArrayExpression).elements.some(e => e && isArgTainted(e, tainted));
+    return (node as TSESTree.ArrayExpression).elements.some(e => e && isArgTainted(e, tainted, sanitized));
   }
   return false;
 }
@@ -239,13 +266,20 @@ export function isNodeContextuallyTainted(
   taintResult: TaintResult,
   parentMap: Map<TSESTree.Node, TSESTree.Node>
 ): boolean {
-  if (isTaintedExpr(node, taintResult.globalTaints)) return true;
+  if (isTaintedExpr(node, taintResult.globalTaints, taintResult.sanitizedExpressions)) {
+    return true;
+  }
 
   let current: TSESTree.Node | undefined = parentMap.get(node);
   while (current) {
     if (current.type === 'FunctionDeclaration' || current.type === 'ArrowFunctionExpression' || current.type === 'FunctionExpression') {
+      const funcName = (current as any).id?.name || 'anonymous';
       const localTaints = taintResult.localTaints.get(current);
-      if (localTaints && isTaintedExpr(node, localTaints)) return true;
+      if (localTaints) {
+        if (isTaintedExpr(node, localTaints, taintResult.sanitizedExpressions)) {
+          return true;
+        }
+      }
     }
     current = parentMap.get(current);
   }
@@ -257,7 +291,11 @@ export function isArgContextuallyTainted(
   taintResult: TaintResult,
   parentMap: Map<TSESTree.Node, TSESTree.Node>
 ): boolean {
-  if (isNodeContextuallyTainted(node, taintResult, parentMap)) return true;
+  console.log(`[TaintTracker] checking isArgContextuallyTainted for ${astToString(node)}`);
+  if (isNodeContextuallyTainted(node, taintResult, parentMap)) {
+    console.log(`[TaintTracker] isNodeContextuallyTainted returned true for ${astToString(node)}`);
+    return true;
+  }
   if (node.type === 'ObjectExpression') {
     return (node as TSESTree.ObjectExpression).properties.some(p => {
       if (p.type === 'Property') return isArgContextuallyTainted(p.value, taintResult, parentMap);
@@ -272,16 +310,14 @@ export function isArgContextuallyTainted(
 }
 
 export function buildContextualTaintMap(ast: ParsedAST, filePath: string): TaintResult {
-  const globalTaints = buildTaintMap(ast);
+  const { tainted: globalTaints, sanitizedExpressions } = buildTaintMap(ast);
   const localTaints = new Map<TSESTree.Node, Set<string>>();
   
-  // Need parent map for contextual taint checks during iteration
   const parentMap = new Map<TSESTree.Node, TSESTree.Node>();
   walk(ast, {
     enter(node, parent) { if (parent) parentMap.set(node, parent); }
   });
 
-  const imports = new Map<string, { source: string; name: string }>();
   const namespaceImports = new Map<string, string>();
   const localFunctions = new Map<string, TSESTree.Node>();
   
@@ -293,11 +329,7 @@ export function buildContextualTaintMap(ast: ParsedAST, filePath: string): Taint
       if (node.source.type !== 'Literal' || typeof node.source.value !== 'string') return;
       const source = node.source.value;
       for (const spec of node.specifiers) {
-        if (spec.type === 'ImportSpecifier') {
-          imports.set(spec.local.name, { source, name: spec.imported.name });
-        } else if (spec.type === 'ImportDefaultSpecifier') {
-          imports.set(spec.local.name, { source, name: 'default' });
-        } else if (spec.type === 'ImportNamespaceSpecifier') {
+        if (spec.type === 'ImportNamespaceSpecifier') {
           namespaceImports.set(spec.local.name, source);
         }
       }
@@ -316,16 +348,20 @@ export function buildContextualTaintMap(ast: ParsedAST, filePath: string): Taint
     }
   });
 
-  if (functionCount > 500) return { globalTaints, localTaints };
+  if (functionCount > 500) return { globalTaints, localTaints, sanitizedExpressions };
+
+  for (const funcNode of localFunctions.values()) {
+    localTaints.set(funcNode, new Set<string>());
+  }
 
   const isCurrentlyTainted = (node: TSESTree.Node, funcContext?: TSESTree.Node): boolean => {
-    if (isTaintedExpr(node, globalTaints)) return true;
+    if (isTaintedExpr(node, globalTaints, sanitizedExpressions)) return true;
     let curr = funcContext || parentMap.get(node);
     let isTainted = false;
     while (curr) {
       if (curr.type === 'FunctionDeclaration' || curr.type === 'ArrowFunctionExpression' || curr.type === 'FunctionExpression') {
         const lt = localTaints.get(curr);
-        if (lt && isTaintedExpr(node, lt)) {
+        if (lt && isTaintedExpr(node, lt, sanitizedExpressions)) {
           isTainted = true;
           break;
         }
@@ -349,11 +385,8 @@ export function buildContextualTaintMap(ast: ParsedAST, filePath: string): Taint
   };
 
   let changed = true;
-  let iterations = 0;
-  
-  while (changed && iterations < 5) {
+  while (changed) {
     changed = false;
-    iterations++;
     
     walk(ast, {
       CallExpression(rawNode) {
@@ -374,7 +407,6 @@ export function buildContextualTaintMap(ast: ParsedAST, filePath: string): Taint
         const targetNode = localFunctions.get(funcName);
         if (!targetNode) return;
         
-        // Find which args are tainted
         node.arguments.forEach((arg, index) => {
           if (isCurrentlyTainted(arg)) {
             // @ts-expect-error params exist
@@ -382,71 +414,99 @@ export function buildContextualTaintMap(ast: ParsedAST, filePath: string): Taint
             const param = params[index];
             if (!param) return;
             
-            if (!localTaints.has(targetNode)) localTaints.set(targetNode, new Set());
             const lt = localTaints.get(targetNode)!;
-            
             const beforeSize = lt.size;
-            extractParamNames(param).forEach(name => lt.add(name));
+            extractPatternIdentifiers(param, lt);
             if (lt.size > beforeSize) changed = true;
           }
         });
       }
     });
 
-    // Propagate assignments inside functions
-    if (changed) {
-      for (const [funcNode, lt] of localTaints.entries()) {
-        const beforeSize = lt.size;
-        // @ts-expect-error body exists
-        walk(funcNode.body, {
-          VariableDeclarator(vNode) {
-            const vd = vNode as TSESTree.VariableDeclarator;
-            if (vd.id.type === 'Identifier' && vd.init && isCurrentlyTainted(vd.init, funcNode)) {
+    for (const [funcNode, lt] of localTaints.entries()) {
+      const beforeSize = lt.size;
+      // @ts-expect-error body exists
+      walk(funcNode.body, {
+        VariableDeclarator(vNode) {
+          const vd = vNode as TSESTree.VariableDeclarator;
+          if (!vd.init) return;
+          if (isCurrentlyTainted(vd.init, funcNode)) {
+            console.log(`[TaintTracker] vd.init is tainted for ID ${vd.id.type}`);
+            if (vd.id.type === 'Identifier') {
               lt.add(vd.id.name);
+              console.log(`[TaintTracker] added to lt: ${vd.id.name}`);
+            } else if (vd.id.type === 'ObjectPattern' || vd.id.type === 'ArrayPattern') {
+              extractPatternIdentifiers(vd.id, lt);
             }
-          },
-          AssignmentExpression(aNode) {
-            const ae = aNode as TSESTree.AssignmentExpression;
-            if (ae.left.type === 'Identifier' && isCurrentlyTainted(ae.right, funcNode)) {
+          }
+        },
+        AssignmentExpression(aNode) {
+          const ae = aNode as TSESTree.AssignmentExpression;
+          if (ae.left.type === 'Identifier') {
+            if (isCurrentlyTainted(ae.right, funcNode)) {
               lt.add(ae.left.name);
+            } else if (lt.has(ae.left.name)) {
+              lt.delete(ae.left.name);
             }
-          },
-          CallExpression(cNode) {
-            const call = cNode as TSESTree.CallExpression;
-            if (isMemberExpression(call.callee) && isIdentifier(call.callee.object) && call.callee.object.name === 'Object') {
-              if (isIdentifier(call.callee.property) && call.callee.property.name === 'assign') {
-                if (call.arguments.length >= 2) {
-                  const firstArg = call.arguments[0];
-                  const sources = call.arguments.slice(1);
-                  if (isIdentifier(firstArg) && sources.some(s => isCurrentlyTainted(s, funcNode))) {
-                    lt.add(firstArg.name);
+          } else if (ae.left.type === 'MemberExpression') {
+            const str = astToString(ae.left);
+            if (str) {
+              if (isCurrentlyTainted(ae.right, funcNode)) {
+                if (str.startsWith('this.')) {
+                  if (!globalTaints.has(str)) {
+                    globalTaints.add(str);
+                    changed = true;
                   }
+                } else {
+                  lt.add(str);
+                }
+              } else if (lt.has(str)) {
+                lt.delete(str);
+              }
+            }
+          }
+        },
+        CallExpression(cNode) {
+          const call = cNode as TSESTree.CallExpression;
+          if (isMemberExpression(call.callee) && isIdentifier(call.callee.object) && call.callee.object.name === 'Object') {
+            if (isIdentifier(call.callee.property) && call.callee.property.name === 'assign') {
+              if (call.arguments.length >= 2) {
+                const firstArg = call.arguments[0];
+                const sources = call.arguments.slice(1);
+                if (isIdentifier(firstArg) && sources.some(s => isCurrentlyTainted(s, funcNode))) {
+                  lt.add(firstArg.name);
                 }
               }
             }
           }
-        });
-        if (lt.size > beforeSize) changed = true;
-      }
+        }
+      });
+      if (lt.size > beforeSize) changed = true;
     }
 
-    // Find taints returned
     const taintsReturn = new Set<string>();
     for (const [funcName, funcNode] of localFunctions.entries()) {
-      const lt = localTaints.get(funcNode);
-      if (!lt) continue;
+      let returnsTaint = false;
       // @ts-expect-error body exists
       walk(funcNode.body, {
-        ReturnStatement(retNode) {
-          const ret = retNode as TSESTree.ReturnStatement;
+        ReturnStatement(rNode) {
+          const ret = rNode as TSESTree.ReturnStatement;
           if (ret.argument && isCurrentlyTainted(ret.argument, funcNode)) {
-            taintsReturn.add(funcName);
+            returnsTaint = true;
+          }
+        },
+        CallExpression(cNode) {
+          const call = cNode as TSESTree.CallExpression;
+          if (isIdentifier(call.callee) && (call.callee.name === 'resolve' || call.callee.name === 'next')) {
+            if (call.arguments[0] && isCurrentlyTainted(call.arguments[0], funcNode)) {
+              returnsTaint = true;
+            }
           }
         }
       });
+      if (returnsTaint) taintsReturn.add(funcName);
     }
 
-    // Taint global vars receiving return values
     if (taintsReturn.size > 0) {
       walk(ast, {
         VariableDeclarator(rawNode) {
@@ -476,7 +536,7 @@ export function buildContextualTaintMap(ast: ParsedAST, filePath: string): Taint
     }
   }
 
-  return { globalTaints, localTaints };
+  return { globalTaints, localTaints, sanitizedExpressions };
 }
 
 export function buildExtendedTaintMap(ast: ParsedAST, filePath: string): Set<string> {
@@ -565,7 +625,7 @@ export function getCrossFileTaints(ast: ParsedAST, filePath: string, taintResult
 
       const taintedArgIndices = new Set<number>();
       node.arguments.forEach((arg, index) => {
-        if (isArgTainted(arg, taintResult.globalTaints)) {
+        if (isArgTainted(arg, taintResult.globalTaints, taintResult.sanitizedExpressions)) {
           taintedArgIndices.add(index);
         }
       });

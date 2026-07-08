@@ -3,7 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { isStringLiteral, getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
-import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult } from '../../../utils/taint-tracker.js';
+import { buildContextualTaintMap, isDynamicExpr, TaintResult } from '../../../utils/taint-tracker.js';
 import { buildParentMap } from '../../ast-walker.js';
 
 function checkEvalCall(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
@@ -24,22 +24,25 @@ function checkEvalCall(node: TSESTree.CallExpression, source: string, filePath: 
   };
 }
 
-function checkNewFunction(node: TSESTree.NewExpression, source: string, filePath: string): Finding | null {
+function checkNewFunction(node: TSESTree.NewExpression | TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   if (!isIdentifier(node.callee)) return null;
   if ((node.callee as TSESTree.Identifier).name !== 'Function') return null;
   const args = node.arguments;
   if (args.length === 0) return null;
-  // new Function('static', 'strings') — no dynamic input, not a code injection vector
-  if (args.every((a) => isStringLiteral(a as TSESTree.Expression))) return null;
+  
+  // Only flag if any argument is dynamic/tainted
+  const hasDynamic = args.some(a => isDynamicExpr(a as TSESTree.Expression, taintResult, parentMap));
+  if (!hasDynamic) return null;
+
   return {
     ruleId: 'security/eval-usage',
     severity: 'error',
-    message: 'new Function() usage detected — equivalent to eval()',
+    message: 'Function() constructed with dynamic input — equivalent to eval()',
     file: filePath,
     line: getLine(node),
     column: getColumn(node),
     snippet: extractSnippet(source, getLine(node)),
-    fix: 'Avoid new Function() as it executes arbitrary code. Refactor to use explicit logic.',
+    fix: 'Avoid Function() with dynamic input as it executes arbitrary code. Refactor to use explicit logic.',
   };
 }
 
@@ -50,15 +53,15 @@ function checkTimerWithString(node: TSESTree.CallExpression, source: string, fil
   const firstArg = node.arguments[0];
   if (!firstArg) return null;
   
-  const isString = isStringLiteral(firstArg as TSESTree.Expression);
-  const isTainted = isNodeContextuallyTainted(firstArg, taintResult, parentMap);
+  if (isStringLiteral(firstArg as TSESTree.Expression)) return null; // static strings are safe from code injection
   
-  if (!isString && !isTainted) return null;
+  const isDynamic = isDynamicExpr(firstArg as TSESTree.Expression, taintResult, parentMap);
+  if (!isDynamic) return null;
 
   return {
     ruleId: 'security/eval-usage',
     severity: 'error',
-    message: `${name}() called with a string argument or dynamic input — equivalent to eval()`,
+    message: `${name}() called with dynamic input — equivalent to eval() risk if string`,
     file: filePath,
     line: getLine(node),
     column: getColumn(node),
@@ -108,13 +111,15 @@ const rule: Rule = {
         const node = rawNode as TSESTree.CallExpression;
         const evalF = checkEvalCall(node, source, filePath);
         if (evalF) { findings.push(evalF); return; }
+        const funcCallF = checkNewFunction(node, source, filePath, taintResult, parentMap);
+        if (funcCallF) { findings.push(funcCallF); return; }
         const timerF = checkTimerWithString(node, source, filePath, taintResult, parentMap);
         if (timerF) { findings.push(timerF); return; }
         const scriptF = checkScriptDocumentWrite(node, source, filePath);
         if (scriptF) findings.push(scriptF);
       },
       NewExpression(rawNode) {
-        const finding = checkNewFunction(rawNode as TSESTree.NewExpression, source, filePath);
+        const finding = checkNewFunction(rawNode as TSESTree.NewExpression, source, filePath, taintResult, parentMap);
         if (finding) findings.push(finding);
       },
     });

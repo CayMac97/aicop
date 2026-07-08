@@ -3,7 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet, isTestFile } from '../../../utils/file-utils.js';
 import { isStringLiteral, getLine, getColumn, isMemberExpression, isIdentifier, isCallExpression } from '../../../utils/ast-helpers.js';
-import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult, getCrossFileTaints } from '../../../utils/taint-tracker.js';
+import { buildContextualTaintMap, isNodeContextuallyTainted, isArgContextuallyTainted, TaintResult, getCrossFileTaints } from '../../../utils/taint-tracker.js';
 import { buildParentMap } from '../../ast-walker.js';
 
 const USER_INPUT_PROPS = new Set(['body', 'query', 'params', 'headers']);
@@ -72,6 +72,64 @@ function isUserInput(node: TSESTree.Node, taintResult: TaintResult, parentMap: M
     if (be.operator !== '+') return false;
     return isUserInput(be.left, taintResult, parentMap) || isUserInput(be.right, taintResult, parentMap);
   }
+  if (node.type === 'CallExpression') {
+    const ce = node as TSESTree.CallExpression;
+    if (isMemberExpression(ce.callee) && isIdentifier(ce.callee.property) && ce.callee.property.name === 'join') {
+      if (ce.callee.object.type === 'ArrayExpression') {
+        return (ce.callee.object as TSESTree.ArrayExpression).elements.some(el => el && isUserInput(el, taintResult, parentMap));
+      }
+    }
+  }
+  return false;
+}
+
+function hasAllowlistValidation(node: TSESTree.Node, varName: string, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  let current: TSESTree.Node | undefined = node;
+  let hasGuard = false;
+  while (current) {
+    if (
+      current.type === 'IfStatement' ||
+      current.type === 'ConditionalExpression' ||
+      current.type === 'SwitchStatement' ||
+      current.type === 'LogicalExpression'
+    ) {
+      let conditionNode: TSESTree.Node | undefined;
+      if (current.type === 'IfStatement') conditionNode = current.test;
+      else if (current.type === 'ConditionalExpression') conditionNode = current.test;
+      else if (current.type === 'LogicalExpression') conditionNode = current.left;
+      
+      if (conditionNode) {
+        walk(conditionNode, {
+          CallExpression(rawNode) {
+            const cNode = rawNode as TSESTree.CallExpression;
+            if (isMemberExpression(cNode.callee)) {
+              const prop = cNode.callee.property;
+              if (isIdentifier(prop)) {
+                if (prop.name === 'test' || prop.name === 'includes' || prop.name === 'has' || prop.name === 'indexOf') hasGuard = true;
+              }
+            }
+          },
+          BinaryExpression(rawNode) {
+             const bNode = rawNode as TSESTree.BinaryExpression;
+             if (bNode.operator === '===' || bNode.operator === '==' || bNode.operator === '!==' || bNode.operator === '!=') {
+                if ((isIdentifier(bNode.left) && bNode.left.name === varName) || (isIdentifier(bNode.right) && bNode.right.name === varName)) {
+                   hasGuard = true;
+                }
+             }
+          }
+        });
+      }
+      if (hasGuard) break;
+    }
+    current = parentMap.get(current);
+  }
+  return hasGuard;
+}
+
+function isSafelyValidated(node: TSESTree.Node, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  if (isIdentifier(node)) {
+    return hasAllowlistValidation(node, node.name, parentMap);
+  }
   return false;
 }
 
@@ -106,6 +164,7 @@ function checkInnerHTML(node: TSESTree.AssignmentExpression, source: string, fil
   if (isStaticString(node.right)) return null;
   if (isSanitizedNode(node.right, sanitizedVars)) return null;
   if (!isUserInput(node.right, taintResult, parentMap)) return null;
+  if (isSafelyValidated(node.right, parentMap)) return null;
   return {
     ruleId: 'security/xss-vulnerabilities',
     severity: 'error',
@@ -128,6 +187,7 @@ function checkDocumentWrite(node: TSESTree.CallExpression, source: string, fileP
   const arg = node.arguments[0];
   if (!arg || isStaticString(arg as TSESTree.Expression)) return null;
   if (!isUserInput(arg, taintResult, parentMap)) return null;
+  if (isSafelyValidated(arg, parentMap)) return null;
   return {
     ruleId: 'security/xss-vulnerabilities',
     severity: 'error',
@@ -148,6 +208,7 @@ function checkInsertAdjacentHTML(node: TSESTree.CallExpression, source: string, 
   const htmlArg = node.arguments[1];
   if (!htmlArg || isStaticString(htmlArg as TSESTree.Expression)) return null;
   if (!isUserInput(htmlArg, taintResult, parentMap)) return null;
+  if (isSafelyValidated(htmlArg, parentMap)) return null;
   return {
     ruleId: 'security/xss-vulnerabilities',
     severity: 'error',
@@ -181,6 +242,7 @@ function checkDangerouslySetInnerHTML(node: TSESTree.JSXAttribute, source: strin
   if (htmlVal && isSanitizedNode(htmlVal, sanitizedVars)) return null;
   if (htmlVal && isStaticString(htmlVal as TSESTree.Expression)) return null;
   if (!htmlVal || !isUserInput(htmlVal, taintResult, parentMap)) return null;
+  if (isSafelyValidated(htmlVal, parentMap)) return null;
   return {
     ruleId: 'security/xss-vulnerabilities',
     severity: 'error',
@@ -207,6 +269,7 @@ function checkVueVHtml(node: TSESTree.JSXAttribute, source: string, filePath: st
   if (isSanitizedNode(valNode, sanitizedVars)) return null;
   if (isStaticString(valNode as TSESTree.Expression)) return null;
   if (!isUserInput(valNode, taintResult, parentMap)) return null;
+  if (isSafelyValidated(valNode, parentMap)) return null;
   
   return {
     ruleId: 'security/xss-vulnerabilities',
@@ -256,6 +319,7 @@ function checkResSend(node: TSESTree.CallExpression, source: string, filePath: s
   if (method !== 'send' && method !== 'write') return null;
   const arg = node.arguments[0];
   if (!arg || !isUserInput(arg, taintResult, parentMap)) return null;
+  if (isSafelyValidated(arg, parentMap)) return null;
   
   // Exclude cases where the argument is definitively an object (req.query, req.body, req.params)
   // because res.send(obj) sends JSON, which is not an HTML XSS sink.
@@ -293,6 +357,7 @@ function checkJQueryHtmlAndAppend(node: TSESTree.CallExpression, source: string,
   if (!arg) return null;
   if (isSanitizedNode(arg, sanitizedVars)) return null;
   if (!isUserInput(arg, taintResult, parentMap)) return null;
+  if (isSafelyValidated(arg, parentMap)) return null;
 
   return {
     ruleId: 'security/xss-vulnerabilities',
@@ -358,7 +423,7 @@ const rule: Rule = {
         // res.render() check
         if (isMemberExpression(node.callee) && isIdentifier(node.callee.object) && node.callee.object.name === 'res' && isIdentifier(node.callee.property) && node.callee.property.name === 'render') {
           const locals = node.arguments[1];
-          if (locals && isUserInput(locals, taintResult, parentMap)) {
+          if (locals && isUserInput(locals, taintResult, parentMap) && !isSafelyValidated(locals, parentMap)) {
             findings.push({
               ruleId: 'security/xss-vulnerabilities',
               severity: 'error',
@@ -380,6 +445,24 @@ const rule: Rule = {
         const vueFinding = checkVueVHtml(rawNode as TSESTree.JSXAttribute, source, filePath, sanitizedVars, taintResult, parentMap);
         if (vueFinding) findings.push(vueFinding);
       },
+      Property(rawNode) {
+        const node = rawNode as TSESTree.Property;
+        if (node.key.type === 'Identifier' && node.key.name === 'dangerouslySetInnerHTML') {
+          if (isArgContextuallyTainted(node.value, taintResult, parentMap) && !isSafelyValidated(node.value, parentMap)) {
+            findings.push({
+              ruleId: 'security/xss-vulnerabilities',
+              severity: 'error',
+              message: `dangerouslySetInnerHTML property assigned with user-controlled value — XSS risk`,
+              file: filePath,
+              line: getLine(node),
+              column: getColumn(node),
+              snippet: extractSnippet(source, getLine(node)),
+              fix: 'Sanitize HTML with DOMPurify before inserting it via dangerouslySetInnerHTML.',
+            });
+            flaggedLines.add(getLine(node));
+          }
+        }
+      }
     });
 
     if (hasHtmlContentType) {
@@ -410,7 +493,7 @@ const rule: Rule = {
           const dedupeKey = `${crossCall.externalFilePath}:${getLine(node)}:innerHTML`;
           if (reportedExternalLocations.has(dedupeKey)) return;
           
-          const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map() };
+          const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map(), sanitizedExpressions: new Set<string>() };
           const finding = checkInnerHTML(node, source, crossCall.externalFilePath, sanitizedVars, crossTaintResult, extParentMap);
           if (finding) {
             reportedExternalLocations.add(dedupeKey);
@@ -436,19 +519,19 @@ const rule: Rule = {
           let msg = '';
           let fix = '';
           
-          const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map() };
+          const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map(), sanitizedExpressions: new Set<string>() };
 
           const docWrite = checkDocumentWrite(node, source, crossCall.externalFilePath, crossTaintResult, extParentMap);
           if (docWrite) {
-            isVuln = true; msg = 'document.write'; fix = docWrite.fix;
+            isVuln = true; msg = 'document.write'; fix = docWrite.fix || '';
           } else {
             const adjHtml = checkInsertAdjacentHTML(node, source, crossCall.externalFilePath, crossTaintResult, extParentMap);
             if (adjHtml) {
-              isVuln = true; msg = 'insertAdjacentHTML'; fix = adjHtml.fix;
+              isVuln = true; msg = 'insertAdjacentHTML'; fix = adjHtml.fix || '';
             } else {
               const resSend = checkResSend(node, source, crossCall.externalFilePath, crossTaintResult, extParentMap);
               if (resSend) {
-                isVuln = true; msg = 'res.send'; fix = resSend.fix;
+                isVuln = true; msg = 'res.send'; fix = resSend.fix || '';
               }
             }
           }

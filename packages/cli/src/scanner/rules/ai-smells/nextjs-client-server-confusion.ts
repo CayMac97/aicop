@@ -5,12 +5,15 @@ export const nextjsClientServerConfusion: Rule = {
   id: 'ai-smell/nextjs-client-server-confusion',
   category: 'ai-smell',
   severity: 'warn',
+  name: 'Next.js Client-Server Confusion',
   description: 'Detects client-side hooks or browser globals in Next.js files missing "use client"',
+  why: 'Using client-side hooks like useState or accessing browser globals like window in a Server Component causes runtime crashes.',
+  fix: 'Add "use client" to the top of the file, or refactor the code into a separate client component.',
   check(ast: TSESTree.Node, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
     
-    // Only apply in app router typical files or standard tsx/jsx
-    if (!filePath.includes('.tsx') && !filePath.includes('.jsx')) {
+    // Only apply in Next.js App Router files
+    if (!filePath.match(/[\\/]app[\\/]/) || (!filePath.endsWith('.tsx') && !filePath.endsWith('.jsx'))) {
       return findings;
     }
 
@@ -32,24 +35,32 @@ export const nextjsClientServerConfusion: Rule = {
     function traverse(node: TSESTree.Node) {
       if (node.type === 'CallExpression' && node.callee.type === 'Identifier') {
         if (CLIENT_HOOKS.has(node.callee.name)) {
+          const lines = source.split('\n');
+          const snippet = lines[node.loc.start.line - 1] || '';
           findings.push({
             ruleId: 'ai-smell/nextjs-client-server-confusion',
             message: `Hook '${node.callee.name}' used in a file without 'use client'. This will crash in Next.js Server Components.`,
             severity: 'warn',
+            file: filePath,
             line: node.loc.start.line,
             column: node.loc.start.column,
-            suggestion: 'Add "use client" at the top of the file, or move this component to a client-side file.',
+            snippet: snippet.trim(),
+            fix: 'Add "use client" at the top of the file, or move this component to a client-side file.',
           });
         }
       } else if (node.type === 'Identifier' && BROWSER_GLOBALS.has(node.name)) {
         // We should skip checking properties of objects, only global identifiers
+        const lines = source.split('\n');
+        const snippet = lines[node.loc.start.line - 1] || '';
         findings.push({
           ruleId: 'ai-smell/nextjs-client-server-confusion',
           message: `Browser global '${node.name}' accessed in a Server Component context.`,
           severity: 'warn',
+          file: filePath,
           line: node.loc.start.line,
           column: node.loc.start.column,
-          suggestion: 'Ensure this code runs only on the client (e.g. inside useEffect or a "use client" component).',
+          snippet: snippet.trim(),
+          fix: 'Ensure this code runs only on the client (e.g. inside useEffect or a "use client" component).',
         });
       }
       

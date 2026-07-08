@@ -36,6 +36,15 @@ function isHardcodedPlaceholderReturn(body: TSESTree.BlockStatement, funcName: s
   return false;
 }
 
+function isTodoOnlyBody(node: TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression, source: string): boolean {
+  const body = node.body;
+  if (!body || body.type !== 'BlockStatement') return false;
+  if (body.body.length > 0) return false;
+  if (!body.range) return false;
+  const bodySource = source.substring(body.range[0], body.range[1]);
+  return TODO_PATTERN.test(bodySource);
+}
+
 function getFunctionName(
   node: TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression,
   parent?: TSESTree.Node | null
@@ -87,6 +96,18 @@ function checkFunction(
       fix: 'Implement the actual logic or mark clearly as a mock for testing purposes',
     };
   }
+  if (isTodoOnlyBody(node, source)) {
+    return {
+      ruleId: 'ai-smell/todo-stub-functions',
+      severity: 'warn',
+      message: `Function "${funcName || '(anonymous)'}" is empty except for a TODO/STUB comment`,
+      file: filePath,
+      line: getLine(node),
+      column: getColumn(node),
+      snippet: extractSnippet(source, getLine(node)),
+      fix: 'Implement the function body or remove it',
+    };
+  }
   return null;
 }
 
@@ -102,36 +123,6 @@ const rule: Rule = {
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
     const funcTypes = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression']);
-
-    // Collect function body line ranges so we only flag TODOs inside functions
-    const funcBodyRanges: Array<[number, number]> = [];
-    walk(ast, {
-      enter(rawNode) {
-        if (!funcTypes.has(rawNode.type)) return;
-        const fn = rawNode as TSESTree.FunctionDeclaration | TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression;
-        if (fn.body?.type === 'BlockStatement' && fn.body.loc) {
-          funcBodyRanges.push([fn.body.loc.start.line, fn.body.loc.end.line]);
-        }
-      },
-    });
-
-    const lines = source.split('\n');
-    lines.forEach((line, idx) => {
-      if (!TODO_PATTERN.test(line)) return;
-      const lineNum = idx + 1;
-      const insideFunction = funcBodyRanges.some(([start, end]) => lineNum > start && lineNum < end);
-      if (!insideFunction) return;
-      findings.push({
-        ruleId: 'ai-smell/todo-stub-functions',
-        severity: 'warn',
-        message: 'TODO/FIXME/STUB comment found in production code',
-        file: filePath,
-        line: lineNum,
-        column: 0,
-        snippet: line.trim(),
-        fix: 'Resolve the TODO or track it in your issue tracker, then remove the comment',
-      });
-    });
 
     walk(ast, {
       enter(rawNode, parentNode) {

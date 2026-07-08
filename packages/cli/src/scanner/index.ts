@@ -144,7 +144,7 @@ export async function scan(options: ScanOptions, onProgress?: (file: string) => 
       // Sequential scan
       for (const filePath of filesToScan) {
         onProgress?.(getRelativePath(filePath, basePath));
-        const result = scanFile(filePath, basePath, enabledRules, config, 'info', noAiScore, undefined, options.includeTests);
+        const result = scanFile(filePath, basePath, enabledRules, config, options.severity ?? 'info', noAiScore, preloadedSources[filePath], undefined, options.includeTests);
         fileResults.push(result);
       }
     } else {
@@ -157,16 +157,17 @@ export async function scan(options: ScanOptions, onProgress?: (file: string) => 
       const workers = chunks.map((chunk, i) => {
         workerResults.push([]);
         return new Promise<void>((resolve, reject) => {
-          const worker = new Worker(__filename, {
+          const worker = new Worker(path.join(__dirname, 'worker.js'), {
              workerData: {
                 files: chunk,
                 basePath,
                 config,
-                minSeverity: 'info',
+                minSeverity: options.severity ?? 'info',
                 noAiScore,
                 includeTests: options.includeTests ?? false,
                 ruleId: options.ruleId,
-                preloadedSources
+                preloadedSources,
+                globalSymbolTable: globalSymbolTable.getTable()
              }
           });
           worker.on('message', (msg) => {

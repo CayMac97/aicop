@@ -76,7 +76,7 @@ function estimateComplexity(total: number): string {
 }
 
 export function generateFixPrompt(scanResult: ScanResult, options: FixPromptOptions): string {
-  const { minSeverity = 'warn', targetPath } = options;
+  const { minSeverity = 'warn', targetPath, includeSnippets } = options;
   const allFindings = scanResult.files.flatMap((file) => file.findings);
   const filtered = allFindings.filter((finding) => severityAboveOrEqual(finding, minSeverity));
 
@@ -114,6 +114,10 @@ export function generateFixPrompt(scanResult: ScanResult, options: FixPromptOpti
 
       for (const finding of findings) {
         lines.push(`  → ${displayPath(finding.file, targetPath)} line ${finding.line} — ${summarizeFinding(finding)}`);
+        if (includeSnippets && finding.snippet) {
+          const safeSnippet = finding.snippet.slice(0, 300).replace(/```/g, '\\`\\`\\`');
+          lines.push(`    \`\`\`\n    ${safeSnippet}\n    \`\`\``);
+        }
       }
 
       lines.push('');

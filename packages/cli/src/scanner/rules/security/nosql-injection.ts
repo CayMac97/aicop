@@ -2,10 +2,8 @@ import { TSESTree } from '@typescript-eslint/typescript-estree';
 import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
-import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral } from '../../../utils/ast-helpers.js';
+import { isIdentifier, isMemberExpression, getLine, getColumn } from '../../../utils/ast-helpers.js';
 import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult, getCrossFileTaints } from '../../../utils/taint-tracker.js';
-import { crossFileCache } from '../../cross-file/cross-file-resolver.js';
-import { readFileContent } from '../../../utils/file-utils.js';
 
 const MONGO_QUERY_METHODS = new Set([
   'find',
@@ -167,13 +165,17 @@ function hasTypeOrPatternValidation(node: TSESTree.Node, varNames: string[], par
   let current: TSESTree.Node | undefined = node;
   let hasGuard = false;
   while (current) {
-    if (
-      current.type === 'IfStatement' ||
-      current.type === 'ConditionalExpression' ||
-      current.type === 'SwitchStatement' ||
-      current.type === 'LogicalExpression'
-    ) {
-      walk(current, {
+    let guardNode: TSESTree.Node | null = null;
+    if (current.type === 'IfStatement' || current.type === 'ConditionalExpression') {
+      guardNode = (current as any).test;
+    } else if (current.type === 'SwitchStatement') {
+      guardNode = (current as any).discriminant;
+    } else if (current.type === 'LogicalExpression') {
+      guardNode = (current as any).left;
+    }
+
+    if (guardNode) {
+      walk(guardNode, {
         UnaryExpression(rawNode) {
           const uNode = rawNode as TSESTree.UnaryExpression;
           if (uNode.operator === 'typeof') {
@@ -275,7 +277,7 @@ const rule: Rule = {
 
           let isVulnerable = false;
           for (const arg of node.arguments) {
-            const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map() };
+            const crossTaintResult: TaintResult = { globalTaints: crossCall.taintedParams, localTaints: new Map(), sanitizedExpressions: new Set<string>() };
             const res = checkNodeForNoSQLInjection(arg, crossTaintResult, extParentMap);
             if (res.isVuln) {
               const sourceNode = crossCall.awaitNode ?? crossCall.callNode;

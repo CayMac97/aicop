@@ -2,11 +2,11 @@ import { TSESTree } from '@typescript-eslint/typescript-estree';
 import { FixReplacement, RuleFixer, registerFixer } from './index.js';
 import { Finding, ParsedAST } from '../scanner/rules/types.js';
 import { walk } from '../scanner/ast-walker.js';
-import { isLiteral, isIdentifier, isMemberExpression } from '../utils/ast-helpers.js';
+import { isLiteral } from '../utils/ast-helpers.js';
 
 export const WeakCryptoFixer: RuleFixer = {
   ruleId: 'security/weak-crypto',
-  fix(source: string, ast: ParsedAST, findings: Finding[]): FixReplacement[] {
+  fix(_source: string, ast: ParsedAST, findings: Finding[]): FixReplacement[] {
     const replacements: FixReplacement[] = [];
 
     const saltFindings = findings.filter(f => f.message.includes('bcrypt salt rounds') && f.message.includes('too weak'));
@@ -59,7 +59,7 @@ export const WeakCryptoFixer: RuleFixer = {
         const node = rawNode as TSESTree.VariableDeclarator;
         if (!node.loc || !node.range || !node.init) return;
         
-        const isTarget = mathRandomFindings.some(f => f.line === node.loc!.start.line);
+        const isTarget = mathRandomFindings.some(f => f.line >= node.loc!.start.line && f.line <= node.loc!.end.line);
         if (!isTarget) return;
 
         if (node.init.range) {
@@ -74,7 +74,7 @@ export const WeakCryptoFixer: RuleFixer = {
         const node = rawNode as TSESTree.AssignmentExpression;
         if (!node.loc || !node.range) return;
         
-        const isTarget = mathRandomFindings.some(f => f.line === node.loc!.start.line);
+        const isTarget = mathRandomFindings.some(f => f.line >= node.loc!.start.line && f.line <= node.loc!.end.line);
         if (!isTarget) return;
 
         if (node.right.range) {
