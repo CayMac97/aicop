@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { parse } from '@typescript-eslint/typescript-estree';
 import { buildContextualTaintMap, getCrossFileTaints } from '../src/utils/taint-tracker.js';
 import { crossFileCache } from '../src/scanner/cross-file/cross-file-resolver.js';
-import { globalSymbolTable } from '../src/scanner/cross-file/global-symbol-table.js';
 import * as moduleResolver from '../src/scanner/cross-file/module-resolver.js';
 import path from 'node:path';
 
@@ -19,7 +18,6 @@ vi.mock('../src/scanner/cross-file/module-resolver.js', async (importOriginal) =
 describe('TaintTracker', () => {
   beforeEach(() => {
     crossFileCache.clear();
-    globalSymbolTable.clear();
     vi.mocked(moduleResolver.resolveLocalModule).mockImplementation((importPath: string) => {
       if (importPath === './db') return path.resolve('/app/db.js').replace(/\\/g, '/');
       return null;

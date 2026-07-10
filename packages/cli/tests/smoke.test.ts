@@ -21,6 +21,7 @@ function makeScanOpts(fixturePath: string, overrides: Partial<ScanOptions> = {})
     fix: false,
     noAiScore: false,
     watch: false,
+    includeTests: true,
     ...overrides,
   };
 }

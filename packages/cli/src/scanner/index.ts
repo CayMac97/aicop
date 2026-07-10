@@ -9,9 +9,6 @@ import { readFileContent, getRelativePath } from '../utils/file-utils.js';
 import { getEnabledRules, scanFile, PARSE_OPTIONS } from './scan-file.js';
 import { clearModuleCache } from './cross-file/module-resolver.js';
 import { crossFileCache } from './cross-file/cross-file-resolver.js';
-import { globalSymbolTable } from './cross-file/global-symbol-table.js';
-import { parse } from '@typescript-eslint/typescript-estree';
-import { runPhase1 } from './cross-file/phase1-parser.js';
 
 function chunkArray<T>(arr: T[], size: number): T[][] {
   const chunks = [];
@@ -78,7 +75,6 @@ function computeAIScore(files: FileScanResult[]): AIScoreResult {
 export async function scan(options: ScanOptions, onProgress?: (file: string) => void): Promise<ScanResult> {
   clearModuleCache();
   crossFileCache.clear();
-  globalSymbolTable.clear();
   const startTime = Date.now();
   const { config, noAiScore, ruleId, includeVendor } = options;
   try {
@@ -121,30 +117,11 @@ export async function scan(options: ScanOptions, onProgress?: (file: string) => 
       filesToScan.push(filePath);
     }
 
-    const preloadedSources: Record<string, string> = {};
-    logger.debug('Running Phase 1: building global symbol table...');
-    for (const filePath of filesToScan) {
-      try {
-        const source = readFileContent(filePath);
-        preloadedSources[filePath] = source;
-        const ext = path.extname(filePath).toLowerCase();
-        let ast;
-        try {
-          ast = parse(source, { ...PARSE_OPTIONS, jsx: ext === '.jsx' || ext === '.tsx' });
-        } catch {
-          try { ast = parse(source, { ...PARSE_OPTIONS, jsx: true }); } catch { continue; }
-        }
-        runPhase1(ast, filePath);
-      } catch { /* ignore unreadable files */ }
-    }
-    logger.debug('Phase 1 complete.');
-    crossFileCache.initWithSources(preloadedSources);
-
     if (filesToScan.length < 20) {
       // Sequential scan
       for (const filePath of filesToScan) {
         onProgress?.(getRelativePath(filePath, basePath));
-        const result = scanFile(filePath, basePath, enabledRules, config, options.severity ?? 'info', noAiScore, preloadedSources[filePath], undefined, options.includeTests);
+        const result = scanFile(filePath, basePath, enabledRules, config, options.severity ?? 'info', noAiScore, undefined, undefined, options.includeTests);
         fileResults.push(result);
       }
     } else {
@@ -165,9 +142,7 @@ export async function scan(options: ScanOptions, onProgress?: (file: string) => 
                 minSeverity: options.severity ?? 'info',
                 noAiScore,
                 includeTests: options.includeTests ?? false,
-                ruleId: options.ruleId,
-                preloadedSources,
-                globalSymbolTable: globalSymbolTable.getTable()
+                ruleId: options.ruleId
              }
           });
           worker.on('message', (msg) => {

@@ -3,8 +3,12 @@ import { readFileContent } from '../../utils/file-utils.js';
 import { resolveLocalModule } from './module-resolver.js';
 import { walk } from '../ast-walker.js';
 import { PARSE_OPTIONS } from '../scan-file.js';
-import { globalSymbolTable, ExportInfo } from './global-symbol-table.js';
-
+export interface ExportInfo {
+  filePath: string;
+  name: string;
+  node: TSESTree.Node;
+  isSafe: boolean;
+}
 class LRUCache<K, V> {
   private max: number;
   private map = new Map<K, V>();
@@ -76,11 +80,6 @@ class CrossFileCache {
 
   public getExportInfo(importPath: string, currentFilePath: string, exportName: string): ExportInfo | null {
     const absolutePath = resolveLocalModule(importPath, currentFilePath);
-    if (!absolutePath) return null;
-
-    const globalExport = globalSymbolTable.getExport(absolutePath, exportName);
-    if (globalExport) return globalExport;
-
     if (!this.parsedFiles.has(absolutePath)) {
       this.parseAndCacheFile(absolutePath);
     }
@@ -150,7 +149,6 @@ class CrossFileCache {
           if (d.type === 'FunctionDeclaration' && d.id) {
             const isSafe = isNodeSafe(d, d.id.name);
             exportsMap.set(d.id.name, { filePath, name: d.id.name, node: d, isSafe });
-            globalSymbolTable.addExport(filePath, d.id.name, d, isSafe);
           } else if (d.type === 'VariableDeclaration') {
             for (const declarator of d.declarations) {
               if (declarator.id.type === 'Identifier' && declarator.init) {
@@ -160,7 +158,6 @@ class CrossFileCache {
                 ) {
                   const isSafe = isNodeSafe(declarator.init, declarator.id.name);
                   exportsMap.set(declarator.id.name, { filePath, name: declarator.id.name, node: declarator.init, isSafe });
-                  globalSymbolTable.addExport(filePath, declarator.id.name, declarator.init, isSafe);
                 }
               }
             }
@@ -177,7 +174,6 @@ class CrossFileCache {
               if (extInfo) {
                 const isSafe = isNodeSafe(extInfo.node, exportedName);
                 exportsMap.set(exportedName, { filePath: extInfo.filePath, name: exportedName, node: extInfo.node, isSafe });
-                globalSymbolTable.addExport(filePath, exportedName, extInfo.node, isSafe, extInfo.filePath);
               }
             }
           }
@@ -190,7 +186,6 @@ class CrossFileCache {
               if (resolvedNode) {
                 const isSafe = isNodeSafe(resolvedNode, exportedName);
                 exportsMap.set(exportedName, { filePath, name: exportedName, node: resolvedNode, isSafe });
-                globalSymbolTable.addExport(filePath, exportedName, resolvedNode, isSafe);
               }
             }
           }
@@ -205,14 +200,12 @@ class CrossFileCache {
         ) {
           const isSafe = isNodeSafe(decl, 'default');
           exportsMap.set('default', { filePath, name: 'default', node: decl, isSafe });
-          globalSymbolTable.addExport(filePath, 'default', decl, isSafe);
         } else if (decl.type === 'Identifier') {
           const localName = (decl as TSESTree.Identifier).name;
           const resolvedNode = localDeclarations.get(localName);
           if (resolvedNode) {
             const isSafe = isNodeSafe(resolvedNode, 'default');
             exportsMap.set('default', { filePath, name: 'default', node: resolvedNode, isSafe });
-            globalSymbolTable.addExport(filePath, 'default', resolvedNode, isSafe);
           }
         }
       },
@@ -230,7 +223,6 @@ class CrossFileCache {
               for (const [name, info] of sourceExports.entries()) {
                 if (name !== 'default') {
                   exportsMap.set(name, info);
-                  globalSymbolTable.addExport(filePath, name, info.node, info.isSafe, info.filePath);
                 }
               }
             }
@@ -246,14 +238,12 @@ class CrossFileCache {
               const rightNode = expr.right.type === 'Identifier' ? (localDeclarations.get(expr.right.name) || expr.right) : expr.right;
               const isSafe = isNodeSafe(rightNode, 'default');
               exportsMap.set('default', { filePath, name: 'default', node: rightNode, isSafe });
-              globalSymbolTable.addExport(filePath, 'default', rightNode, isSafe);
             } else if (expr.right.type === 'ObjectExpression') {
               for (const prop of expr.right.properties) {
                 if (prop.type === 'Property' && prop.key.type === 'Identifier') {
                   const rightNode = prop.value.type === 'Identifier' ? (localDeclarations.get(prop.value.name) || prop.value) : prop.value;
                   const isSafe = isNodeSafe(rightNode, prop.key.name);
                   exportsMap.set(prop.key.name, { filePath, name: prop.key.name, node: rightNode, isSafe });
-                  globalSymbolTable.addExport(filePath, prop.key.name, rightNode, isSafe);
                 }
               }
             }
@@ -264,14 +254,12 @@ class CrossFileCache {
               const rightNode = expr.right.type === 'Identifier' ? (localDeclarations.get(expr.right.name) || expr.right) : expr.right;
               const isSafe = isNodeSafe(rightNode, name);
               exportsMap.set(name, { filePath, name, node: rightNode, isSafe });
-              globalSymbolTable.addExport(filePath, name, rightNode, isSafe);
             }
           } else if (me.object.type === 'Identifier' && me.object.name === 'exports' && me.property.type === 'Identifier') {
             const name = me.property.name;
             const rightNode = expr.right.type === 'Identifier' ? (localDeclarations.get(expr.right.name) || expr.right) : expr.right;
             const isSafe = isNodeSafe(rightNode, name);
             exportsMap.set(name, { filePath, name, node: rightNode, isSafe });
-            globalSymbolTable.addExport(filePath, name, rightNode, isSafe);
           }
         }
       }
