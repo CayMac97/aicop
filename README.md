@@ -1,7 +1,3 @@
-markdown
-
-
-<img width="639" height="314" alt="image" src="https://github.com/user-attachments/assets/d2e0448f-62ca-43dc-a3f5-988625b6bfac" />
 # 🛡 AICop
 **Your AI wrote bugs. AICop finds them.**  
 Catch security vulnerabilities, AI code smells, and tech debt — before you ship to production.
