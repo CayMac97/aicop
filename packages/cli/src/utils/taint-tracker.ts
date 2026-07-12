@@ -3,11 +3,11 @@ import { walk } from '../scanner/ast-walker.js';
 import { ParsedAST } from '../scanner/rules/types.js';
 import { isIdentifier, isMemberExpression } from './ast-helpers.js';
 import { crossFileCache } from '../scanner/cross-file/cross-file-resolver.js';
-import { resolveLocalModule } from '../scanner/cross-file/module-resolver.js';
 
 export interface TaintResult {
   globalTaints: Set<string>;
   localTaints: Map<TSESTree.Node, Set<string>>;
+  sanitizedExpressions: Set<string>;
 }
 
 function extractParamNames(param: TSESTree.Node): string[] {
@@ -34,6 +34,10 @@ function extractParamNames(param: TSESTree.Node): string[] {
     names.push(...extractParamNames((param as TSESTree.RestElement).argument));
   }
   return names;
+}
+
+function extractPatternIdentifiers(node: TSESTree.Node, taints: Set<string>): void {
+  extractParamNames(node).forEach(name => taints.add(name));
 }
 
 function unwrapAwait(node: TSESTree.Node): TSESTree.Node {
@@ -273,7 +277,6 @@ export function isNodeContextuallyTainted(
   let current: TSESTree.Node | undefined = parentMap.get(node);
   while (current) {
     if (current.type === 'FunctionDeclaration' || current.type === 'ArrowFunctionExpression' || current.type === 'FunctionExpression') {
-      const funcName = (current as any).id?.name || 'anonymous';
       const localTaints = taintResult.localTaints.get(current);
       if (localTaints) {
         if (isTaintedExpr(node, localTaints, taintResult.sanitizedExpressions)) {
@@ -309,7 +312,7 @@ export function isArgContextuallyTainted(
   return false;
 }
 
-export function buildContextualTaintMap(ast: ParsedAST, filePath: string): TaintResult {
+export function buildContextualTaintMap(ast: ParsedAST, _filePath: string): TaintResult {
   const { tainted: globalTaints, sanitizedExpressions } = buildTaintMap(ast);
   const localTaints = new Map<TSESTree.Node, Set<string>>();
   
@@ -672,11 +675,10 @@ export function getCrossFileTaints(ast: ParsedAST, filePath: string, taintResult
       if (targetNode.type !== 'FunctionDeclaration' && targetNode.type !== 'ArrowFunctionExpression' && targetNode.type !== 'FunctionExpression') return;
       
       const taintedParams = new Set<string>();
-      // @ts-expect-error params exist on these nodes
       const params = targetNode.params || [];
       params.forEach((param: TSESTree.Node, index: number) => {
         if (taintedArgIndices.has(index)) {
-          extractParamNames(param).forEach(name => taintedParams.add(name));
+          extractParamNames(param).forEach((name: string) => taintedParams.add(name));
         }
       });
 

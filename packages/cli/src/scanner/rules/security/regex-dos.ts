@@ -8,7 +8,7 @@ import { buildContextualTaintMap, buildParentMap, isDynamicExpr, TaintResult } f
 // Simplistic check for catastrophic backtracking patterns
 // This is not a full ReDoS analyzer, just catches the most obvious nested quantifiers like (a+)+
 const NESTED_QUANTIFIER = /(?:\([^)]+(?:\+|\*)\)[^)]*)+(?:\+|\*)/;
-const BAD_PATTERN = /([a-zA-Z0-9_-]+)\1+(?:\+|\*)/; // simple repetition `a+a+`
+const _BAD_PATTERN = /([a-zA-Z0-9_-]+)\1+(?:\+|\*)/; // simple repetition `a+a+`
 
 type RegexLiteral = TSESTree.Literal & {
   regex?: {

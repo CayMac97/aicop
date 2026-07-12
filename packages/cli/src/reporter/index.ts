@@ -2,11 +2,12 @@ import { ScanResult } from '../scanner/rules/types.js';
 import { formatTerminal } from './terminal.js';
 import { formatJson } from './json.js';
 import { formatHtml } from './html.js';
+import { formatSarif } from './sarif.js';
 import { renderSummary, renderHeader } from './summary.js';
 import { writeFile } from '../utils/file-utils.js';
 import { logger } from '../utils/logger.js';
 
-export type OutputFormat = 'terminal' | 'html' | 'json';
+export type OutputFormat = 'terminal' | 'html' | 'json' | 'sarif';
 
 export interface ReporterOptions {
   format: OutputFormat;
@@ -26,6 +27,17 @@ export async function report(result: ScanResult, options: ReporterOptions): Prom
         logger.info(`JSON report written to ${outputPath}`);
       } else {
         process.stdout.write(json + '\n');
+      }
+      return;
+    }
+
+    if (format === 'sarif') {
+      const sarif = formatSarif(result, version);
+      if (outputPath) {
+        await writeFile(outputPath, sarif);
+        logger.info(`SARIF report written to ${outputPath}`);
+      } else {
+        process.stdout.write(sarif + '\n');
       }
       return;
     }

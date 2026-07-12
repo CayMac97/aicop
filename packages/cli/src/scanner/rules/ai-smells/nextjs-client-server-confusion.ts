@@ -1,4 +1,3 @@
-import { TSESTree } from '@typescript-eslint/typescript-estree';
 import { Rule, Finding } from '../types.js';
 
 export const nextjsClientServerConfusion: Rule = {

@@ -10,7 +10,21 @@ export interface WalkVisitor {
 
 const SKIP_KEYS = new Set(['parent', 'tokens', 'comments', 'range', 'loc']);
 
+let currentSkipRanges: [number, number][] = [];
+
+export function setSkipRanges(ranges: [number, number][]) {
+  currentSkipRanges = ranges;
+}
+
 export function walk(root: TSESTree.Node | TSESTree.Program, visitor: WalkVisitor, parent: TSESTree.Node | null = null): void {
+  if (root.range) {
+    for (const r of currentSkipRanges) {
+      if (root.range[0] >= r[0] && root.range[1] <= r[1]) {
+        return;
+      }
+    }
+  }
+
   visitor.enter?.(root as TSESTree.Node, parent);
   const typeHandler = visitor[root.type];
   typeHandler?.(root as TSESTree.Node, parent);
@@ -67,6 +81,14 @@ export interface AsyncWalkVisitor {
 }
 
 export async function asyncWalk(root: TSESTree.Node | TSESTree.Program, visitor: AsyncWalkVisitor, parent: TSESTree.Node | null = null): Promise<void> {
+  if (root.range) {
+    for (const r of currentSkipRanges) {
+      if (root.range[0] >= r[0] && root.range[1] <= r[1]) {
+        return;
+      }
+    }
+  }
+
   if (visitor.enter) {
     await visitor.enter(root as TSESTree.Node, parent);
   }

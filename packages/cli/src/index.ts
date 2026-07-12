@@ -18,6 +18,9 @@ import type { OutputFormat } from './reporter/index.js';
 import { writeFile } from './utils/file-utils.js';
 import { generateFixPrompt } from './fix-prompt/index.js';
 import { copyToClipboard, showInteractiveGroups, runWatch, CliOptions, buildScanOptions, buildDisplayResult, isInteractiveSession, shouldShowFixPromptHint } from './cli-helpers.js';
+import { startMcpServer } from './mcp/server.js';
+import { runAgentWatcher } from './agent/watcher.js';
+import { generateSkeleton } from './context/skeleton.js';
 
 declare const __AISCOP_VERSION__: string | undefined;
 const VERSION: string = (typeof __AISCOP_VERSION__ !== 'undefined' ? __AISCOP_VERSION__ : null)
@@ -391,6 +394,38 @@ program
     await runScan(targetPath ?? '.', opts);
   });
 
+program
+  .command('mcp')
+  .description('Start the AICop MCP server for IDE integration')
+  .action(async () => {
+    try {
+      await startMcpServer();
+    } catch (err) {
+      console.error(chalk.red(`Failed to start MCP server: ${String(err)}`));
+      process.exit(1);
+    }
+  });
+
+program
+  .command('watch [path]')
+  .description('Run AICop in Native Agent Watch mode to automatically scan on edits')
+  .action(async (targetPath: string | undefined) => {
+    await runAgentWatcher(targetPath ?? '.');
+  });
+
+program
+  .command('skeleton <file>')
+  .description('Generate an AST-skeleton of a file (removes function bodies to save context tokens)')
+  .action(async (file: string) => {
+    try {
+      const skeleton = await generateSkeleton(file);
+      process.stdout.write(skeleton + '\n');
+    } catch (err) {
+      console.error(chalk.red(`Failed to generate skeleton: ${String(err)}`));
+      process.exit(1);
+    }
+  });
+
 async function writeOutput(displayResult: ScanResult, opts: CliOptions, ci: boolean, targetPath: string, isInteractive: boolean): Promise<void> {
   const format = opts.format as OutputFormat;
   const isFileOutput = format !== 'terminal' || Boolean(opts.output);
@@ -420,7 +455,9 @@ async function handleScanResult(result: ScanResult, opts: CliOptions, ci: boolea
     if (ci && code !== 0) {
       process.stderr.write(`\nThreshold exceeded — exit code ${code}\n`);
     }
-    process.exit(code);
+    if (!opts.watch) {
+      process.exit(code);
+    }
   } catch (err) {
     throw new Error(`Report failed: ${String(err)}`);
   }

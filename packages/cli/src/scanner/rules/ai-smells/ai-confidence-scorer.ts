@@ -72,7 +72,7 @@ const rule: Rule = {
   why: 'AI-generated code has recognizable fingerprints. A high AI-smell score indicates the code was likely written by an AI without careful review.',
   fix: 'Review code with high AI-smell scores carefully. Refactor to remove AI-specific patterns before production.',
 
-  check(_ast: ParsedAST, _source: string, _filePath: string): Finding[] {
+  check(_ast: ParsedAST, source: string, filePath: string): Finding[] {
     return [];
   },
 };

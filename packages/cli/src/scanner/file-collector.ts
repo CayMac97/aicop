@@ -227,7 +227,7 @@ export async function collectFiles(options: FileCollectorOptions): Promise<strin
       return withinSizeLimit(singleFile) ? [singleFile] : [];
     }
 
-    const includePatterns = config.include.length > 0 ? config.include : ['**/*.{ts,tsx,js,jsx,mjs,cjs}'];
+    const includePatterns = config.include.length > 0 ? config.include : ['**/*.{ts,tsx,js,jsx,mjs,cjs,py}'];
     const excludePatterns = [
       ...DEFAULT_EXCLUDE,
       ...(includeExamples ? [] : EXAMPLES_EXCLUDE),

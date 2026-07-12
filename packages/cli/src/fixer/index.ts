@@ -16,9 +16,12 @@ export interface RuleFixer {
   fix(source: string, ast: ParsedAST, findings: Finding[]): FixReplacement[];
 }
 
-const fixers = new Map<string, RuleFixer>();
+let fixers: Map<string, RuleFixer>;
 
 export function registerFixer(fixer: RuleFixer) {
+  if (!fixers) {
+    fixers = new Map<string, RuleFixer>();
+  }
   fixers.set(fixer.ruleId, fixer);
 }
 
@@ -42,7 +45,7 @@ export async function applyFixes(result: ScanResult, opts: FixEngineOptions = {}
 
     const fileFixers = new Map<string, Finding[]>();
     for (const finding of fileResult.findings) {
-      if (fixers.has(finding.ruleId)) {
+      if (fixers && fixers.has(finding.ruleId)) {
         if (!fileFixers.has(finding.ruleId)) {
           fileFixers.set(finding.ruleId, []);
         }
@@ -67,7 +70,7 @@ export async function applyFixes(result: ScanResult, opts: FixEngineOptions = {}
     let allReplacements: FixReplacement[] = [];
 
     for (const [ruleId, findings] of fileFixers.entries()) {
-      const fixer = fixers.get(ruleId);
+      const fixer = fixers?.get(ruleId);
       if (!fixer) continue;
 
       try {

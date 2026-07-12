@@ -7,6 +7,9 @@ import { computeAiScore } from './rules/ai-smells/ai-confidence-scorer.js';
 import { readFileContent, getRelativePath } from '../utils/file-utils.js';
 import { logger } from '../utils/logger.js';
 import { getAllRules } from './rules/index.js';
+import { parsePython, scanPythonFile } from './parsers/python-parser.js';
+import { incrementalCache } from './incremental-cache.js';
+import { setSkipRanges } from './ast-walker.js';
 
 export const PARSE_OPTIONS = {
   jsx: true,
@@ -124,33 +127,57 @@ export function scanFile(
   }
 
   let ast = preloadedAst;
-  if (!ast) {
-    try {
-      const ext = path.extname(filePath).toLowerCase();
-      const useJsx = ext === '.jsx' || ext === '.tsx';
-      try {
-        ast = parse(source, { ...PARSE_OPTIONS, jsx: useJsx });
-      } catch {
-        ast = parse(source, { ...PARSE_OPTIONS, jsx: true });
-      }
-    } catch (err) {
-      logger.debug(`Parse error in ${relativePath}: ${String(err)}`);
-      return { filePath, relativePath, findings: [], aiScore: 0, parseError: `Parse error: ${String(err)}` };
-    }
-  }
-
   const rawFindings: Finding[] = [];
 
-  for (const rule of rules) {
-    try {
-      const result = rule.check(ast, source, filePath);
-      if (result && Array.isArray(result)) {
-        rawFindings.push(...result);
-      } else if (result) {
-        rawFindings.push(result as Finding);
+  const ext = path.extname(filePath).toLowerCase();
+
+  if (ext === '.py') {
+    ast = ast ?? parsePython(source);
+    rawFindings.push(...scanPythonFile(source, filePath));
+  } else {
+    if (!ast) {
+      try {
+        const useJsx = ext === '.jsx' || ext === '.tsx';
+        try {
+          ast = parse(source, { ...PARSE_OPTIONS, jsx: useJsx });
+        } catch {
+          ast = parse(source, { ...PARSE_OPTIONS, jsx: true });
+        }
+      } catch (err) {
+        logger.debug(`Parse error in ${relativePath}: ${String(err)}`);
+        return { filePath, relativePath, findings: [], aiScore: 0, parseError: `Parse error: ${String(err)}` };
       }
-    } catch (err) {
-      logger.debug(`Rule ${rule.id} failed on ${relativePath}: ${String(err)}`);
+    }
+
+    let skipRanges: [number, number][] = [];
+    let reusedFindings: Finding[] = [];
+    
+    if (ext !== '.py' && ast) {
+      const cacheResult = incrementalCache.getSkipRanges(filePath, source, ast);
+      skipRanges = cacheResult.skipRanges;
+      reusedFindings = cacheResult.reusedFindings;
+      if (skipRanges.length > 0) {
+        setSkipRanges(skipRanges);
+        logger.debug(`[Cache] Skipped ${skipRanges.length} unchanged blocks in ${relativePath}, reusing ${reusedFindings.length} findings.`);
+      }
+    }
+
+    for (const rule of rules) {
+      try {
+        const result = rule.check(ast, source, filePath);
+        if (result && Array.isArray(result)) {
+          rawFindings.push(...result);
+        } else if (result) {
+          rawFindings.push(result as Finding);
+        }
+      } catch (err) {
+        logger.debug(`Rule ${rule.id} failed on ${relativePath}: ${String(err)}`);
+      }
+    }
+    
+    if (skipRanges.length > 0) {
+      setSkipRanges([]); // reset
+      rawFindings.push(...reusedFindings);
     }
   }
 
@@ -169,5 +196,10 @@ export function scanFile(
     });
 
   const aiScore = noAiScore ? 0 : computeAiScore(findings);
+  
+  if (ast && ext !== '.py') {
+    incrementalCache.saveScan(filePath, source, ast, findings);
+  }
+  
   return { filePath, relativePath, findings, aiScore };
 }

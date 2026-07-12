@@ -22,6 +22,7 @@ import nosqlInjection from './security/nosql-injection.js';
 import csrfMissing from './security/csrf-missing.js';
 import insecureSession from './security/insecure-session.js';
 import promptInjection from './security/prompt-injection.js';
+import unsafeShellExecs from './security/unsafe-shell-execs.js';
 
 import deadCodeBlocks from './ai-smells/dead-code-blocks.js';
 import inconsistentErrorHandling from './ai-smells/inconsistent-error-handling.js';
@@ -41,6 +42,8 @@ import nestingDepth from './tech-debt/nesting-depth.js';
 import godFiles from './tech-debt/god-files.js';
 import hardcodedConfig from './tech-debt/hardcoded-config.js';
 import missingTypes from './tech-debt/missing-types.js';
+import godFunctions from './tech-debt/god-functions.js';
+import nPlusOneQueries from './tech-debt/n-plus-one-queries.js';
 
 import { nextjsMissingInputValidation } from './security/nextjs-missing-input-validation.js';
 import { nextjsClientServerConfusion } from './ai-smells/nextjs-client-server-confusion.js';
@@ -85,8 +88,11 @@ const ALL_RULES: Rule[] = [
   godFiles,
   hardcodedConfig,
   missingTypes,
+  godFunctions,
+  nPlusOneQueries,
   nextjsMissingInputValidation,
   nextjsClientServerConfusion,
+  unsafeShellExecs,
 ];
 
 const RULE_REGISTRY: Map<string, Rule> = new Map(

@@ -2,7 +2,7 @@ import { VibescanConfig } from '../scanner/rules/types.js';
 
 export const DEFAULT_CONFIG: VibescanConfig = {
   version: '1',
-  include: ['src/**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts}', 'app/**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts}', '**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts}'],
+  include: ['src/**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts,py}', 'app/**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts,py}', '**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts,py}'],
   exclude: [
     'node_modules/**',
     'dist/**',
