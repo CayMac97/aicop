@@ -1,173 +1,245 @@
-# 🛡 AICop
-**Your AI wrote bugs. AICop finds them.**  
-Catch security vulnerabilities, AI code smells, and tech debt — before you ship to production.
+<div align="center">
+
+# 🛡️ AICop
+
+### Deine KI hat Bugs geschrieben. AICop findet sie.
+
+Erkennt Sicherheitslücken, KI-Code-Smells und Tech-Debt — **bevor** du in Production deployst.
+
+[![npm version](https://img.shields.io/npm/v/aicop?color=blue)](https://www.npmjs.com/package/aicop)
+[![npm downloads](https://img.shields.io/npm/dm/aicop?color=brightgreen)](https://www.npmjs.com/package/aicop)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](#-license)
+[![Node](https://img.shields.io/badge/node-%E2%89%A520-blue)](#-install)
+
 ```bash
 npm install -g aicop
 aicop scan ./src
-Works with any JS/TS project. No config required to get started.
+```
 
-🆚 AICop vs. Vibecop
-With version 1.2.0, AICop cements its position as a highly specialized, ultra-fast analysis tool for AI-generated JavaScript/TypeScript code. While Vibecop shines as a highly polished, polyglot production tool with Python support and deep CI/CD integrations, AICop focuses deeply on raw AST analysis in the JS/TS ecosystem (41+ rules), cross-file injections, high-performance monorepo scaling, and automated AI fix-prompts.
+Funktioniert mit jedem JS/TS-Projekt. Kein Config nötig, um loszulegen.
 
-Feature & Accuracy Comparison
-Metric / Feature	aicop 1.2.0 (current)	vibecop 0.4.3
-Focus	JS/TS AST Deep-Scans, AI-Smells	Polyglot, CI-Pipeline, Production-Tooling
-Active Rules (JS/TS)	41	~ 12
-Detection: Hardcoded Secrets	🟢 ✓	🟢 ✓
-Detection: eval() usage	🟢 ✓	🟢 ✓
-Detection: TODO-Stubs	🟢 ✓ (2x)	🟡 ✓ (1x)
-Detection: Cross-File SQL-Injection	🟢 ✓	🔴 ✗
-Transparency (--explain)	🟢 ✓ (Pattern + Confidence)	🔴 ✗
-Scoring System	🟢 Absolute (Math.floor, honest)	🔴 ✗
-Test-File Handling	🟢 Configurable Overrides	🔴 ✗
-Agent / MCP Integration	🟢 ✓	🟢 ✓
-CLI Tools (Fix-Prompt, Baseline)	🟢 ✓	🔴 ✗
-Languages	JS/TS	🟢 JS/TS/Python
-Who should use what?
-Use Vibecop if you need a production-ready, polyglot tool for broad projects with native CI pipeline integrations.
-Use AICop if you want dedicated, incredibly deep focus on JS/TS security, cross-file injections, AI-specific code smells, and lightning-fast monorepo scans.
-Combine both? Absolutely. Use AICop locally or via agents for deep architectural smell analysis, and Vibecop in your CI/CD pipeline for broad coverage.
-🤖 Agent & IDE Integration (Claude Code, Cursor, etc.)
-AICop is built to work seamlessly with autonomous coding agents and modern AI workflows.
+</div>
 
-Model Context Protocol (MCP) Server
-AICop includes a built-in MCP server, allowing agents like Claude Code, Cursor, or Windsurf to directly query the scanner and fix issues on the fly.
+---
 
-bash
+## 📚 Inhaltsverzeichnis
 
+- [🆚 AICop vs. Vibecop](#-aicop-vs-vibecop)
+- [🤖 Agent- & IDE-Integration](#-agent--ide-integration-claude-code-cursor-etc)
+- [⚡ Massive Monorepo-Unterstützung](#-massive-monorepo-unterstützung-neu-in-v120)
+- [❓ Was AICop macht](#-was-es-macht)
+- [📦 Installation](#-install)
+- [🚀 Verwendung](#-usage)
+- [📋 Alle Regeln](#-all-rules)
+- [📊 AIScore](#-aiscore)
+- [⚙️ Konfiguration](#-configuration)
+- [🧪 Test-Datei-Verhalten](#-test-file-behaviour)
+- [🔄 GitHub Actions](#-github-actions)
+- [🧩 VS Code Extension](#-vs-code-extension)
+- [📈 Baseline Tracking](#-baseline-tracking)
+- [🗂️ Projektstruktur](#️-project-structure)
+- [🤝 Contributing](#-contributing)
+- [📄 License](#-license)
 
-# Start the MCP server for your agent
+---
+
+## 🆚 AICop vs. Vibecop
+
+Mit Version **1.2.0** festigt AICop seine Position als hochspezialisiertes, ultraschnelles Analyse-Tool für KI-generierten JavaScript/TypeScript-Code. Während Vibecop als poliertes, polyglottes Production-Tool mit Python-Support und tiefer CI/CD-Integration glänzt, fokussiert sich AICop konsequent auf rohe AST-Analyse im JS/TS-Ökosystem (41+ Regeln), Cross-File-Injections, High-Performance-Monorepo-Scaling und automatisierte AI-Fix-Prompts.
+
+### Feature- & Genauigkeits-Vergleich
+
+| Metrik / Feature | 🅰️ aicop 1.2.0 (aktuell) | 🅱️ vibecop 0.4.3 |
+|---|:---:|:---:|
+| **Fokus** | JS/TS AST Deep-Scans, AI-Smells | Polyglot, CI-Pipeline, Production-Tooling |
+| **Aktive Regeln (JS/TS)** | **41** | ~12 |
+| Hardcoded Secrets | 🟢 ✓ | 🟢 ✓ |
+| `eval()`-Nutzung | 🟢 ✓ | 🟢 ✓ |
+| TODO-Stubs | 🟢 ✓ (2×) | 🟡 ✓ (1×) |
+| Cross-File SQL-Injection | 🟢 ✓ | 🔴 ✗ |
+| Transparenz (`--explain`) | 🟢 ✓ (Pattern + Confidence) | 🔴 ✗ |
+| Scoring-System | 🟢 Absolut (`Math.floor`, ehrlich) | 🔴 ✗ |
+| Test-File-Handling | 🟢 Konfigurierbare Overrides | 🔴 ✗ |
+| Agent / MCP-Integration | 🟢 ✓ | 🟢 ✓ |
+| CLI-Tools (Fix-Prompt, Baseline) | 🟢 ✓ | 🔴 ✗ |
+| Sprachen | JS/TS | 🟢 JS/TS/Python |
+
+### Wer sollte was nutzen?
+
+> 🅱️ **Vibecop**, wenn du ein produktionsreifes, polyglottes Tool für breite Projekte mit nativer CI-Pipeline-Integration brauchst.
+>
+> 🅰️ **AICop**, wenn du dedizierten, extrem tiefen Fokus auf JS/TS-Security, Cross-File-Injections, KI-spezifische Code-Smells und blitzschnelle Monorepo-Scans willst.
+>
+> 🤝 **Beide kombinieren?** Unbedingt. Nutze AICop lokal oder via Agents für tiefe Architektur-Smell-Analyse und Vibecop in deiner CI/CD-Pipeline für breite Abdeckung.
+
+---
+
+## 🤖 Agent- & IDE-Integration (Claude Code, Cursor, etc.)
+
+AICop ist darauf ausgelegt, nahtlos mit autonomen Coding-Agents und modernen KI-Workflows zusammenzuarbeiten.
+
+### Model Context Protocol (MCP) Server
+
+AICop bringt einen eingebauten MCP-Server mit, sodass Agents wie Claude Code, Cursor oder Windsurf den Scanner direkt ansprechen und Findings live fixen können.
+
+```bash
+# MCP-Server für deinen Agent starten
 aicop mcp
-Once connected, your agent can autonomously invoke AICop to scan the workspace and fix issues before finishing its task.
+```
 
-Auto-Fix Prompts
-If you don't use MCP, you can still let your AI fix the code automatically by generating an actionable prompt containing the exact AST violations:
+Einmal verbunden, kann dein Agent AICop autonom aufrufen, um den Workspace zu scannen und Issues zu fixen, bevor er seine Aufgabe abschließt.
 
-bash
+### Auto-Fix Prompts
 
+Falls du kein MCP nutzt, kannst du deine KI trotzdem automatisch fixen lassen — per generiertem Prompt mit den exakten AST-Verstößen:
 
+```bash
 aicop fix-prompt ./src > fix-instructions.txt
-Copy and paste fix-instructions.txt into ChatGPT or Claude. The AI will receive the exact context and rewrite the files to fix all security and smell issues perfectly.
+```
 
-⚡️ Massive Monorepo Support (New in v1.2.0)
-As of version 1.2.0, AICop features an advanced on-demand AST parser with a per-worker LRU cache. It guarantees a flat O(1) memory footprint (~80 MB per worker thread) regardless of your project's size. It effortlessly distributes the workload across all available CPU cores, scanning thousands of files in mere seconds without Out-Of-Memory (OOM) crashes.
+Kopiere `fix-instructions.txt` in ChatGPT oder Claude. Die KI erhält den exakten Kontext und schreibt die Dateien um, um alle Security- und Smell-Issues sauber zu fixen.
 
-Table of Contents
-What it does
-Install
-Usage
-All Rules
-AIScore
-Configuration
-Test-File Behaviour
-GitHub Actions
-VS Code Extension
-Baseline Tracking
-Contributing
-License
-What it does
-AICop parses every .ts, .tsx, .js, .jsx file into a full AST and runs 41 detection rules:
+---
 
-Category	Count	What it catches
-🔒 Security	23	Hardcoded secrets, SQL/command/prompt injection, XSS, eval, JWT no expiry, CORS misconfig, SSRF, path traversal, weak crypto, ReDoS, prototype pollution, missing rate limits, open redirect, insecure deserialisation, XXE injection, Next.js input validation, CSRF missing, insecure session, NoSQL injection
-🤖 AI Smells	12	Hallucinated APIs, Next.js client/server confusion, dead code, TODO stubs, copy-paste patterns, debug leftovers, mixed async, missing null checks, generic variable names, magic numbers, inconsistent error handling, AI confidence score
-🧹 Tech Debt	6	Cyclomatic complexity, function length, nesting depth, god files, hardcoded config, missing types
-Every scanned file gets an AI Confidence Score and every scan produces an overall AIScore™ (0–100).
+## ⚡ Massive Monorepo-Unterstützung (New in v1.2.0)
 
-Install
-bash
+Seit Version 1.2.0 nutzt AICop einen fortschrittlichen On-Demand-AST-Parser mit einem Per-Worker-LRU-Cache. Das garantiert einen **flachen O(1)-Speicherverbrauch** (~80 MB pro Worker-Thread) — unabhängig von der Projektgröße. Die Last wird mühelos auf alle verfügbaren CPU-Kerne verteilt, sodass tausende Dateien in Sekunden gescannt werden, ganz ohne Out-Of-Memory-Crashes.
 
+---
 
-npm install -g aicop      # global install
-npx aicop scan ./src      # one-off, no install needed
-pnpm dlx aicop scan ./src # pnpm
-Requires Node.js ≥ 20.
+## ❓ Was es macht
 
-Usage
-bash
+AICop parst jede `.ts`, `.tsx`, `.js`, `.jsx`-Datei in einen vollständigen AST und führt **41 Detection-Regeln** aus:
 
+| Kategorie | Anzahl | Was erkannt wird |
+|---|:---:|---|
+| 🔒 **Security** | 23 | Hardcoded Secrets, SQL-/Command-/Prompt-Injection, XSS, `eval`, JWT ohne Expiry, CORS-Fehlkonfig., SSRF, Path Traversal, schwache Crypto, ReDoS, Prototype Pollution, fehlende Rate Limits, Open Redirect, unsichere Deserialisierung, XXE-Injection, Next.js-Input-Validierung, fehlender CSRF-Schutz, unsichere Sessions, NoSQL-Injection |
+| 🤖 **AI Smells** | 12 | Halluzinierte APIs, Next.js Client/Server-Konfusion, Dead Code, TODO-Stubs, Copy-Paste-Patterns, Debug-Reste, gemischte Async-Patterns, fehlende Null-Checks, generische Variablennamen, Magic Numbers, inkonsistentes Error-Handling, AI-Confidence-Score |
+| 🧹 **Tech Debt** | 6 | Zyklomatische Komplexität, Funktionslänge, Nesting-Tiefe, God Files, hardcoded Config, fehlende Types |
 
-aicop scan ./src                      # scan a directory
-aicop scan ./src --severity error     # errors only
-aicop scan ./src --format html        # HTML report
-aicop scan ./src --output report.html # save to file
-aicop diff main                       # only files changed since branch main
-aicop scan ./src --ci                 # CI mode (exits 1 on any error)
-aicop baseline save                   # save current score as baseline
-aicop rules                           # list all available rules
-aicop init                            # create .aicoprc.json config
-CLI Options
-Flag	Default	Description
---severity	info	Minimum severity to report: error, warn, info
---format	terminal	Output format: terminal, html, json
---output	—	Write report to a file path
---ci	—	No colours, exits 1 on any error finding
---rule	—	Run only one specific rule ID
---ignore	—	Extra glob patterns to exclude
---config	—	Path to a custom config file
-All Rules
-🔒 Security Rules
-Rule ID	Severity	What it detects
-security/hardcoded-secrets	error	Passwords, tokens, API keys embedded in code
-security/sql-injection	error	String-concatenated SQL queries
-security/nosql-injection	error	MongoDB queries built from unsanitised req.body, req.query, or req.params
-security/xss-vulnerabilities	error	Unsanitised innerHTML, document.write, React dangerouslySetInnerHTML
-security/eval-usage	error	Direct eval() calls with non-literal arguments
-security/code-injection	error	vm.runInNewContext, vm.runInThisContext, math.eval / mathjs.evaluate with dynamic input
-security/command-injection	error	exec, execSync, spawn with string-concatenated arguments
-security/jwt-no-expiry	error	JWTs signed without an expiresIn option
-security/cors-misconfiguration	warn	CORS origin: '*' or origin: true on an authenticated route
-security/ssrf-risk	warn	HTTP requests built from user-controlled URLs
-security/path-traversal	error	fs calls with unsanitised user input in file paths
-security/weak-crypto	warn	MD5, SHA1, DES, RC4 algorithms
-security/regex-dos	warn	Regex patterns vulnerable to catastrophic backtracking (ReDoS)
-security/prototype-pollution	error	Unsafe Object.assign(obj, userInput), merge() with untrusted data
-security/missing-rate-limit	warn	Express auth routes (/login, /register, etc.) without rate-limit middleware
-security/open-redirect	warn	res.redirect() with unvalidated user input
-security/insecure-deserialization	error	JSON.parse, eval, serialize-javascript on untrusted input without validation
-security/xxe-injection	error	XML parsers with external entity processing enabled
-security/prompt-injection	error	Detects unfiltered user input passed directly to AI SDKs
-security/nextjs-missing-input-validation	warn	Server Actions and Route Handlers should validate input using a schema library (e.g. Zod)
-🤖 AI Smell Rules
-Rule ID	Severity	What it detects
-ai-smell/hallucinated-api-calls	error	Calls to npm packages that do not exist
-ai-smell/nextjs-client-server-confusion	warn	Detects client-side hooks or browser globals in Next.js files missing "use client"
-ai-smell/dead-code-blocks	warn	Unreachable code after return/throw/break
-ai-smell/todo-stub-functions	warn	Functions whose body is only a TODO comment or throws "Not implemented"
-ai-smell/copy-paste-patterns	warn	Identical or near-identical code blocks (structural duplication)
-ai-smell/debug-leftovers	warn	console.log, debugger, console.debug left in non-test code
-ai-smell/mixed-async-patterns	warn	Mixing async/await and .then()/.catch() chains in the same function
-ai-smell/missing-null-checks	warn	Dereferencing nullable values without a guard
-ai-smell/generic-variable-names	info	Single-letter or overly generic names (data, temp, obj, result)
-ai-smell/magic-numbers	info	Unexplained numeric literals (not 0, 1, -1, 100)
-ai-smell/inconsistent-error-handling	warn	Mixing throw, return null, return { error } patterns in the same file
-ai-smell/ai-confidence-scorer	info	Per-file AI confidence score based on accumulated smell signals
-🧹 Tech Debt Rules
-Rule ID	Severity	What it detects
-tech-debt/cyclomatic-complexity	warn	Functions with cyclomatic complexity > 10
-tech-debt/function-length	warn	Functions longer than 60 lines
-tech-debt/nesting-depth	warn	Code nested deeper than 4 levels
-tech-debt/god-files	warn	Files with more than 500 lines of code
-tech-debt/hardcoded-config	info	Magic strings that look like environment config (URLs, ports, hostnames)
-tech-debt/missing-types	info	TypeScript any, untyped function parameters or return values
-AIScore
-The AIScore™ is a 0–100 number that summarises the overall AI-smell and security risk of your codebase.
+Jede gescannte Datei bekommt einen **AI Confidence Score**, und jeder Scan erzeugt einen Gesamt-**AIScore™** (0–100).
 
-Score	Label	Meaning
-0–20	🟢 Clean	Very few issues
-21–50	🟡 AI-touched	Some smells, review recommended
-51–80	🟠 Heavy AI smell	Significant rework needed
-81–100	🔴 Needs rewrite	Major security or quality problems
-AIScore only considers error and warn findings. info findings don't affect it.
+---
 
-Configuration
-bash
+## 📦 Install
 
+```bash
+npm install -g aicop      # globale Installation
+npx aicop scan ./src      # einmalig, ohne Installation
+pnpm dlx aicop scan ./src # via pnpm
+```
 
-aicop init   # creates .aicoprc.json in the project root
-json
+> Benötigt **Node.js ≥ 20**.
 
+---
 
+## 🚀 Usage
+
+```bash
+aicop scan ./src                      # Verzeichnis scannen
+aicop scan ./src --severity error     # nur Errors
+aicop scan ./src --format html        # HTML-Report
+aicop scan ./src --output report.html # in Datei speichern
+aicop diff main                       # nur Dateien, die sich seit Branch `main` geändert haben
+aicop scan ./src --ci                 # CI-Modus (exit 1 bei jedem Error)
+aicop baseline save                   # aktuellen Score als Baseline speichern
+aicop rules                           # alle verfügbaren Regeln auflisten
+aicop init                            # .aicoprc.json Config erstellen
+```
+
+### CLI-Optionen
+
+| Flag | Default | Beschreibung |
+|---|---|---|
+| `--severity` | `info` | Minimale Severity: `error`, `warn`, `info` |
+| `--format` | `terminal` | Output-Format: `terminal`, `html`, `json` |
+| `--output` | — | Report in eine Datei schreiben |
+| `--ci` | — | Keine Farben, exit 1 bei jedem Error-Finding |
+| `--rule` | — | Nur eine bestimmte Rule-ID ausführen |
+| `--ignore` | — | Zusätzliche Glob-Patterns zum Ausschließen |
+| `--config` | — | Pfad zu einer custom Config-Datei |
+
+---
+
+## 📋 All Rules
+
+### 🔒 Security Rules
+
+| Rule ID | Severity | Was erkannt wird |
+|---|:---:|---|
+| `security/hardcoded-secrets` | 🔴 error | Passwörter, Tokens, API-Keys im Code |
+| `security/sql-injection` | 🔴 error | String-verkettete SQL-Queries |
+| `security/nosql-injection` | 🔴 error | MongoDB-Queries aus ungesäubertem `req.body`, `req.query`, `req.params` |
+| `security/xss-vulnerabilities` | 🔴 error | Ungesäubertes `innerHTML`, `document.write`, React `dangerouslySetInnerHTML` |
+| `security/eval-usage` | 🔴 error | Direkte `eval()`-Aufrufe mit nicht-literalen Argumenten |
+| `security/code-injection` | 🔴 error | `vm.runInNewContext`, `vm.runInThisContext`, `math.eval`/`mathjs.evaluate` mit dynamischem Input |
+| `security/command-injection` | 🔴 error | `exec`, `execSync`, `spawn` mit string-verketteten Argumenten |
+| `security/jwt-no-expiry` | 🔴 error | JWTs ohne `expiresIn`-Option signiert |
+| `security/cors-misconfiguration` | 🟡 warn | `origin: '*'` oder `origin: true` auf authentifizierter Route |
+| `security/ssrf-risk` | 🟡 warn | HTTP-Requests aus nutzergesteuerten URLs |
+| `security/path-traversal` | 🔴 error | `fs`-Aufrufe mit ungesäubertem User-Input im Pfad |
+| `security/weak-crypto` | 🟡 warn | MD5, SHA1, DES, RC4 |
+| `security/regex-dos` | 🟡 warn | Regex anfällig für katastrophales Backtracking (ReDoS) |
+| `security/prototype-pollution` | 🔴 error | Unsicheres `Object.assign(obj, userInput)`, `merge()` mit untrusted Data |
+| `security/missing-rate-limit` | 🟡 warn | Express-Auth-Routen (`/login`, `/register`, …) ohne Rate-Limit-Middleware |
+| `security/open-redirect` | 🟡 warn | `res.redirect()` mit unvalidiertem User-Input |
+| `security/insecure-deserialization` | 🔴 error | `JSON.parse`, `eval`, `serialize-javascript` auf untrusted Input ohne Validierung |
+| `security/xxe-injection` | 🔴 error | XML-Parser mit aktivierter External-Entity-Verarbeitung |
+| `security/prompt-injection` | 🔴 error | Ungefilterter User-Input direkt an AI-SDKs |
+| `security/nextjs-missing-input-validation` | 🟡 warn | Server Actions & Route Handlers sollten Input via Schema-Lib (z. B. Zod) validieren |
+
+### 🤖 AI Smell Rules
+
+| Rule ID | Severity | Was erkannt wird |
+|---|:---:|---|
+| `ai-smell/hallucinated-api-calls` | 🔴 error | Aufrufe von npm-Paketen, die nicht existieren |
+| `ai-smell/nextjs-client-server-confusion` | 🟡 warn | Client-Hooks/Browser-Globals in Next.js-Dateien ohne `"use client"` |
+| `ai-smell/dead-code-blocks` | 🟡 warn | Nicht erreichbarer Code nach `return`/`throw`/`break` |
+| `ai-smell/todo-stub-functions` | 🟡 warn | Funktionen, deren Body nur ein TODO-Kommentar ist oder `"Not implemented"` wirft |
+| `ai-smell/copy-paste-patterns` | 🟡 warn | Identische/nahezu identische Code-Blöcke (strukturelle Duplikation) |
+| `ai-smell/debug-leftovers` | 🟡 warn | `console.log`, `debugger`, `console.debug` in Nicht-Testcode |
+| `ai-smell/mixed-async-patterns` | 🟡 warn | Mischung aus `async/await` und `.then()/.catch()` in derselben Funktion |
+| `ai-smell/missing-null-checks` | 🟡 warn | Zugriff auf nullable Werte ohne Guard |
+| `ai-smell/generic-variable-names` | ⚪ info | Einzelbuchstaben- oder generische Namen (`data`, `temp`, `obj`, `result`) |
+| `ai-smell/magic-numbers` | ⚪ info | Unerklärte numerische Literale (außer `0`, `1`, `-1`, `100`) |
+| `ai-smell/inconsistent-error-handling` | 🟡 warn | Mischung aus `throw`, `return null`, `return { error }` in derselben Datei |
+| `ai-smell/ai-confidence-scorer` | ⚪ info | Pro-Datei AI-Confidence-Score basierend auf akkumulierten Smell-Signalen |
+
+### 🧹 Tech Debt Rules
+
+| Rule ID | Severity | Was erkannt wird |
+|---|:---:|---|
+| `tech-debt/cyclomatic-complexity` | 🟡 warn | Funktionen mit zyklomatischer Komplexität > 10 |
+| `tech-debt/function-length` | 🟡 warn | Funktionen länger als 60 Zeilen |
+| `tech-debt/nesting-depth` | 🟡 warn | Code tiefer als 4 Ebenen verschachtelt |
+| `tech-debt/god-files` | 🟡 warn | Dateien mit mehr als 500 Zeilen Code |
+| `tech-debt/hardcoded-config` | ⚪ info | Magic Strings, die wie Env-Config aussehen (URLs, Ports, Hostnames) |
+| `tech-debt/missing-types` | ⚪ info | TypeScript `any`, ungetypte Parameter oder Rückgabewerte |
+
+---
+
+## 📊 AIScore
+
+Der **AIScore™** ist eine Zahl von 0–100, die das gesamte AI-Smell- und Security-Risiko deiner Codebase zusammenfasst.
+
+| Score | Label | Bedeutung |
+|:---:|---|---|
+| 0–20 | 🟢 Clean | Sehr wenige Issues |
+| 21–50 | 🟡 AI-touched | Einige Smells, Review empfohlen |
+| 51–80 | 🟠 Heavy AI smell | Signifikanter Rework nötig |
+| 81–100 | 🔴 Needs rewrite | Größere Security- oder Qualitätsprobleme |
+
+> Der AIScore berücksichtigt nur `error`- und `warn`-Findings. `info`-Findings beeinflussen ihn nicht.
+
+---
+
+## ⚙️ Configuration
+
+```bash
+aicop init   # erstellt .aicoprc.json im Projekt-Root
+```
+
+```json
 {
   "include": ["src/**/*.{ts,tsx,js,jsx}"],
   "exclude": ["node_modules", "dist", "build", "**/*.test.*"],
@@ -182,21 +254,28 @@ json
     "minAIScore": 60
   }
 }
-All rule severities can be set to "error", "warn", "info", or "off".
+```
 
-Files larger than 500 KB are automatically skipped.
-Minified files (*.min.js, *.min.css), chunk files, and vendor directories are excluded by default.
+Alle Regel-Severities können auf `"error"`, `"warn"`, `"info"` oder `"off"` gesetzt werden.
 
-Test-File Behaviour
-AICop applies relaxed rules to test files (paths containing test/, tests/, spec/, __tests__/, or filenames ending in .test.ts, .spec.js, etc.):
+> Dateien größer als 500 KB werden automatisch übersprungen. Minifizierte Dateien (`*.min.js`, `*.min.css`), Chunk-Dateien und Vendor-Verzeichnisse sind standardmäßig ausgeschlossen.
 
-Rule	Normal files	Test files
-security/hardcoded-secrets	ERROR	WARN — "hardcoded secret in test file — use environment variables even in tests"
-security/missing-rate-limit	checked	skipped entirely
-GitHub Actions
-yaml
+---
 
+## 🧪 Test-File Behaviour
 
+AICop wendet auf Testdateien (Pfade mit `test/`, `tests/`, `spec/`, `__tests__/`, oder Dateinamen wie `.test.ts`, `.spec.js`) gelockerte Regeln an:
+
+| Regel | Normale Dateien | Testdateien |
+|---|---|---|
+| `security/hardcoded-secrets` | 🔴 ERROR | 🟡 WARN — *„hardcoded secret in test file — use environment variables even in tests"* |
+| `security/missing-rate-limit` | ✅ geprüft | ⏭️ komplett übersprungen |
+
+---
+
+## 🔄 GitHub Actions
+
+```yaml
 # .github/workflows/aicop.yml
 name: AICop
 on: [push, pull_request]
@@ -211,66 +290,94 @@ jobs:
         with:
           path: ./src
           severity: warn
-Or inline without the Action:
+```
 
-yaml
+Oder inline, ohne die Action:
 
-
+```yaml
 - run: npx aicop scan ./src --ci --severity warn
-VS Code Extension
-The AICop VS Code Extension (packages/vscode-extension) adds real-time diagnostics directly in your editor:
+```
 
-Underlines findings inline as you type
-Shows severity icons (🔴 error / ⚠️ warn / ℹ️ info) in the Problems panel
-Adds CodeLens above flagged functions with a quick-fix link
-Status bar indicator shows current file's AIScore
-Commands: AICop: Scan Current File, AICop: Scan Entire Workspace, AICop: Clear All Diagnostics
-Install locally:
+---
 
-bash
+## 🧩 VS Code Extension
 
+Die **AICop VS Code Extension** (`packages/vscode-extension`) bringt Echtzeit-Diagnostik direkt in deinen Editor:
 
-npm run package:extension    # builds a .vsix file
+- ✏️ Unterstreicht Findings inline beim Tippen
+- 🚦 Zeigt Severity-Icons (🔴 error / ⚠️ warn / ℹ️ info) im Problems-Panel
+- 🔍 Fügt CodeLens über geflaggten Funktionen mit Quick-Fix-Link hinzu
+- 📊 Statusleiste zeigt den AIScore der aktuellen Datei
+- ⌨️ Befehle: `AICop: Scan Current File`, `AICop: Scan Entire Workspace`, `AICop: Clear All Diagnostics`
+
+Lokale Installation:
+
+```bash
+npm run package:extension    # baut eine .vsix-Datei
 code --install-extension aicop-1.0.0.vsix
-Baseline Tracking
-Track your codebase score over time:
+```
 
-bash
+---
 
+## 📈 Baseline Tracking
 
-aicop baseline save         # saves current AIScore as baseline
-# ... fix things ...
-aicop scan ./src            # output shows delta vs baseline (↑ or ↓)
-The baseline is stored in .aicop-baseline.json (add this to git to share with your team).
+Verfolge deinen Codebase-Score über die Zeit:
 
-Project Structure
+```bash
+aicop baseline save         # speichert aktuellen AIScore als Baseline
+# ... Dinge fixen ...
+aicop scan ./src            # Output zeigt Delta zur Baseline (↑ oder ↓)
+```
 
+Die Baseline wird in `.aicop-baseline.json` gespeichert (in Git einchecken, um sie im Team zu teilen).
 
+---
+
+## 🗂️ Project Structure
+
+```
 aicop.net/
 ├── packages/
-│   ├── cli/                   # Main CLI package (published to npm as "aicop")
+│   ├── cli/                   # Haupt-CLI-Paket (auf npm als "aicop" veröffentlicht)
 │   │   ├── src/
-│   │   │   ├── scanner/       # AST walker + 35 detection rules
+│   │   │   ├── scanner/       # AST-Walker + 35 Detection-Regeln
 │   │   │   │   └── rules/
-│   │   │   │       ├── security/    # 15 security rules
-│   │   │   │       ├── ai-smells/   # 11 AI smell rules
-│   │   │   │       └── tech-debt/   # 6 tech debt rules
-│   │   │   ├── reporter/      # Terminal, HTML, and JSON reporters
-│   │   │   ├── diff/          # Git diff integration
-│   │   │   ├── fix-prompt/    # AI fix suggestion engine
-│   │   │   └── config/        # Config loading and defaults
-│   │   └── tests/             # Smoke tests + flagging fixtures
-│   ├── vscode-extension/      # VS Code extension
-│   └── website/               # aicop.net landing page
-└── action.yml                 # GitHub Action definition
-Contributing
-Fork this repo
-npm install at the root (uses npm workspaces)
-npm run build to compile the CLI
-npm test to run the 19 smoke tests
-Add your rule in packages/cli/src/scanner/rules/<category>/your-rule.ts
-Register it in packages/cli/src/scanner/rules/index.ts
-Add a test fixture in packages/cli/tests/fixtures/
-Open a PR
-License
-MIT — free forever. Your code never leaves your machine.
+│   │   │   │       ├── security/    # 15 Security-Regeln
+│   │   │   │       ├── ai-smells/   # 11 AI-Smell-Regeln
+│   │   │   │       └── tech-debt/   # 6 Tech-Debt-Regeln
+│   │   │   ├── reporter/      # Terminal-, HTML- und JSON-Reporter
+│   │   │   ├── diff/          # Git-Diff-Integration
+│   │   │   ├── fix-prompt/    # AI-Fix-Suggestion-Engine
+│   │   │   └── config/        # Config-Loading und Defaults
+│   │   └── tests/             # Smoke-Tests + Flagging-Fixtures
+│   ├── vscode-extension/      # VS Code Extension
+│   └── website/               # aicop.net Landing Page
+└── action.yml                 # GitHub-Action-Definition
+```
+
+---
+
+## 🤝 Contributing
+
+1. Repo forken
+2. `npm install` im Root (nutzt npm Workspaces)
+3. `npm run build`, um die CLI zu kompilieren
+4. `npm test`, um die 19 Smoke-Tests laufen zu lassen
+5. Deine Regel in `packages/cli/src/scanner/rules/<category>/your-rule.ts` hinzufügen
+6. In `packages/cli/src/scanner/rules/index.ts` registrieren
+7. Test-Fixture in `packages/cli/tests/fixtures/` hinzufügen
+8. Pull Request öffnen
+
+---
+
+## 📄 License
+
+**MIT** — für immer kostenlos. Dein Code verlässt niemals deine Maschine.
+
+<div align="center">
+
+---
+
+Made with 🛡️ for the AI-generated code era
+
+</div>
