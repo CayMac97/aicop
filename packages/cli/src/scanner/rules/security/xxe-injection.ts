@@ -10,8 +10,32 @@ const XML_PARSE_METHODS = new Set(['parseXmlString', 'parseXml']);
 const UNSAFE_XML_PACKAGES = new Set(['libxmljs', 'libxmljs2', 'xml2js', 'fast-xml-parser', 'xmldom']);
 const USER_INPUT_PROPS = new Set(['body', 'query', 'params', 'headers', 'cookies', 'files']);
 
-function hasNoentTrue(opts: TSESTree.ObjectExpression): boolean {
+function hasNoentTrue(opts: TSESTree.ObjectExpression, parentMap?: Map<TSESTree.Node, TSESTree.Node>): boolean {
   return opts.properties.some((p) => {
+    if (p.type === 'SpreadElement' && parentMap) {
+      if (isIdentifier(p.argument)) {
+        const varName = p.argument.name;
+        let current: TSESTree.Node | undefined = opts;
+        while (current) {
+          if (current.type === 'BlockStatement' || current.type === 'Program') {
+            let found = false;
+            // A simple local scan for the variable declaration
+            for (const stmt of current.body) {
+              if (stmt.type === 'VariableDeclaration') {
+                for (const decl of stmt.declarations) {
+                  if (isIdentifier(decl.id) && decl.id.name === varName && decl.init && decl.init.type === 'ObjectExpression') {
+                    if (hasNoentTrue(decl.init, parentMap)) found = true;
+                  }
+                }
+              }
+            }
+            if (found) return true;
+          }
+          current = parentMap.get(current);
+        }
+      }
+      return false; // Could not prove noent: true
+    }
     if (p.type !== 'Property') return false;
     const prop = p as TSESTree.Property;
     if (!isIdentifier(prop.key) || (prop.key as TSESTree.Identifier).name !== 'noent') return false;
@@ -32,7 +56,7 @@ function isUserInput(rawNode: TSESTree.Node, taintResult: TaintResult, parentMap
   return false;
 }
 
-function checkLibXmlJsNoent(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+function checkLibXmlJsNoent(node: TSESTree.CallExpression, source: string, filePath: string, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.property)) return null;
@@ -41,7 +65,7 @@ function checkLibXmlJsNoent(node: TSESTree.CallExpression, source: string, fileP
   if (!firstArg || firstArg.type === 'Literal') return null;
   const optsArg = node.arguments[1];
   if (!optsArg || optsArg.type !== 'ObjectExpression') return null;
-  if (!hasNoentTrue(optsArg as TSESTree.ObjectExpression)) return null;
+  if (!hasNoentTrue(optsArg as TSESTree.ObjectExpression, parentMap)) return null;
   return {
     ruleId: 'security/xxe-injection',
     severity: 'error',
@@ -128,7 +152,7 @@ const rule: Rule = {
       CallExpression(rawNode: TSESTree.Node) {
         const node = unwrapNode(rawNode) as TSESTree.CallExpression;
         if (node.type !== 'CallExpression') return;
-        const f1 = checkLibXmlJsNoent(node, source, filePath);
+        const f1 = checkLibXmlJsNoent(node, source, filePath, parentMap);
         if (f1) { findings.push(f1); return; }
         const f2 = checkXml2jsUserInput(node, source, filePath, taintResult, parentMap);
         if (f2) { findings.push(f2); return; }

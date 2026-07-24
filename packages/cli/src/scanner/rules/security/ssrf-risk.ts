@@ -97,9 +97,21 @@ function hasUrlAllowlistValidation(node: TSESTree.Node, varName: string, parentM
             if (isMemberExpression(cNode.callee)) {
               const prop = cNode.callee.property;
               if (isIdentifier(prop)) {
-                if (prop.name === 'test' || prop.name === 'includes' || prop.name === 'has') hasGuard = true;
+                if (prop.name === 'test') hasGuard = true;
+                if (prop.name === 'includes' || prop.name === 'has') {
+                  const arg = cNode.arguments[0];
+                  if (arg) {
+                    let argStr = '';
+                    if (isIdentifier(arg)) argStr = arg.name;
+                    else if (arg.type === 'MemberExpression') argStr = astToString(arg) || '';
+                    if (argStr === varName) hasGuard = true;
+                  }
+                }
                 if (prop.name === 'startsWith') {
-                  if (isIdentifier(cNode.callee.object) && cNode.callee.object.name === varName) hasGuard = true;
+                  let objStr = '';
+                  if (isIdentifier(cNode.callee.object)) objStr = cNode.callee.object.name;
+                  else if (cNode.callee.object.type === 'MemberExpression') objStr = astToString(cNode.callee.object) || '';
+                  if (objStr === varName) hasGuard = true;
                 }
               }
             }
@@ -125,8 +137,14 @@ function checkHttpCall(node: TSESTree.CallExpression, source: string, filePath: 
   }
   const urlArg = node.arguments[0];
   if (!urlArg || !isUserControlledArg(urlArg, taintResult, parentMap)) return null;
-  if (isIdentifier(urlArg)) {
-    const varName = (urlArg as TSESTree.Identifier).name;
+  let varName = '';
+  if (isIdentifier(urlArg)) varName = (urlArg as TSESTree.Identifier).name;
+  else if (urlArg.type === 'MemberExpression') {
+    const str = astToString(urlArg);
+    if (str) varName = str;
+  }
+  
+  if (varName) {
     if (hasUrlAllowlistValidation(node, varName, parentMap)) return null;
   }
   return {

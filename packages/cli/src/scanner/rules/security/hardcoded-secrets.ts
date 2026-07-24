@@ -169,7 +169,6 @@ if (!JWT_SECRET) throw new Error('JWT_SECRET environment variable is required');
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
-    if (isTestFile(filePath)) return findings;
 
     walk(ast, {
       Literal(rawNode: TSESTree.Node) {
@@ -251,6 +250,14 @@ if (!JWT_SECRET) throw new Error('JWT_SECRET environment variable is required');
         });
       },
     });
+
+    if (isTestFile(filePath)) {
+      return findings.map(f => ({
+        ...f,
+        severity: 'warn',
+        message: 'hardcoded secret in test file — use environment variables even in tests',
+      }));
+    }
 
     return findings;
   },

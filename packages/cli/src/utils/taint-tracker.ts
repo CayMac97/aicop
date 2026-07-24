@@ -59,7 +59,7 @@ export function buildParentMap(ast: ParsedAST | TSESTree.Node): Map<TSESTree.Nod
 
 export function isDynamicExpr(n: TSESTree.Expression, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
   if (isDirectUserInputExpr(n)) return true;
-  if (isIdentifier(n) && isNodeContextuallyTainted(n, taintResult, parentMap)) return true;
+  if (isNodeContextuallyTainted(n, taintResult, parentMap)) return true;
   if (n.type === 'ArrayExpression') {
     return n.elements.some((e) => e && e.type !== 'SpreadElement' && isDynamicExpr(e as TSESTree.Expression, taintResult, parentMap));
   }
@@ -170,8 +170,13 @@ export function isTaintedExpr(node: TSESTree.Node, tainted: Set<string>, sanitiz
       if (isIdentifier(me.property)) {
         const method = me.property.name;
         const TAINT_PRESERVING_METHODS = new Set(['trim', 'toLowerCase', 'toUpperCase', 'substring', 'slice', 'replace', 'replaceAll', 'concat', 'toString', 'join', 'split', 'map', 'filter', 'reduce', 'flat', 'flatMap']);
+        if (isIdentifier(me.object) && (me.object.name === 'path' || me.object.name === 'node:path')) {
+          if (method === 'join' || method === 'resolve' || method === 'normalize') {
+            return call.arguments.some(arg => isTaintedExpr(arg, tainted, sanitizedExpressions));
+          }
+        }
         if (TAINT_PRESERVING_METHODS.has(method)) {
-          return isTaintedExpr(me.object, tainted, sanitizedExpressions);
+          return isTaintedExpr(me.object, tainted, sanitizedExpressions) || call.arguments.some(arg => isTaintedExpr(arg, tainted, sanitizedExpressions));
         }
         if (isIdentifier(me.object) && me.object.name === 'Object' && method === 'fromEntries') {
           if (call.arguments[0]) return isTaintedExpr(call.arguments[0], tainted, sanitizedExpressions);
@@ -478,6 +483,11 @@ export function buildContextualTaintMap(ast: ParsedAST, _filePath: string): Tain
                 const sources = call.arguments.slice(1);
                 if (isIdentifier(firstArg) && sources.some(s => isCurrentlyTainted(s, funcNode))) {
                   lt.add(firstArg.name);
+                } else if (firstArg.type === 'MemberExpression') {
+                  const str = astToString(firstArg);
+                  if (str && sources.some(s => isCurrentlyTainted(s, funcNode))) {
+                    lt.add(str);
+                  }
                 }
               }
             }

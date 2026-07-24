@@ -318,7 +318,9 @@ function checkResSend(node: TSESTree.CallExpression, source: string, filePath: s
   const method = (me.property as TSESTree.Identifier).name;
   if (method !== 'send' && method !== 'write') return null;
   const arg = node.arguments[0];
-  if (!arg || !isUserInput(arg, taintResult, parentMap)) return null;
+  const isUserInputFlag = arg ? isUserInput(arg, taintResult, parentMap) : false;
+  console.log(`[checkResSend] file=${filePath}, arg=${astToString(arg)}, isUserInput=${isUserInputFlag}`);
+  if (!arg || !isUserInputFlag) return null;
   if (isSafelyValidated(arg, parentMap)) return null;
   
   // Exclude cases where the argument is definitively an object (req.query, req.body, req.params)
@@ -465,20 +467,18 @@ const rule: Rule = {
       }
     });
 
-    if (hasHtmlContentType) {
-      for (const node of dynamicSendNodes) {
-        if (!flaggedLines.has(getLine(node))) {
-          findings.push({
-            ruleId: 'security/xss-vulnerabilities',
-            severity: 'error',
-            message: 'HTML response with dynamic content — XSS risk',
-            file: filePath,
-            line: getLine(node),
-            column: getColumn(node),
-            snippet: extractSnippet(source, getLine(node)),
-            fix: 'Sanitize dynamic content before sending as HTML, or use res.json() for data responses',
-          });
-        }
+    for (const node of dynamicSendNodes) {
+      if (!flaggedLines.has(getLine(node))) {
+        findings.push({
+          ruleId: 'security/xss-vulnerabilities',
+          severity: 'error',
+          message: 'HTML response with dynamic content — XSS risk',
+          file: filePath,
+          line: getLine(node),
+          column: getColumn(node),
+          snippet: extractSnippet(source, getLine(node)),
+          fix: 'Sanitize dynamic content before sending as HTML, or use res.json() for data responses',
+        });
       }
     }
 

@@ -43,9 +43,14 @@ function isUserInputExpr(node: TSESTree.Node, taintResult: TaintResult, parentMa
   }
   if (node.type === 'CallExpression') {
     const ce = node as TSESTree.CallExpression;
-    if (isMemberExpression(ce.callee) && isIdentifier(ce.callee.property) && ce.callee.property.name === 'join') {
-      if (ce.callee.object.type === 'ArrayExpression') {
+    if (isMemberExpression(ce.callee) && isIdentifier(ce.callee.property)) {
+      if (ce.callee.property.name === 'join' && ce.callee.object.type === 'ArrayExpression') {
         return ce.callee.object.elements.some((e) => e && isUserInputExpr(e, taintResult, parentMap));
+      }
+      if (isIdentifier(ce.callee.object) && (ce.callee.object.name === 'path' || ce.callee.object.name === 'node:path')) {
+        if (ce.callee.property.name === 'join' || ce.callee.property.name === 'resolve' || ce.callee.property.name === 'normalize') {
+          return ce.arguments.some(arg => isUserInputExpr(arg, taintResult, parentMap));
+        }
       }
     }
   }
@@ -60,6 +65,7 @@ function isSuspiciousString(n: TSESTree.Node): boolean {
 }
 
 function checkFsCall(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
+  console.log('[checkFsCall] invoked for call at line:', getLine(node));
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   let objName = '';
@@ -78,7 +84,9 @@ function checkFsCall(node: TSESTree.CallExpression, source: string, filePath: st
   const pathArg = node.arguments[0];
   if (!pathArg) return null;
   if (isStringLiteral(pathArg as TSESTree.Expression)) return null;
-  if (!isUserInputExpr(pathArg, taintResult, parentMap)) return null;
+  const isUserInput = isUserInputExpr(pathArg, taintResult, parentMap);
+  console.log(`[checkFsCall] file=${filePath}, method=${methodName}, arg=${astToString(pathArg)}, isUserInput=${isUserInput}`);
+  if (!isUserInput) return null;
   let current: TSESTree.Node | undefined = node;
   let hasGuard = false;
   while (current) {

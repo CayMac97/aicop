@@ -35,7 +35,7 @@ function isUserInputExpression(rawNode: TSESTree.Expression): boolean {
 function templateHasUserInput(node: TSESTree.TemplateLiteral, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
   return node.expressions.some((expr) => {
     if (isUserInputExpression(expr)) return true;
-    if (isIdentifier(expr) && isNodeContextuallyTainted(expr, taintResult, parentMap)) return true;
+    if (isNodeContextuallyTainted(expr, taintResult, parentMap)) return true;
     return false;
   });
 }
