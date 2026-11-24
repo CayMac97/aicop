@@ -18,6 +18,9 @@ import regexDosRule from '../src/scanner/rules/security/regex-dos.js';
 import xxeRule from '../src/scanner/rules/security/xxe-injection.js';
 import openRedirect from '../src/scanner/rules/security/open-redirect.js';
 import insecureSession from '../src/scanner/rules/security/insecure-session.js';
+import weakCrypto from '../src/scanner/rules/security/weak-crypto.js';
+import sqlInjectionRule from '../src/scanner/rules/security/sql-injection.js';
+import ssrfRisk from '../src/scanner/rules/security/ssrf-risk.js';
 import unsafeShell from '../src/scanner/rules/security/unsafe-shell-execs.js';
 import missingTypes from '../src/scanner/rules/tech-debt/missing-types.js';
 import mixedAsync from '../src/scanner/rules/ai-smells/mixed-async-patterns.js';
@@ -507,5 +510,51 @@ describe('insecure-session: sensitive cookies without Secure', () => {
     ['stringifySetCookie secure', `app.get('/', (req, res) => { res.append("Set-Cookie", stringifySetCookie({ name: "session", value: v, secure: true })); });`],
   ])('does not flag %s', (_n, code) => {
     expect(run(insecureSession, code)).toHaveLength(0);
+  });
+});
+
+describe('weak-crypto: ECB mode, createCipher, subtle.digest', () => {
+  it('flags ECB mode and legacy createCipher; not GCM', () => {
+    expect(run(weakCrypto, `crypto.createCipheriv("aes-256-ecb", key, null);`).length).toBeGreaterThan(0);
+    expect(run(weakCrypto, `crypto.createCipheriv("aes-256-gcm", key, iv);`)).toHaveLength(0);
+  });
+  it('flags subtle.digest("SHA-1") but not SHA-256', () => {
+    expect(run(weakCrypto, `const d = await crypto.subtle.digest("SHA-1", buf);`).length).toBeGreaterThan(0);
+    expect(run(weakCrypto, `const d = await crypto.subtle.digest("SHA-256", buf);`)).toHaveLength(0);
+  });
+});
+
+describe('sql-injection: raw-only SQL APIs', () => {
+  it.each([
+    ['sequelize.literal', `app.get('/a', async (req, res) => { await User.findAll({ where: sequelize.literal("name = '" + req.query.n + "'") }); });`],
+    ['prisma $queryRawUnsafe', `app.get('/a', async (req, res) => { await prisma.$queryRawUnsafe("SELECT * FROM u WHERE id = '" + req.query.id + "'"); });`],
+    ['knex whereRaw', `app.get('/a', async (req, res) => { await knex('u').whereRaw("name = '" + req.query.n + "'"); });`],
+  ])('flags %s', (_n, code) => {
+    expect(run(sqlInjectionRule, code).length).toBeGreaterThan(0);
+  });
+  it('does not flag literal() with a constant', () => {
+    expect(run(sqlInjectionRule, `await User.findAll({ where: sequelize.literal("deleted_at IS NULL") });`)).toHaveLength(0);
+  });
+});
+
+describe('ssrf-risk: sockets, dns and request config objects', () => {
+  it.each([
+    ['net.connect to a parsed host', `app.get('/a', (req, res) => { net.connect(80, new URL(String(req.query.u)).hostname); });`],
+    ['dns.lookup', `app.get('/a', (req, res) => { dns.lookup(req.query.host, cb); });`],
+    ['axios config object', `app.get('/a', async (req, res) => { await axios.request({ method: 'get', url: String(req.query.u) }); });`],
+    ['config via local variable', `app.get('/a', async (req, res) => { const cfg = { url: req.query.u, timeout: 5 }; await axios(cfg); });`],
+  ])('flags %s', (_n, code) => {
+    expect(run(ssrfRisk, code).length).toBeGreaterThan(0);
+  });
+  it('ignores constant targets and an allowlisted host', () => {
+    expect(run(ssrfRisk, `net.connect(80, 'internal.example.com');`)).toHaveLength(0);
+    expect(run(ssrfRisk, `app.get('/a', async (req, res) => { await axios.request({ url: 'https://api.example.com/x', params: { q: req.query.q } }); });`)).toHaveLength(0);
+  });
+});
+
+describe('ssrf-risk: member-expression URL arguments (rule used to throw ReferenceError)', () => {
+  it('flags axios.get(req.query.url) and does not crash', () => {
+    const f = run(ssrfRisk, `app.get('/p', async (req, res) => { const r = await axios.get(req.query.url); res.send(r.data); });`);
+    expect(f.length).toBeGreaterThan(0);
   });
 });

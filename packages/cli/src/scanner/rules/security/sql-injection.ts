@@ -10,6 +10,7 @@ const SQL_VERB_PATTERN = /\b(SELECT|INSERT\s+INTO|UPDATE\s+\w+|DELETE\s+FROM|DRO
 const HTML_TAG_PATTERN = /<(?:select|table|input|form|option|textarea)\b/i;
 const USER_INPUT_SOURCES = new Set(['params', 'body', 'query', 'headers', 'cookies']);
 const PARAMETERIZED_PATTERN = /\?\s*[,)]/;
+const RAW_ONLY_SQL_APIS = new Set(['$queryRawUnsafe', '$executeRawUnsafe', 'literal']);
 
 const DB_CALL_METHODS = new Set(['query', 'execute', 'raw', 'prepare', 'run', 'all', 'get', 'any', 'one', 'none', 'many', 'manyOrNone', 'oneOrNone', 'result']);
 const SAFE_SINK_METHODS = new Set(['log', 'warn', 'error', 'info', 'debug', 'send', 'json', 'render', 'write', 'end', 'format', 'trace', 'dir', 'table', 'print']);
@@ -234,7 +235,14 @@ const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [use
         if (node.type !== 'CallExpression') return;
         if (isMemberExpression(node.callee) && isIdentifier(node.callee.property)) {
           const methodName = node.callee.property.name;
-          if (['where', 'andWhere', 'orWhere', 'having', 'andHaving', 'orHaving'].includes(methodName)) {
+          // APIs that accept ONLY raw SQL: a tainted value (or any tainted concatenation) is injectable
+          if (RAW_ONLY_SQL_APIS.has(methodName)) {
+            const rawArg = node.arguments[0];
+            if (rawArg && rawArg.type !== 'SpreadElement' && isDynamicExpr(rawArg as TSESTree.Expression, taintResult, parentMap)) {
+              tryFlag(node, `SQL injection risk — user input passed to raw SQL API ${methodName}()`, 'Use parameterized queries / bound parameters instead of raw SQL strings');
+            }
+          }
+          if (['where', 'andWhere', 'orWhere', 'having', 'andHaving', 'orHaving', 'whereRaw', 'havingRaw', 'orderByRaw', 'groupByRaw', 'selectRaw', 'joinRaw'].includes(methodName)) {
             const firstArg = node.arguments[0];
             if (firstArg) {
               if (firstArg.type === 'BinaryExpression' && concatHasUserInput(firstArg as TSESTree.BinaryExpression, taintResult, parentMap)) {

@@ -131,7 +131,7 @@ function isRequestAccessorCall(node: TSESTree.Node): boolean {
   return false;
 }
 
-function astToString(node: TSESTree.Node): string | null {
+export function astToString(node: TSESTree.Node): string | null {
   if (isIdentifier(node)) return node.name;
   if (node.type === 'ThisExpression') return 'this';
   if (isMemberExpression(node)) {
@@ -213,6 +213,13 @@ export function isTaintedExpr(rawNode: TSESTree.Node, tainted: Set<string>, sani
   }
   if (node.type === 'AwaitExpression') {
     return isTaintedExpr((node as TSESTree.AwaitExpression).argument, tainted, sanitizedExpressions);
+  }
+  if (node.type === 'NewExpression') {
+    // new URL(input) / new URLSearchParams(input) / new Request(input): the parsed parts (host, path, query) stay attacker-controlled
+    if (isIdentifier(node.callee) && ['URL', 'URLSearchParams', 'Request'].includes(node.callee.name)) {
+      return node.arguments.some((a) => a.type !== 'SpreadElement' && isTaintedExpr(a, tainted, sanitizedExpressions));
+    }
+    return false;
   }
   if (node.type === 'ConditionalExpression') {
     // the test does not flow into the value; either branch can.

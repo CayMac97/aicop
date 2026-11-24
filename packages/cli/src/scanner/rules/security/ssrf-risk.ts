@@ -3,7 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression, unwrapNode } from '../../../utils/ast-helpers.js';
-import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult, getCrossFileTaints } from '../../../utils/taint-tracker.js';
+import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult, getCrossFileTaints, astToString } from '../../../utils/taint-tracker.js';
 import { buildParentMap } from '../../ast-walker.js';
 
 const HTTP_CLIENTS = new Set(['fetch', 'axios', 'got', 'request', 'superagent', 'undici', 'needle', 'urllib']);
@@ -125,6 +125,65 @@ function hasUrlAllowlistValidation(node: TSESTree.Node, varName: string, parentM
   return hasGuard;
 }
 
+const URL_CONFIG_KEYS = new Set(['url', 'uri', 'baseURL', 'baseUrl', 'host', 'hostname', 'href']);
+
+/** Resolve `outbound` in axios.request(outbound) to its object literal (same-scope const/let), or return the node itself. */
+function resolveObjectLiteral(arg: TSESTree.Node, parentMap: Map<TSESTree.Node, TSESTree.Node>): TSESTree.ObjectExpression | null {
+  if (arg.type === 'ObjectExpression') return arg;
+  if (!isIdentifier(arg)) return null;
+  let cur: TSESTree.Node | undefined = parentMap.get(arg);
+  while (cur) {
+    if (cur.type === 'BlockStatement' || cur.type === 'Program') {
+      for (const stmt of cur.body) {
+        if (stmt.type !== 'VariableDeclaration') continue;
+        for (const d of stmt.declarations) {
+          if (d.id.type === 'Identifier' && d.id.name === arg.name && d.init?.type === 'ObjectExpression') return d.init;
+        }
+      }
+    }
+    cur = parentMap.get(cur);
+  }
+  return null;
+}
+
+/** the user-controlled url/host inside a request config object ({ url: x }), if any */
+function configUrlValue(arg: TSESTree.Node, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): TSESTree.Node | null {
+  const obj = resolveObjectLiteral(arg, parentMap);
+  if (!obj) return null;
+  for (const p of obj.properties) {
+    if (p.type !== 'Property') continue;
+    const key = isIdentifier(p.key) ? p.key.name : p.key.type === 'Literal' ? String(p.key.value) : '';
+    if (URL_CONFIG_KEYS.has(key) && isUserControlledArg(p.value, taintResult, parentMap)) return p.value;
+  }
+  return null;
+}
+
+const SOCKET_MODULES = new Set(['net', 'tls', 'dns', 'dgram']);
+const SOCKET_METHODS = new Set(['connect', 'createConnection', 'lookup', 'resolve', 'resolve4', 'resolve6', 'resolveAny', 'send']);
+
+/** net.connect(80, host) / tls.connect(...) / dns.lookup(host): the host decides where the server connects to */
+function checkSocketCall(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
+  if (!isMemberExpression(node.callee) || !isIdentifier(node.callee.object) || !isIdentifier(node.callee.property)) return null;
+  const mod = node.callee.object.name.replace(/^node:/, '');
+  if (!SOCKET_MODULES.has(mod) || !SOCKET_METHODS.has(node.callee.property.name)) return null;
+  const tainted = node.arguments.some((a) => {
+    if (a.type === 'SpreadElement' || a.type === 'ArrowFunctionExpression' || a.type === 'FunctionExpression') return false;
+    if (a.type === 'ObjectExpression') return configUrlValue(a, taintResult, parentMap) !== null;
+    return isUserControlledArg(a, taintResult, parentMap);
+  });
+  if (!tainted) return null;
+  return {
+    ruleId: 'security/ssrf-risk',
+    severity: 'error',
+    message: `${mod}.${node.callee.property.name}() connects to a host derived from user input — SSRF risk`,
+    file: filePath,
+    line: getLine(node),
+    column: getColumn(node),
+    snippet: extractSnippet(source, getLine(node)),
+    fix: 'Resolve the host and check it against an allowlist (and block private/loopback ranges) before connecting.',
+  };
+}
+
 function checkHttpCall(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   let clientName = '';
   const directName = isDirectHttpClientCall(node);
@@ -135,8 +194,11 @@ function checkHttpCall(node: TSESTree.CallExpression, source: string, filePath: 
     if (!methodName) return null;
     clientName = methodName;
   }
-  const urlArg = node.arguments[0];
-  if (!urlArg || !isUserControlledArg(urlArg, taintResult, parentMap)) return null;
+  const firstArg = node.arguments[0];
+  if (!firstArg) return null;
+  // axios.request({ url: x }) / axios(config) / got({ url: x })
+  const urlArg = configUrlValue(firstArg, taintResult, parentMap) ?? firstArg;
+  if (!isUserControlledArg(urlArg, taintResult, parentMap)) return null;
   let varName = '';
   if (isIdentifier(urlArg)) varName = (urlArg as TSESTree.Identifier).name;
   else if (urlArg.type === 'MemberExpression') {
@@ -233,6 +295,9 @@ const rule: Rule = {
         
         const pageFinding = checkPageGoto(unwrapNode(rawNode) as TSESTree.CallExpression, source, filePath, taintResult, parentMap);
         if (pageFinding) findings.push(pageFinding);
+
+        const socketFinding = checkSocketCall(unwrapNode(rawNode) as TSESTree.CallExpression, source, filePath, taintResult, parentMap);
+        if (socketFinding) findings.push(socketFinding);
       },
     });
 
