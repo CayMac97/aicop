@@ -44,6 +44,6 @@ AI-Smells und Tech-Debt scannt. Antworte immer auf Deutsch.
 ## Wichtig
 - Keine Änderungen an *.min.js Dateien
 - Immer TypeScript, kein plain JavaScript
-- Tests müssen nach Änderungen grün bleiben (aktuell 99/99)
+- Tests müssen nach Änderungen grün bleiben (aktuell 164/164)
 - smpclans ist das Referenzprojekt (0 errors, 0 warnings, 100/100)
 - die Website unter aicop/packages/website soll nicht aufs git gepushed werden, genau so wenig wie unrelevante Dateien wie claude test dateien oder so
