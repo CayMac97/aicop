@@ -16,6 +16,10 @@ export function setSkipRanges(ranges: [number, number][]) {
   currentSkipRanges = ranges;
 }
 
+export function getSkipRanges(): [number, number][] {
+  return currentSkipRanges;
+}
+
 export function walk(root: TSESTree.Node | TSESTree.Program, visitor: WalkVisitor, parent: TSESTree.Node | null = null): void {
   if (root.range) {
     for (const r of currentSkipRanges) {

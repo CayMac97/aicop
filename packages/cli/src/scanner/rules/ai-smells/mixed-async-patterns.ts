@@ -165,6 +165,10 @@ function checkAsyncNoAwait(
   if (funcNode.range && implementingClassRanges.some(([s, e]) => funcNode.range![0] >= s && funcNode.range![0] <= e)) return null;
   // Pattern C: event listener callbacks passed to .on()/.pipe()/.subscribe() etc.
   if (funcNode.type !== 'FunctionDeclaration' && isEventListenerCallback(funcNode as TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression, parent)) return null;
+  // Pattern D: inline function handed to a framework contract - JSX attributes
+  // (<form action={async () => ...}>) and object properties (tool({ execute: async () => ... })).
+  // The expected signature is Promise-returning, so async is required, not unnecessary.
+  if (funcNode.type !== 'FunctionDeclaration' && parent && (parent.type === 'JSXExpressionContainer' || parent.type === 'Property')) return null;
   return {
     ruleId: 'ai-smell/mixed-async-patterns',
     severity: 'warn',

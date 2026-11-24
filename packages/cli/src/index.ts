@@ -36,7 +36,7 @@ function addScanOptions(cmd: Command): Command {
     .option('--dry-run', 'Show what would be fixed without modifying files')
     .option('--watch', 'Watch for file changes and re-scan')
     .option('--ci', 'CI mode — no colors, no spinners, exit code reflects threshold status')
-    .option('--format <format>', 'Output format: terminal | html | json')
+    .option('--format <format>', 'Output format: terminal | html | json | sarif')
     .option('--output <path>', 'Write report to file instead of stdout')
     .option('--severity <level>', 'Minimum severity to report: error | warn | info', 'warn')
     .option('--config <path>', 'Path to config file')
@@ -484,7 +484,7 @@ async function runScan(targetPath: string, opts: CliOptions): Promise<void> {
   opts.format = scanOptions.format;
   opts.output = scanOptions.output;
 
-  const isFileFormat = (opts.format as string) === 'json' || (opts.format as string) === 'html';
+  const isFileFormat = ['json', 'html', 'sarif'].includes(opts.format as string);
   const spinner = (ci || isFileFormat) ? null : ora(chalk.dim('Collecting files...')).start();
   const ruleCount = getRuleCount();
 

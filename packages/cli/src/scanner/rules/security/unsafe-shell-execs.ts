@@ -4,6 +4,56 @@ import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn } from '../../../utils/ast-helpers.js';
 
+
+const SHELL_MODULES = new Set(['child_process', 'node:child_process', 'shelljs']);
+
+interface ShellBindings {
+  namespaces: Set<string>; // const cp = require('child_process') / import * as cp / import cp
+  functions: Set<string>;  // const { exec } = require(...) / import { exec as run }
+}
+
+function isShellModule(node: TSESTree.Node | null | undefined): boolean {
+  return !!node && node.type === 'Literal' && typeof node.value === 'string' && SHELL_MODULES.has(node.value);
+}
+
+/** Which local names are bound to child_process / shelljs in this file? */
+function collectShellBindings(ast: ParsedAST): ShellBindings {
+  const b: ShellBindings = { namespaces: new Set(), functions: new Set() };
+  const isExecName = (n: string) => n === 'exec' || n === 'execSync';
+  walk(ast, {
+    enter(node) {
+      if (node.type === 'ImportDeclaration' && isShellModule(node.source)) {
+        for (const sp of node.specifiers) {
+          if (sp.type === 'ImportSpecifier') {
+            const imported = sp.imported.type === 'Identifier' ? sp.imported.name : '';
+            if (isExecName(imported)) b.functions.add(sp.local.name);
+          } else {
+            b.namespaces.add(sp.local.name);
+          }
+        }
+        return;
+      }
+      if (node.type !== 'VariableDeclarator' || !node.init) return;
+      const init = node.init;
+      const isRequireShell = (n: TSESTree.Node): boolean =>
+        n.type === 'CallExpression' && n.callee.type === 'Identifier' && n.callee.name === 'require' && isShellModule(n.arguments[0]);
+      if (isRequireShell(init)) {
+        if (node.id.type === 'Identifier') b.namespaces.add(node.id.name);
+        else if (node.id.type === 'ObjectPattern') {
+          for (const prop of node.id.properties) {
+            if (prop.type === 'Property' && prop.key.type === 'Identifier' && isExecName(prop.key.name) && prop.value.type === 'Identifier') {
+              b.functions.add(prop.value.name);
+            }
+          }
+        }
+      } else if (init.type === 'MemberExpression' && isRequireShell(init.object) && node.id.type === 'Identifier') {
+        b.functions.add(node.id.name); // const run = require('child_process').exec
+      }
+    },
+  });
+  return b;
+}
+
 const rule: Rule = {
   id: 'security/unsafe-shell-execs',
   name: 'Unsafe Shell Execs',
@@ -15,6 +65,7 @@ const rule: Rule = {
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
+    const bindings = collectShellBindings(ast);
 
     walk(ast, {
       enter(node) {
@@ -22,11 +73,15 @@ const rule: Rule = {
           let isExec = false;
           let isShellTrue = false;
 
-          if (node.callee.type === 'Identifier' && (node.callee.name === 'exec' || node.callee.name === 'execSync')) {
-            isExec = true;
-          } else if (node.callee.type === 'MemberExpression' && node.callee.property.type === 'Identifier' && 
-            (node.callee.property.name === 'exec' || node.callee.property.name === 'execSync')) {
-            isExec = true;
+          // exec()/execSync() only count when they are bound to child_process/shelljs.
+          // RegExp.prototype.exec() (re.exec(str)) must not be mistaken for a shell call.
+          const isExecName = (n: string) => n === 'exec' || n === 'execSync';
+          if (node.callee.type === 'Identifier') {
+            if (bindings.functions.has(node.callee.name)) isExec = true;
+          } else if (node.callee.type === 'MemberExpression' && node.callee.property.type === 'Identifier' && isExecName(node.callee.property.name)) {
+            const obj = node.callee.object;
+            if (obj.type === 'Identifier' && bindings.namespaces.has(obj.name)) isExec = true;
+            else if (obj.type === 'CallExpression' && obj.callee.type === 'Identifier' && obj.callee.name === 'require' && isShellModule(obj.arguments[0])) isExec = true;
           }
 
           // Check for { shell: true } in options argument

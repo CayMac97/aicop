@@ -1,10 +1,51 @@
 import { TSESTree } from '@typescript-eslint/typescript-estree';
+import fs from 'node:fs';
+import path from 'node:path';
 import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral } from '../../../utils/ast-helpers.js';
 
 const UNSAFE_DESER_PACKAGES = new Set(['node-serialize', 'js-yaml']);
+
+
+const SAFE_YAML_EXPORTS = new Set(['safeLoad', 'safeLoadAll', 'safeDump', 'dump']);
+const yamlSafeCache = new Map<string, boolean>();
+
+/**
+ * js-yaml >= 4 makes load() safe by default (no !!js/function), so yaml.load() is only a
+ * risk on js-yaml <= 3. We look at the nearest package.json that declares js-yaml.
+ * Unknown version => false (keep reporting).
+ */
+function isModernJsYaml(filePath: string): boolean {
+  let dir = path.dirname(path.resolve(filePath));
+  const visited: string[] = [];
+  let result = false;
+  for (let i = 0; i < 12; i++) {
+    const cached = yamlSafeCache.get(dir);
+    if (cached !== undefined) { result = cached; break; }
+    visited.push(dir);
+    const pkgPath = path.join(dir, 'package.json');
+    let found = false;
+    try {
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as Record<string, Record<string, string> | undefined>;
+        const spec = pkg.dependencies?.['js-yaml'] ?? pkg.devDependencies?.['js-yaml'];
+        if (typeof spec === 'string') {
+          const m = /(\d+)/.exec(spec);
+          result = m ? Number(m[1]) >= 4 : false;
+          found = true;
+        }
+      }
+    } catch { /* unreadable package.json => unknown */ }
+    if (found) break;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  for (const d of visited) yamlSafeCache.set(d, result);
+  return result;
+}
 
 function isStaticArg(node: TSESTree.Node): boolean {
   if (node.type === 'Literal') return true;
@@ -42,6 +83,7 @@ function checkUnserialize(node: TSESTree.CallExpression, source: string, filePat
   if (!arg || isStaticArg(arg)) return null;
 
   if (isYamlLoad) {
+    if (isModernJsYaml(filePath)) return null;
     return {
       ruleId: 'security/insecure-deserialization',
       severity: 'error',
@@ -106,6 +148,7 @@ function checkUnsafePackageRequire(node: TSESTree.CallExpression, source: string
   if (!arg || !isStringLiteral(arg as TSESTree.Expression)) return null;
   const pkg = String((arg as TSESTree.StringLiteral).value);
   if (!UNSAFE_DESER_PACKAGES.has(pkg)) return null;
+  if (pkg === 'js-yaml' && isModernJsYaml(filePath)) return null;
   return {
     ruleId: 'security/insecure-deserialization',
     severity: 'warn',
@@ -136,6 +179,15 @@ const rule: Rule = {
         if (!isStringLiteral(node.source)) return;
         const pkg = String((node.source as TSESTree.StringLiteral).value);
         if (UNSAFE_DESER_PACKAGES.has(pkg)) {
+          if (pkg === 'js-yaml') {
+            if (isModernJsYaml(filePath)) return;
+            // importing only the safe API (safeLoad/dump ...) is not a risk
+            const specs = node.specifiers;
+            const onlySafe = specs.length > 0 && specs.every(
+              (sp) => sp.type === 'ImportSpecifier' && SAFE_YAML_EXPORTS.has((sp.imported as TSESTree.Identifier).name),
+            );
+            if (onlySafe) return;
+          }
           findings.push({
             ruleId: 'security/insecure-deserialization',
             severity: 'warn',

@@ -5,10 +5,38 @@ import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isStringLiteral, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
 import { buildContextualTaintMap, buildParentMap, isDynamicExpr, TaintResult } from '../../../utils/taint-tracker.js';
 
-// Simplistic check for catastrophic backtracking patterns
-// This is not a full ReDoS analyzer, just catches the most obvious nested quantifiers like (a+)+
-const NESTED_QUANTIFIER = /(?:\([^)]+(?:\+|\*)\)[^)]*)+(?:\+|\*)/;
-const _BAD_PATTERN = /([a-zA-Z0-9_-]+)\1+(?:\+|\*)/; // simple repetition `a+a+`
+/**
+ * Detects nested unbounded quantifiers such as (a+)+, (\w+\s?)* or (?:x*)+ .
+ * A group is only dangerous if (1) it contains an unbounded quantifier and
+ * (2) the group itself is quantified with an unbounded quantifier.
+ * Plain capture groups like (.*)\.(.*) are NOT nested quantifiers.
+ */
+function hasNestedQuantifier(pattern: string): boolean {
+  const stack: boolean[] = []; // per open group: contains an unbounded quantifier?
+  let inClass = false;
+  const isUnboundedAt = (i: number): boolean => {
+    const c = pattern[i];
+    if (c === '+' || c === '*') return true;
+    if (c === '{') return /^\{\d+,\}/.test(pattern.slice(i));
+    return false;
+  };
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === '\\') { i++; continue; }
+    if (inClass) { if (ch === ']') inClass = false; continue; }
+    if (ch === '[') { inClass = true; continue; }
+    if (ch === '(') { stack.push(false); continue; }
+    if (ch === ')') {
+      const innerHasQuantifier = stack.pop() ?? false;
+      if (innerHasQuantifier && isUnboundedAt(i + 1)) return true;
+      // quantifier inside propagates upward (e.g. ((a+)b)+)
+      if (innerHasQuantifier && stack.length > 0) stack[stack.length - 1] = true;
+      continue;
+    }
+    if (stack.length > 0 && isUnboundedAt(i)) stack[stack.length - 1] = true;
+  }
+  return false;
+}
 
 type RegexLiteral = TSESTree.Literal & {
   regex?: {
@@ -18,7 +46,7 @@ type RegexLiteral = TSESTree.Literal & {
 };
 
 function analyzeRegexPattern(pattern: string): string | null {
-  if (NESTED_QUANTIFIER.test(pattern)) {
+  if (hasNestedQuantifier(pattern)) {
     return 'Nested quantifiers detected — catastrophic backtracking possible (e.g., (a+)+)';
   }
   return null;

@@ -319,7 +319,6 @@ function checkResSend(node: TSESTree.CallExpression, source: string, filePath: s
   if (method !== 'send' && method !== 'write') return null;
   const arg = node.arguments[0];
   const isUserInputFlag = arg ? isUserInput(arg, taintResult, parentMap) : false;
-  console.log(`[checkResSend] file=${filePath}, arg=${astToString(arg)}, isUserInput=${isUserInputFlag}`);
   if (!arg || !isUserInputFlag) return null;
   if (isSafelyValidated(arg, parentMap)) return null;
   
@@ -467,8 +466,11 @@ const rule: Rule = {
       }
     });
 
+    // Dynamic res.send()/res.write() is only an HTML-injection sink when the file actually
+    // serves HTML (res.setHeader('Content-Type', 'text/html') etc.). Tainted sends are
+    // already reported by checkResSend above.
     for (const node of dynamicSendNodes) {
-      if (!flaggedLines.has(getLine(node))) {
+      if (hasHtmlContentType && !flaggedLines.has(getLine(node))) {
         findings.push({
           ruleId: 'security/xss-vulnerabilities',
           severity: 'error',

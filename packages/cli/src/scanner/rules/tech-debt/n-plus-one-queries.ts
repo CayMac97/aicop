@@ -44,7 +44,7 @@ const rule: Rule = {
     const loopVarsStack: Set<string>[] = [];
 
     walk(ast, {
-      enter(node) {
+      enter(node, parent) {
         let isLoop = false;
         let newVars = new Set<string>();
 
@@ -96,6 +96,24 @@ const rule: Rule = {
           }
 
           let isDbCall = dbMethodRegex.test(methodName);
+
+          // A bare call like updateImage() / updateCartTotals() is almost always a
+          // local helper or React state setter. Real DB access in a loop is awaited.
+          if (isDbCall && node.callee.type === 'Identifier' && parent?.type !== 'AwaitExpression') {
+            isDbCall = false;
+          }
+
+          // DOM lookups are not database queries
+          if (isDbCall && /^querySelector/.test(methodName)) isDbCall = false;
+
+          // Generic write verbs also exist on signals, hashes, editors, HTTP services ...
+          // (this.messages.update(), crypto.createHash().update(), this.save()).
+          // Only treat them as DB calls when awaited or when the receiver looks like a DB handle.
+          if (isDbCall && node.callee.type === 'MemberExpression' && /^(update|save|delete|insert)/i.test(methodName)) {
+            const receiver = source.slice(node.callee.object.range[0], node.callee.object.range[1]);
+            const looksLikeDb = /db|repo|collection|col\b|store|prisma|mongoose|model|knex|datasource|client|entity|manager|table|dao|sequelize/i.test(receiver);
+            if (!looksLikeDb && parent?.type !== 'AwaitExpression') isDbCall = false;
+          }
           
           if (isDbCall) {
             let isLocalToLoop = false;
@@ -145,7 +163,7 @@ const rule: Rule = {
           }
         }
       },
-      leave(node) {
+      exit(node) {
         let isLoop = false;
         if (
           node.type === 'ForStatement' ||

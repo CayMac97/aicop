@@ -77,6 +77,8 @@ const rule: Rule = {
       Literal(rawNode, parent) {
         const node = rawNode as TSESTree.Literal;
         if (typeof node.value !== 'number') return;
+        // 0xFF.. / 0b.. / 0o.. literals are bit masks / flags, written that way on purpose
+        if (/^0[xXbBoO]/.test(node.raw)) return;
         const value = node.value;
         if (!shouldFlagNumber(value, parent)) return;
         const lineNum = getLine(node);

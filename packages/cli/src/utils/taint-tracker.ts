@@ -1,5 +1,5 @@
 import { TSESTree } from '@typescript-eslint/typescript-estree';
-import { walk } from '../scanner/ast-walker.js';
+import { walk, getSkipRanges } from '../scanner/ast-walker.js';
 import { ParsedAST } from '../scanner/rules/types.js';
 import { isIdentifier, isMemberExpression } from './ast-helpers.js';
 import { crossFileCache } from '../scanner/cross-file/cross-file-resolver.js';
@@ -299,9 +299,7 @@ export function isArgContextuallyTainted(
   taintResult: TaintResult,
   parentMap: Map<TSESTree.Node, TSESTree.Node>
 ): boolean {
-  console.log(`[TaintTracker] checking isArgContextuallyTainted for ${astToString(node)}`);
   if (isNodeContextuallyTainted(node, taintResult, parentMap)) {
-    console.log(`[TaintTracker] isNodeContextuallyTainted returned true for ${astToString(node)}`);
     return true;
   }
   if (node.type === 'ObjectExpression') {
@@ -317,7 +315,35 @@ export function isArgContextuallyTainted(
   return false;
 }
 
-export function buildContextualTaintMap(ast: ParsedAST, _filePath: string): TaintResult {
+interface TaintCacheEntry {
+  skipRanges: [number, number][];
+  result: TaintResult;
+}
+
+// ~25 rules ask for the taint map of the same AST; computing it once per AST is a large speedup.
+const taintCache = new WeakMap<object, TaintCacheEntry>();
+
+/**
+ * Memoized per AST. Callers get their own copies of the mutable collections
+ * (some rules, e.g. prompt-injection, delete entries from globalTaints).
+ * The cache is invalidated when the walker's global skip ranges changed.
+ */
+export function buildContextualTaintMap(ast: ParsedAST, filePath: string): TaintResult {
+  const skipRanges = getSkipRanges();
+  let entry = taintCache.get(ast);
+  if (!entry || entry.skipRanges !== skipRanges) {
+    entry = { skipRanges, result: computeContextualTaintMap(ast, filePath) };
+    taintCache.set(ast, entry);
+  }
+  const r = entry.result;
+  return {
+    globalTaints: new Set(r.globalTaints),
+    localTaints: new Map(r.localTaints),
+    sanitizedExpressions: new Set(r.sanitizedExpressions),
+  };
+}
+
+function computeContextualTaintMap(ast: ParsedAST, _filePath: string): TaintResult {
   const { tainted: globalTaints, sanitizedExpressions } = buildTaintMap(ast);
   const localTaints = new Map<TSESTree.Node, Set<string>>();
   
@@ -439,10 +465,8 @@ export function buildContextualTaintMap(ast: ParsedAST, _filePath: string): Tain
           const vd = vNode as TSESTree.VariableDeclarator;
           if (!vd.init) return;
           if (isCurrentlyTainted(vd.init, funcNode)) {
-            console.log(`[TaintTracker] vd.init is tainted for ID ${vd.id.type}`);
             if (vd.id.type === 'Identifier') {
               lt.add(vd.id.name);
-              console.log(`[TaintTracker] added to lt: ${vd.id.name}`);
             } else if (vd.id.type === 'ObjectPattern' || vd.id.type === 'ArrayPattern') {
               extractPatternIdentifiers(vd.id, lt);
             }
@@ -587,6 +611,21 @@ export function getCrossFileTaints(ast: ParsedAST, filePath: string, taintResult
     }
   });
 
+  // instanceName -> className. Independent of any single call, so compute it once
+  // (it used to be recomputed by walking the whole AST for every call expression: O(calls * nodes)).
+  const instantiatedClasses = new Map<string, string>();
+  walk(ast, {
+    VariableDeclarator(rawNode) {
+      const vNode = rawNode as TSESTree.VariableDeclarator;
+      if (vNode.id.type === 'Identifier' && vNode.init && vNode.init.type === 'NewExpression') {
+        const newExpr = vNode.init as TSESTree.NewExpression;
+        if (newExpr.callee.type === 'Identifier') {
+          instantiatedClasses.set(vNode.id.name, newExpr.callee.name);
+        }
+      }
+    }
+  });
+
   walk(ast, {
     CallExpression(rawNode, parentNode) {
       const node = rawNode as TSESTree.CallExpression;
@@ -604,19 +643,6 @@ export function getCrossFileTaints(ast: ParsedAST, filePath: string, taintResult
           }
         }
       }
-
-      const instantiatedClasses = new Map<string, string>(); // instanceName -> className
-      walk(ast, {
-        VariableDeclarator(rawNode) {
-          const vNode = rawNode as TSESTree.VariableDeclarator;
-          if (vNode.id.type === 'Identifier' && vNode.init && vNode.init.type === 'NewExpression') {
-            const newExpr = vNode.init as TSESTree.NewExpression;
-            if (newExpr.callee.type === 'Identifier') {
-              instantiatedClasses.set(vNode.id.name, newExpr.callee.name);
-            }
-          }
-        }
-      });
 
       if (!importInfo && node.callee.type === 'MemberExpression') {
         const me = node.callee as TSESTree.MemberExpression;
