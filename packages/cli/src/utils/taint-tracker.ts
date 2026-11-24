@@ -97,7 +97,39 @@ export function isDynamicExpr(n: TSESTree.Expression, taintResult: TaintResult, 
   return false;
 }
 
-const REQ_USER_INPUT_PROPS = new Set(['body', 'query', 'params', 'headers', 'cookies']);
+const REQ_USER_INPUT_PROPS = new Set(['body', 'query', 'params', 'headers', 'cookies', 'signedCookies', 'files', 'file', 'rawBody']);
+const NEST_INPUT_DECORATORS = new Set(['Body', 'Query', 'Param', 'Headers', 'Cookies', 'UploadedFile', 'UploadedFiles', 'Ip', 'Session']);
+const REQUEST_ROOT_NAMES = new Set(['req', 'request']);
+// Koa: ctx.query / ctx.params / ctx.headers are inputs; ctx.body is the RESPONSE body, so it is not listed.
+const KOA_CTX_INPUT_PROPS = new Set(['query', 'params', 'headers', 'querystring']);
+const REQUEST_ACCESSOR_METHODS = new Set(['get', 'header', 'param']);
+
+/** Strip wrappers that do not change the value: (x as T), x!, <T>x, x?.y */
+function unwrapValueWrappers(node: TSESTree.Node): TSESTree.Node {
+  let cur = node;
+  for (;;) {
+    if (cur.type === 'TSAsExpression' || cur.type === 'TSNonNullExpression' || cur.type === 'TSTypeAssertion' || cur.type === 'TSSatisfiesExpression') {
+      cur = (cur as TSESTree.TSAsExpression).expression;
+    } else if (cur.type === 'ChainExpression') {
+      cur = (cur as TSESTree.ChainExpression).expression;
+    } else {
+      return cur;
+    }
+  }
+}
+
+/** req.get('x') / req.header('x') / ctx.get('x') / ctx.request.get('x') / ctx.cookies.get('x') */
+function isRequestAccessorCall(node: TSESTree.Node): boolean {
+  const n = unwrapValueWrappers(node);
+  if (n.type !== 'CallExpression' || !isMemberExpression(n.callee) || !isIdentifier(n.callee.property)) return false;
+  if (!REQUEST_ACCESSOR_METHODS.has(n.callee.property.name)) return false;
+  const obj = unwrapValueWrappers(n.callee.object);
+  if (isIdentifier(obj)) return REQUEST_ROOT_NAMES.has(obj.name) || obj.name === 'ctx';
+  if (isMemberExpression(obj) && isIdentifier(obj.object) && isIdentifier(obj.property)) {
+    if (obj.object.name === 'ctx' && (obj.property.name === 'request' || obj.property.name === 'cookies')) return true;
+  }
+  return false;
+}
 
 function astToString(node: TSESTree.Node): string | null {
   if (isIdentifier(node)) return node.name;
@@ -113,29 +145,36 @@ function astToString(node: TSESTree.Node): string | null {
   return null;
 }
 
-export function isDirectUserInputExpr(node: TSESTree.Node): boolean {
-  if (node.type === 'TSAsExpression' || node.type === 'TSNonNullExpression') {
-    return isDirectUserInputExpr((node as TSESTree.TSAsExpression | TSESTree.TSNonNullExpression).expression);
-  }
+export function isDirectUserInputExpr(rawNode: TSESTree.Node): boolean {
+  const node = unwrapValueWrappers(rawNode);
+  if (isRequestAccessorCall(node)) return true;
   if (!isMemberExpression(node)) return false;
 
   let current: TSESTree.Node = node;
   const properties: string[] = [];
 
-  while (isMemberExpression(current)) {
+  while (true) {
+    current = unwrapValueWrappers(current);
+    if (!isMemberExpression(current)) break;
     const me = current as TSESTree.MemberExpression;
     if (isIdentifier(me.property)) properties.unshift(me.property.name);
+    else if (me.property.type === 'Literal') properties.unshift(String(me.property.value));
     current = me.object;
   }
 
-  if (isIdentifier(current) && current.name === 'req' && properties.length > 0) {
-    if (REQ_USER_INPUT_PROPS.has(properties[0])) return true;
+  if (isIdentifier(current) && properties.length > 0) {
+    if (REQUEST_ROOT_NAMES.has(current.name) && REQ_USER_INPUT_PROPS.has(properties[0])) return true;
+    if (current.name === 'ctx') {
+      if (properties[0] === 'request' && properties.length > 1 && REQ_USER_INPUT_PROPS.has(properties[1])) return true;
+      if (KOA_CTX_INPUT_PROPS.has(properties[0])) return true;
+    }
   }
 
   return false;
 }
 
-export function isTaintedExpr(node: TSESTree.Node, tainted: Set<string>, sanitizedExpressions: Set<string>): boolean {
+export function isTaintedExpr(rawNode: TSESTree.Node, tainted: Set<string>, sanitizedExpressions: Set<string>): boolean {
+  const node = unwrapValueWrappers(rawNode);
   if (isDirectUserInputExpr(node)) return true;
   if (isTaintedNode(node, tainted)) return true;
   
@@ -160,6 +199,13 @@ export function isTaintedExpr(node: TSESTree.Node, tainted: Set<string>, sanitiz
   if (node.type === 'AwaitExpression') {
     return isTaintedExpr((node as TSESTree.AwaitExpression).argument, tainted, sanitizedExpressions);
   }
+  if (node.type === 'ConditionalExpression') {
+    // the test does not flow into the value; either branch can.
+    // `allowed.includes(x) ? x : 'default'`: the value returned in the consequent was just checked against an allowlist.
+    const consequentTainted = isTaintedExpr(node.consequent, tainted, sanitizedExpressions)
+      && !testValidates(node.test, identifierNamesIn(node.consequent));
+    return consequentTainted || isTaintedExpr(node.alternate, tainted, sanitizedExpressions);
+  }
   if (node.type === 'TemplateLiteral') {
     return node.expressions.some(expr => isTaintedExpr(expr, tainted, sanitizedExpressions));
   }
@@ -169,7 +215,7 @@ export function isTaintedExpr(node: TSESTree.Node, tainted: Set<string>, sanitiz
       const me = call.callee as TSESTree.MemberExpression;
       if (isIdentifier(me.property)) {
         const method = me.property.name;
-        const TAINT_PRESERVING_METHODS = new Set(['trim', 'toLowerCase', 'toUpperCase', 'substring', 'slice', 'replace', 'replaceAll', 'concat', 'toString', 'join', 'split', 'map', 'filter', 'reduce', 'flat', 'flatMap']);
+        const TAINT_PRESERVING_METHODS = new Set(['trim', 'trimStart', 'trimEnd', 'toLowerCase', 'toUpperCase', 'toLocaleLowerCase', 'toLocaleUpperCase', 'substring', 'substr', 'slice', 'replace', 'replaceAll', 'concat', 'toString', 'join', 'split', 'map', 'filter', 'reduce', 'flat', 'flatMap', 'normalize', 'padStart', 'padEnd', 'repeat', 'charAt', 'at', 'pop', 'shift']);
         if (isIdentifier(me.object) && (me.object.name === 'path' || me.object.name === 'node:path')) {
           if (method === 'join' || method === 'resolve' || method === 'normalize') {
             return call.arguments.some(arg => isTaintedExpr(arg, tainted, sanitizedExpressions));
@@ -183,8 +229,21 @@ export function isTaintedExpr(node: TSESTree.Node, tainted: Set<string>, sanitiz
         }
       }
     }
-    if (isIdentifier(call.callee) && (call.callee.name === 'String' || call.callee.name === 'Number')) {
+    // schema.validate(x) / schema.parse(x) / schema.safeParse(x): the returned value is validated (joi, zod, yup ...)
+    if (isMemberExpression(call.callee) && isIdentifier(call.callee.property)
+      && ['validate', 'validateSync', 'parse', 'parseAsync', 'safeParse', 'safeParseAsync'].includes(call.callee.property.name)
+      && !(isIdentifier(call.callee.object) && ['JSON', 'Date', 'path', 'url', 'qs', 'querystring'].includes(call.callee.object.name))) {
+      return false;
+    }
+    // Number()/parseInt()/parseFloat()/Boolean() only yield numbers/booleans: not injectable, so they are NOT propagated.
+    if (isIdentifier(call.callee) && ['String', 'decodeURIComponent', 'decodeURI', 'unescape', 'atob'].includes(call.callee.name)) {
       if (call.arguments[0]) return isTaintedExpr(call.arguments[0], tainted, sanitizedExpressions);
+    }
+    if (isMemberExpression(call.callee) && isIdentifier(call.callee.object) && isIdentifier(call.callee.property)) {
+      const o = call.callee.object.name, m = call.callee.property.name;
+      if ((o === 'Buffer' && m === 'from') || (o === 'JSON' && m === 'parse') || (o === 'Array' && m === 'from')) {
+        if (call.arguments[0]) return isTaintedExpr(call.arguments[0], tainted, sanitizedExpressions);
+      }
     }
   }
   return false;
@@ -222,6 +281,41 @@ export function buildTaintMap(ast: ParsedAST): { tainted: Set<string>, sanitized
 
       if (node.id.type === 'ArrayPattern' && isDirectUserInputExpr(node.init)) {
         extractParamNames(node.id).forEach(name => tainted.add(name));
+      }
+    },
+
+    ForOfStatement(rawNode) {
+      const node = rawNode as TSESTree.ForOfStatement;
+      if (!isTaintedExpr(node.right, tainted, sanitizedExpressions)) return;
+      if (node.left.type === 'VariableDeclaration') {
+        for (const d of node.left.declarations) extractParamNames(d.id).forEach((n) => tainted.add(n));
+      } else if (node.left.type === 'Identifier') {
+        tainted.add(node.left.name);
+      }
+    },
+
+    CallExpression(rawNode) {
+      // parts.push(tainted) / set.add(tainted) / list.unshift(tainted): the container becomes tainted
+      const node = rawNode as TSESTree.CallExpression;
+      if (!isMemberExpression(node.callee) || !isIdentifier(node.callee.property) || !isIdentifier(node.callee.object)) return;
+      if (!['push', 'unshift', 'add', 'append'].includes(node.callee.property.name)) return;
+      if (node.arguments.some((a) => a.type !== 'SpreadElement' && isTaintedExpr(a, tainted, sanitizedExpressions))) {
+        tainted.add(node.callee.object.name);
+      }
+    },
+
+    // NestJS: handler parameters bound by decorators are request input
+    FunctionExpression(rawNode) {
+      const node = rawNode as TSESTree.FunctionExpression;
+      for (const param of node.params) {
+        const decorators = (param as unknown as { decorators?: TSESTree.Decorator[] }).decorators;
+        if (!decorators || decorators.length === 0) continue;
+        const isInput = decorators.some((dec) => {
+          const e = dec.expression;
+          const callee = e.type === 'CallExpression' ? e.callee : e;
+          return isIdentifier(callee) && NEST_INPUT_DECORATORS.has(callee.name);
+        });
+        if (isInput) extractParamNames(param).forEach((n) => tainted.add(n));
       }
     },
 
@@ -270,28 +364,266 @@ export function isArgTainted(node: TSESTree.Node, tainted: Set<string>, sanitize
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// Validation-guard recognition
+// ---------------------------------------------------------------------------
+
+// Root objects that stand for "the whole request/response"; comparing a different property of them
+// (req.files.x.mimetype == 'text/xml') must never count as validating another property (req.files.x.data).
+const GUARD_ROOT_IDENTIFIERS = new Set([...REQUEST_ROOT_NAMES, 'ctx', 'res', 'response', 'process']);
+
+/**
+ * Tokens that identify the VALUES an expression is built from: local variable names plus the full
+ * (outermost) member chains such as "#req.query.id". Request roots alone are not tokens.
+ */
+function identifierNamesIn(expr: TSESTree.Node): Set<string> {
+  const out = new Set<string>();
+  walk(expr, {
+    Identifier(n, parent) {
+      const id = n as TSESTree.Identifier;
+      if (parent && parent.type === 'MemberExpression' && parent.property === id && !parent.computed) return;
+      if (parent && parent.type === 'Property' && parent.key === id && !parent.computed && !parent.shorthand) return;
+      if (GUARD_ROOT_IDENTIFIERS.has(id.name)) return;
+      out.add(id.name);
+    },
+    MemberExpression(n, parent) {
+      if (parent && parent.type === 'MemberExpression' && parent.object === n) return; // only the outermost chain
+      const key = astToString(n);
+      if (key) out.add('#' + key);
+    },
+  });
+  return out;
+}
+
+function isFunctionNode(n: TSESTree.Node): boolean {
+  return n.type === 'FunctionDeclaration' || n.type === 'FunctionExpression' || n.type === 'ArrowFunctionExpression';
+}
+
+/** name -> identifiers its value was computed from (const a = f(b, c)  =>  a -> {b, c}) within one scope */
+function collectDerivations(scope: TSESTree.Node): Map<string, Set<string>> {
+  const map = new Map<string, Set<string>>();
+  const add = (name: string, from: Set<string>) => {
+    const cur = map.get(name) ?? new Set<string>();
+    from.forEach((f) => cur.add(f));
+    map.set(name, cur);
+  };
+  const body = (scope as TSESTree.FunctionDeclaration).body ?? scope;
+  walk(body, {
+    VariableDeclarator(n) {
+      const d = n as TSESTree.VariableDeclarator;
+      if (!d.init) return;
+      const from = identifierNamesIn(d.init);
+      extractParamNames(d.id).forEach((name) => add(name, from));
+    },
+    AssignmentExpression(n) {
+      const a = n as TSESTree.AssignmentExpression;
+      if (a.left.type === 'Identifier') add(a.left.name, identifierNamesIn(a.right));
+    },
+  });
+  return map;
+}
+
+function isAnchoredRegexLiteral(n: TSESTree.Node): boolean {
+  if (n.type !== 'Literal') return false;
+  const re = (n as TSESTree.Literal & { regex?: { pattern: string } }).regex;
+  return !!re && re.pattern.startsWith('^') && re.pattern.endsWith('$');
+}
+
+const VALIDATOR_NAME = /^(is|validate|check|verify|assert|ensure)[A-Z_]?/;
+
+/** Does `test` contain an allowlist-style check on one of the identifiers in `closure`? */
+function testValidates(test: TSESTree.Node, closure: Set<string>): boolean {
+  let found = false;
+  const touches = (n: TSESTree.Node | undefined): boolean => {
+    if (!n) return false;
+    for (const id of identifierNamesIn(n)) if (closure.has(id)) return true;
+    return false;
+  };
+  walk(test, {
+    CallExpression(n) {
+      if (found) return;
+      const call = n as TSESTree.CallExpression;
+      const arg0 = call.arguments[0];
+      if (isMemberExpression(call.callee) && isIdentifier(call.callee.property)) {
+        const m = call.callee.property.name;
+        const recv = call.callee.object;
+        if ((m === 'has' || m === 'includes' || m === 'indexOf') && arg0 && touches(arg0) && !touches(recv)) { found = true; return; }
+        if (m === 'test' && arg0 && touches(arg0) && isAnchoredRegexLiteral(recv)) { found = true; return; }
+        if (VALIDATOR_NAME.test(m) && call.arguments.some((a) => touches(a))) { found = true; return; }
+      } else if (isIdentifier(call.callee)) {
+        if (VALIDATOR_NAME.test(call.callee.name) && call.arguments.some((a) => touches(a))) { found = true; return; }
+      }
+    },
+    BinaryExpression(n) {
+      if (found) return;
+      const b = n as TSESTree.BinaryExpression;
+      if (!['===', '==', '!==', '!='].includes(b.operator)) return;
+      const lit = (x: TSESTree.Node) => x.type === 'Literal' && typeof (x as TSESTree.Literal).value === 'string';
+      if ((lit(b.left) && touches(b.right)) || (lit(b.right) && touches(b.left))) found = true;
+    },
+  });
+  return found;
+}
+
+function exitsEarly(n: TSESTree.Node): boolean {
+  let exits = false;
+  walk(n, {
+    ReturnStatement() { exits = true; },
+    ThrowStatement() { exits = true; },
+    ContinueStatement() { exits = true; },
+  });
+  return exits;
+}
+
+/**
+ * True when the value used at `node` was validated before use:
+ *   if (!allowed.has(x)) return ...;  use(x)          (early-exit guard)
+ *   if (/^[a-z]+$/.test(x)) { use(x) }                (use inside the guarded branch)
+ * x may be connected to the sink argument through assignment chains (const p = x).
+ */
+export function isValidatedByGuard(node: TSESTree.Node, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  const sinkIds = identifierNamesIn(node);
+  if (sinkIds.size === 0) return false;
+
+  let scope: TSESTree.Node | undefined = parentMap.get(node);
+  while (scope && !isFunctionNode(scope) && scope.type !== 'Program') scope = parentMap.get(scope);
+  if (!scope) return false;
+
+  const deriv = collectDerivations(scope);
+  // Names connected to the sink argument through assignment chains, in BOTH directions:
+  //   backwards: const p = x; use(p)          -> checking x validates p
+  //   forwards:  const host = new URL(x).host -> checking host validates x
+  const closure = new Set<string>(sinkIds);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const [name, from] of deriv) {
+      const nameIn = closure.has(name);
+      const fromIn = [...from].some((f) => closure.has(f));
+      if (nameIn && !fromIn) {
+        for (const f of from) if (!closure.has(f)) { closure.add(f); grew = true; } // only "grew" if something was added
+      } else if (fromIn && !nameIn) {
+        closure.add(name);
+        grew = true;
+      }
+    }
+  }
+
+  let child: TSESTree.Node = node;
+  let cur: TSESTree.Node | undefined = parentMap.get(node);
+  while (cur) {
+    if (cur.type === 'IfStatement' && child === cur.consequent && testValidates(cur.test, closure)) return true;
+    if (cur.type === 'ConditionalExpression' && child === cur.consequent && testValidates(cur.test, closure)) return true;
+    if (cur.type === 'LogicalExpression' && cur.operator === '&&' && child === cur.right && testValidates(cur.left, closure)) return true;
+    if (cur.type === 'BlockStatement' || cur.type === 'Program') {
+      const body = cur.body as TSESTree.Node[];
+      const idx = body.indexOf(child);
+      for (let i = 0; i < idx; i++) {
+        const stmt = body[i];
+        if (stmt.type === 'IfStatement' && testValidates(stmt.test, closure) && exitsEarly(stmt.consequent)) return true;
+      }
+    }
+    if (isFunctionNode(cur)) break;
+    child = cur;
+    cur = parentMap.get(cur);
+  }
+  return false;
+}
+
+/**
+ * True when the expression can only evaluate to a constant, a number or a boolean:
+ * literals, parseInt()/parseFloat()/Number()/Boolean()/Math.*, arithmetic, ternaries of such values,
+ * and local identifiers initialised with such a value. Such values cannot carry an injection payload.
+ */
+export function isStaticSafeValue(
+  rawNode: TSESTree.Node,
+  parentMap: Map<TSESTree.Node, TSESTree.Node>,
+  seen: Set<string> = new Set(),
+): boolean {
+  const node = unwrapValueWrappers(rawNode);
+  switch (node.type) {
+    case 'Literal':
+      return true;
+    case 'TemplateLiteral':
+      return node.expressions.every((e) => isStaticSafeValue(e, parentMap, seen));
+    case 'UnaryExpression':
+      return true; // -x, +x, !x, typeof x, void x, delete x: always number / boolean / fixed string
+    case 'BinaryExpression':
+      if (['-', '*', '/', '%', '**', '<', '>', '<=', '>=', '===', '!==', '==', '!=', '<<', '>>', '>>>', '&', '|', '^'].includes(node.operator)) return true;
+      return isStaticSafeValue(node.left, parentMap, seen) && isStaticSafeValue(node.right, parentMap, seen);
+    case 'ConditionalExpression':
+      return isStaticSafeValue(node.consequent, parentMap, seen) && isStaticSafeValue(node.alternate, parentMap, seen);
+    case 'CallExpression': {
+      const callee = node.callee;
+      if (isIdentifier(callee) && ['parseInt', 'parseFloat', 'Number', 'Boolean'].includes(callee.name)) return true;
+      if (isMemberExpression(callee) && isIdentifier(callee.object) && callee.object.name === 'Math') return true;
+      return false;
+    }
+    case 'Identifier': {
+      if (seen.has(node.name)) return false;
+      seen.add(node.name);
+      let scope: TSESTree.Node | undefined = parentMap.get(node);
+      while (scope && !isFunctionNode(scope) && scope.type !== 'Program') scope = parentMap.get(scope);
+      if (!scope) return false;
+      let result: boolean | null = null; // null: no declaration seen
+      const body = (scope as TSESTree.FunctionDeclaration).body ?? scope;
+      walk(body, {
+        VariableDeclarator(n) {
+          const d = n as TSESTree.VariableDeclarator;
+          if (d.id.type === 'Identifier' && d.id.name === node.name && d.init) {
+            const safe = isStaticSafeValue(d.init, parentMap, new Set(seen));
+            result = result === null ? safe : result && safe;
+          }
+        },
+        AssignmentExpression(n) {
+          const a = n as TSESTree.AssignmentExpression;
+          if (a.left.type === 'Identifier' && a.left.name === node.name) {
+            const safe = isStaticSafeValue(a.right, parentMap, new Set(seen));
+            result = result === null ? safe : result && safe;
+          }
+        },
+      });
+      return result === true;
+    }
+    default:
+      return false;
+  }
+}
+
 export function isNodeContextuallyTainted(
   node: TSESTree.Node,
   taintResult: TaintResult,
   parentMap: Map<TSESTree.Node, TSESTree.Node>
 ): boolean {
-  if (isTaintedExpr(node, taintResult.globalTaints, taintResult.sanitizedExpressions)) {
-    return true;
-  }
+  let tainted = isTaintedExpr(node, taintResult.globalTaints, taintResult.sanitizedExpressions);
 
   let current: TSESTree.Node | undefined = parentMap.get(node);
-  while (current) {
+  while (!tainted && current) {
     if (current.type === 'FunctionDeclaration' || current.type === 'ArrowFunctionExpression' || current.type === 'FunctionExpression') {
       const localTaints = taintResult.localTaints.get(current);
       if (localTaints) {
         if (isTaintedExpr(node, localTaints, taintResult.sanitizedExpressions)) {
-          return true;
+          tainted = true;
         }
       }
     }
     current = parentMap.get(current);
   }
-  return false;
+  // A tainted value that was checked against an allowlist before use is no longer attacker-controlled.
+  return tainted && !isValidatedByGuard(node, parentMap);
+}
+
+/**
+ * Tainted via variables OR used straight from the request (req.query.x), unless the very same value was
+ * validated before use. Rules should prefer this over `isDirectUserInputExpr(x)` on its own.
+ */
+export function isUserControlledExpr(
+  node: TSESTree.Node,
+  taintResult: TaintResult,
+  parentMap: Map<TSESTree.Node, TSESTree.Node>
+): boolean {
+  if (isNodeContextuallyTainted(node, taintResult, parentMap)) return true;
+  return isDirectUserInputExpr(node) && !isValidatedByGuard(node, parentMap);
 }
 
 export function isArgContextuallyTainted(

@@ -3,7 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral } from '../../../utils/ast-helpers.js';
-import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult, getCrossFileTaints } from '../../../utils/taint-tracker.js';
+import { buildContextualTaintMap, isNodeContextuallyTainted, isUserControlledExpr, TaintResult, getCrossFileTaints } from '../../../utils/taint-tracker.js';
 import { buildParentMap } from '../../ast-walker.js';
 
 const FS_DANGER_METHODS = new Set([
@@ -32,7 +32,7 @@ function isDirectUserInput(node: TSESTree.Node): boolean {
 
 function isUserInputExpr(node: TSESTree.Node, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
   if (isNodeContextuallyTainted(node, taintResult, parentMap)) return true;
-  if (isDirectUserInput(node)) return true;
+  if (isDirectUserInput(node)) return isUserControlledExpr(node, taintResult, parentMap);
   if (node.type === 'BinaryExpression') {
     const be = node as TSESTree.BinaryExpression;
     if (be.operator !== '+') return false;
@@ -348,6 +348,17 @@ function checkPathConcatBinary(node: TSESTree.BinaryExpression, source: string, 
   if (!leftHasUser && !rightHasUser) return null;
 
   if (!isSuspiciousString(left) && !isSuspiciousString(right)) return null;
+
+  // URL building ("https://host" + ...) is not a file path
+  const isUrlLiteral = (n: TSESTree.Node) => n.type === 'Literal' && typeof n.value === 'string' && n.value.includes('://');
+  if (isUrlLiteral(left) || isUrlLiteral(right)) return null;
+  // A concatenation that only ends up as an object property, array element, return value or JSX
+  // value is data, not a file system argument. Direct sinks are checked by checkFsCall with the real taint flow.
+  let ctx: TSESTree.Node | undefined = parentMap.get(node);
+  while (ctx && ((ctx.type === 'BinaryExpression' && ctx.operator === '+') || ctx.type === 'TemplateLiteral' || ctx.type === 'TSAsExpression')) {
+    ctx = parentMap.get(ctx);
+  }
+  if (ctx && ['Property', 'ArrayExpression', 'ReturnStatement', 'ArrowFunctionExpression', 'JSXExpressionContainer'].includes(ctx.type)) return null;
 
   return {
     ruleId: 'security/path-traversal',

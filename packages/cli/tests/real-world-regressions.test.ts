@@ -14,6 +14,8 @@ import deserialization from '../src/scanner/rules/security/insecure-deserializat
 import magicNumbers from '../src/scanner/rules/ai-smells/magic-numbers.js';
 import pathTraversal from '../src/scanner/rules/security/path-traversal.js';
 import xss from '../src/scanner/rules/security/xss-vulnerabilities.js';
+import regexDosRule from '../src/scanner/rules/security/regex-dos.js';
+import xxeRule from '../src/scanner/rules/security/xxe-injection.js';
 import unsafeShell from '../src/scanner/rules/security/unsafe-shell-execs.js';
 import missingTypes from '../src/scanner/rules/tech-debt/missing-types.js';
 import mixedAsync from '../src/scanner/rules/ai-smells/mixed-async-patterns.js';
@@ -157,9 +159,24 @@ describe('insecure-deserialization: js-yaml version awareness', () => {
   }
   const code = `import yaml from 'js-yaml';\nconst c = yaml.load(readInput());`;
 
-  it('flags yaml.load on js-yaml 3', () => {
-    const findings = run(deserialization, code, project('^3.14.0'));
+  it('flags yaml.load of user input on js-yaml 3 as error', () => {
+    const c = `import yaml from 'js-yaml';\napp.post('/y', (req, res) => { yaml.load(req.body.doc); });`;
+    const findings = run(deserialization, c, project('^3.14.0'));
     expect(findings.some((f) => f.severity === 'error')).toBe(true);
+  });
+
+  it('flags yaml.load of other dynamic data on js-yaml 3 only as warn', () => {
+    const findings = run(deserialization, code, project('^3.14.0'));
+    expect(findings.some((f) => f.severity === 'warn')).toBe(true);
+    expect(findings.some((f) => f.severity === 'error')).toBe(false);
+  });
+
+  it('recognises js-yaml under any local name (jsYaml.load) and respects safe schemas', () => {
+    const base = `const jsYaml = require('js-yaml');\napp.post('/y', (req, res) => { `;
+    const v3 = project('^3.14.0');
+    expect(run(deserialization, base + `jsYaml.load(req.body.doc); });`, v3).some((f) => f.severity === 'error')).toBe(true);
+    expect(run(deserialization, base + `jsYaml.load(req.body.doc, { schema: jsYaml.JSON_SCHEMA }); });`, v3)
+      .filter((f) => f.severity !== 'info')).toHaveLength(0);
   });
 
   it('does not flag yaml.load or the import on js-yaml 4', () => {
@@ -171,9 +188,10 @@ describe('insecure-deserialization: js-yaml version awareness', () => {
     expect(findings).toHaveLength(0);
   });
 
-  it('still warns for a plain js-yaml import with unknown version', () => {
+  it('only notes (info) a plain js-yaml import with unknown version', () => {
     const findings = run(deserialization, `import yaml from 'js-yaml';`, project(null));
     expect(findings).toHaveLength(1);
+    expect(findings[0].severity).toBe('info');
   });
 });
 
@@ -338,5 +356,65 @@ describe('path-traversal: containment guards', () => {
       });
     `;
     expect(run(pathTraversal, code).length).toBeGreaterThan(0);
+  });
+});
+
+describe('taint guard recognition does not hang on empty derivations', () => {
+  it('terminates for arrays filled by push() and joined (const collected = [])', () => {
+    const code = `
+      async function f(req, res) {
+        const userInput = req.body?.payload || "";
+        const collected = [];
+        collected.push(userInput);
+        const data = collected.join(',');
+        if (!/^(asc)$/.test(String(data))) { return; }
+      }
+    `;
+    expect(() => run(regexDosRule, code)).not.toThrow();
+  });
+});
+
+describe('validation guard: comparing another property of req is not validation', () => {
+  it('keeps flagging libxmljs noent with req.files data despite a mimetype check', () => {
+    const code = `
+      const libxmljs = require('libxmljs');
+      app.post('/x', (req, res) => {
+        if (req.files.products && req.files.products.mimetype == 'text/xml') {
+          libxmljs.parseXmlString(req.files.products.data.toString('utf8'), { noent: true });
+        }
+      });
+    `;
+    const f = run(xxeRule, code);
+    expect(f.some((x) => x.severity === 'error')).toBe(true);
+  });
+
+  it('still treats an allowlist check on the SAME request value as validation', () => {
+    const code = `
+      const allowed = new Set(['a.txt']);
+      app.get('/f', (req, res) => {
+        if (!allowed.has(req.query.name)) { return res.sendStatus(403); }
+        fs.readFile('/data/' + req.query.name, (e, d) => res.send(d));
+      });
+    `;
+    expect(run(pathTraversal, code)).toHaveLength(0);
+  });
+});
+
+describe('path-traversal: concatenation heuristics', () => {
+  it('ignores URL building and object property values', () => {
+    const code = `
+      const out = { imageUrl: req.protocol + '://' + req.get('host') + '/' + m.image,
+                    imagePath: 'assets/uploads/' + req.file.filename };
+    `;
+    expect(run(pathTraversal, code)).toHaveLength(0);
+  });
+});
+
+describe('taint: ternary with allowlist test', () => {
+  it('treats `allowed.includes(x) ? x : "default"` as validated, but still taints `cond ? x : y`', () => {
+    const safe = `app.get('/a', (req, res) => { const e = ['jpg','png'].includes(req.query.ext) ? req.query.ext : 'jpg'; fs.readFile('/img/a.' + e, cb); });`;
+    expect(run(pathTraversal, safe)).toHaveLength(0);
+    const unsafe = `app.get('/a', (req, res) => { const e = req.query.flag ? req.query.ext : 'jpg'; fs.readFile('/img/a.' + e, cb); });`;
+    expect(run(pathTraversal, unsafe).length).toBeGreaterThan(0);
   });
 });

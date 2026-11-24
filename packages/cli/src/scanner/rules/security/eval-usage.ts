@@ -3,18 +3,23 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { isStringLiteral, getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
-import { buildContextualTaintMap, isDynamicExpr, TaintResult } from '../../../utils/taint-tracker.js';
+import { buildContextualTaintMap, isDynamicExpr, isStaticSafeValue, TaintResult } from '../../../utils/taint-tracker.js';
 import { buildParentMap } from '../../ast-walker.js';
 
-function checkEvalCall(node: TSESTree.CallExpression, source: string, filePath: string): Finding | null {
+function checkEvalCall(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   if (!isIdentifier(node.callee)) return null;
   if ((node.callee as TSESTree.Identifier).name !== 'eval') return null;
   // eval('string literal') is predictable — not a code injection vector
   const arg = node.arguments[0];
   if (arg && isStringLiteral(arg as TSESTree.Expression)) return null;
+  // constants, numbers and booleans (parseFloat(x), cond ? "a" : "b") cannot carry a payload
+  if (arg && isStaticSafeValue(arg, parentMap)) return null;
+  const userControlled = !!arg && isDynamicExpr(arg as TSESTree.Expression, taintResult, parentMap);
   return {
     ruleId: 'security/eval-usage',
-    severity: 'error',
+    // proven user-controlled input is an error; other dynamic code is still a smell, but not provably exploitable
+    severity: userControlled || !arg ? 'error' : 'warn',
+    fixedSeverity: true,
     message: 'eval() usage detected',
     file: filePath,
     line: getLine(node),
@@ -109,7 +114,7 @@ const rule: Rule = {
     walk(ast, {
       CallExpression(rawNode) {
         const node = rawNode as TSESTree.CallExpression;
-        const evalF = checkEvalCall(node, source, filePath);
+        const evalF = checkEvalCall(node, source, filePath, taintResult, parentMap);
         if (evalF) { findings.push(evalF); return; }
         const funcCallF = checkNewFunction(node, source, filePath, taintResult, parentMap);
         if (funcCallF) { findings.push(funcCallF); return; }

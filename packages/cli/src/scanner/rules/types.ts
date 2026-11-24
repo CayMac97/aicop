@@ -22,6 +22,8 @@ export interface Finding {
   fixCode?: string;
   explain?: string;
   confidence?: 'HIGH' | 'MEDIUM' | 'LOW';
+  /** The rule chose this severity deliberately (e.g. info for a hint, warn for unproven input); config must not raise it. */
+  fixedSeverity?: boolean;
 }
 
 /** Interface every rule must implement */

@@ -3,6 +3,8 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn } from '../../../utils/ast-helpers.js';
+import { buildContextualTaintMap, isArgContextuallyTainted, isStaticSafeValue } from '../../../utils/taint-tracker.js';
+import { buildParentMap } from '../../ast-walker.js';
 
 
 const SHELL_MODULES = new Set(['child_process', 'node:child_process', 'shelljs']);
@@ -66,6 +68,8 @@ const rule: Rule = {
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
     const findings: Finding[] = [];
     const bindings = collectShellBindings(ast);
+    const taintResult = buildContextualTaintMap(ast, filePath);
+    const parentMap = buildParentMap(ast);
 
     walk(ast, {
       enter(node) {
@@ -110,9 +114,18 @@ const rule: Rule = {
              }
 
              if (isDynamic || isShellTrue) {
+               // Provable constants/numbers are harmless; user-controlled input is an error;
+               // other dynamic commands are worth a look but not provably exploitable (info).
+               const cmdArgs = node.arguments.filter((a) => a.type !== 'ObjectExpression');
+               const allSafe = cmdArgs.length > 0 && cmdArgs.every((a) => a.type === 'ArrayExpression'
+                 ? a.elements.every((e) => !e || e.type === 'SpreadElement' ? !e : isStaticSafeValue(e, parentMap))
+                 : isStaticSafeValue(a, parentMap));
+               if (allSafe) return;
+               const userControlled = cmdArgs.some((a) => isArgContextuallyTainted(a, taintResult, parentMap));
                findings.push({
                  ruleId: 'security/unsafe-shell-execs',
-                 severity: 'error',
+                 severity: userControlled ? 'error' : 'info',
+                 fixedSeverity: true,
                  message: `Unsafe shell execution: ${isExec ? 'exec/execSync used with dynamic input' : '{ shell: true } used'}`,
                  file: filePath,
                  line: getLine(node),
