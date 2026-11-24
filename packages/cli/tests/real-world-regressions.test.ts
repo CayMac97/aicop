@@ -596,3 +596,47 @@ describe('taint: escaping idioms', () => {
     expect(run(xss, partial).length).toBeGreaterThan(0);
   });
 });
+
+describe('taint: class methods (NestJS controllers) get their own scope', () => {
+  it('follows a closure helper inside a decorated controller method', () => {
+    const code = `
+      import * as childProcess from "child_process";
+      import { Controller, Headers, Post } from "@nestjs/common";
+      @Controller("b")
+      export class C {
+        @Post("x")
+        async h(@Headers("user-agent") ua: string): Promise<unknown> {
+          const userInput = ua || "";
+          const capture = (v: string) => (): string => v.trim();
+          const read = capture(userInput);
+          const data: string = read();
+          childProcess.exec("echo " + data);
+          return { ok: true };
+        }
+      }
+    `;
+    expect(run(unsafeShell, code, 'src/c.ts').some((f) => f.severity === 'error')).toBe(true);
+  });
+});
+
+describe('cross-file resolution must not throw for builtins and packages', () => {
+  it('namespace import of fs: findings are kept (rule used to abort with a TypeError)', () => {
+    const code = `
+      import * as fs from "fs";
+      import { Request, Response } from "express";
+      export const h = async (req: Request, res: Response): Promise<void> => {
+        const data: string = (req.headers.authorization as string) || "";
+        fs.readFileSync("/var/app/data/" + data, "utf8");
+      };
+    `;
+    expect(run(pathTraversal, code, 'src/h.ts').length).toBeGreaterThan(0);
+  });
+  it('named import from a builtin: exec(tainted)', () => {
+    const code = `
+      import { exec } from "child_process";
+      export const h = async (req, res) => { exec("echo " + req.query.x); };
+    `;
+    expect(() => run(unsafeShell, code, 'src/h.ts')).not.toThrow();
+    expect(run(unsafeShell, code, 'src/h.ts').some((f) => f.severity === 'error')).toBe(true);
+  });
+});

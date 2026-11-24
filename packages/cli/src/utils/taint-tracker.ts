@@ -751,6 +751,7 @@ function computeContextualTaintMap(ast: ParsedAST, _filePath: string): TaintResu
 
   const namespaceImports = new Map<string, string>();
   const localFunctions = new Map<string, TSESTree.Node>();
+  const anonymousFunctions: TSESTree.Node[] = [];
   
   let functionCount = 0;
 
@@ -776,13 +777,20 @@ function computeContextualTaintMap(ast: ParsedAST, _filePath: string): TaintResu
         functionCount++;
         localFunctions.set(node.id.name, node.init);
       }
-    }
+    },
+    // class methods (NestJS controllers), object methods and inline callbacks have no name to be called by,
+    // but their bodies still need their own scope so helpers/closures inside them are tracked
+    FunctionExpression(rawNode) { anonymousFunctions.push(rawNode as TSESTree.FunctionExpression); },
+    ArrowFunctionExpression(rawNode) { anonymousFunctions.push(rawNode as TSESTree.ArrowFunctionExpression); }
   });
 
   if (functionCount > 500) return { globalTaints, localTaints, sanitizedExpressions };
 
   for (const funcNode of localFunctions.values()) {
     localTaints.set(funcNode, new Set<string>());
+  }
+  for (const fn of anonymousFunctions) {
+    if (!localTaints.has(fn)) localTaints.set(fn, new Set<string>());
   }
 
   const isCurrentlyTainted = (node: TSESTree.Node, funcContext?: TSESTree.Node): boolean => {
