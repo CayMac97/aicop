@@ -22,6 +22,8 @@ export interface Finding {
   fixCode?: string;
   explain?: string;
   confidence?: 'HIGH' | 'MEDIUM' | 'LOW';
+  /** The rule chose this severity deliberately (e.g. info for a hint, warn for unproven input); config must not raise it. */
+  fixedSeverity?: boolean;
 }
 
 /** Interface every rule must implement */
@@ -77,7 +79,7 @@ export interface Thresholds {
 
 /** Output configuration */
 export interface OutputConfig {
-  format: 'terminal' | 'html' | 'json';
+  format: 'terminal' | 'html' | 'json' | 'sarif';
   htmlReportPath: string;
 }
 
@@ -98,7 +100,7 @@ export interface VibescanConfig {
 export interface ScanOptions {
   path: string;
   config: VibescanConfig;
-  format: 'terminal' | 'html' | 'json';
+  format: 'terminal' | 'html' | 'json' | 'sarif';
   output?: string;
   severity: Severity;
   ci: boolean;

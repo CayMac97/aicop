@@ -25,7 +25,9 @@ function checkCreateHash(node: TSESTree.CallExpression, source: string, filePath
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.property)) return null;
-  if ((me.property as TSESTree.Identifier).name !== 'createHash') return null;
+  const hashMethod = (me.property as TSESTree.Identifier).name;
+  const isSubtleDigest = hashMethod === 'digest' && isMemberExpression(me.object) && isIdentifier(me.object.property) && me.object.property.name === 'subtle';
+  if (hashMethod !== 'createHash' && !isSubtleDigest) return null;
   const algArg = node.arguments[0];
   if (!algArg || !isStringLiteral(algArg as TSESTree.Expression)) return null;
   const alg = String((algArg as TSESTree.StringLiteral).value).toLowerCase();
@@ -61,11 +63,12 @@ function checkCreateCipher(node: TSESTree.CallExpression, source: string, filePa
   const algArg = node.arguments[0];
   if (!algArg || !isStringLiteral(algArg as TSESTree.Expression)) return null;
   const alg = String((algArg as TSESTree.StringLiteral).value).toLowerCase();
-  if (!alg.includes('rc4') && !alg.includes('des') && !alg.includes('rc2') && !alg.includes('bf')) return null;
+  const isEcb = /(^|-)ecb$/.test(alg);
+  if (!alg.includes('rc4') && !alg.includes('des') && !alg.includes('rc2') && !alg.includes('bf') && !isEcb) return null;
   return {
     ruleId: 'security/weak-crypto',
     severity: 'error',
-    message: `"${alg}" is a weak cipher`,
+    message: isEcb ? `"${alg}" is a weak cipher mode — ECB encrypts identical blocks identically and leaks patterns` : `"${alg}" is a weak cipher`,
     file: filePath,
     line: getLine(node),
     column: getColumn(node),

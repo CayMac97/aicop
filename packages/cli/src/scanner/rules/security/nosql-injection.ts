@@ -82,6 +82,49 @@ function getVarInitInScope(name: string, startNode: TSESTree.Node, parentMap: Ma
   return null;
 }
 
+
+const NUMERIC_COERCIONS = new Set(['parseInt', 'parseFloat', 'Number']);
+
+/** true if the expression is provably numeric/constant (literal, parseInt(...), Number(...), +x) */
+function isNumericOrConstant(
+  node: TSESTree.Node,
+  parentMap: Map<TSESTree.Node, TSESTree.Node>,
+  seen = new Set<string>(),
+): boolean {
+  if (node.type === 'Literal') return typeof (node as TSESTree.Literal).value !== 'string';
+  if (node.type === 'UnaryExpression' && ['+', '-'].includes((node as TSESTree.UnaryExpression).operator)) return true;
+  if (node.type === 'CallExpression') {
+    const callee = (node as TSESTree.CallExpression).callee;
+    if (isIdentifier(callee) && NUMERIC_COERCIONS.has(callee.name)) return true;
+    if (isMemberExpression(callee) && isIdentifier(callee.object) && callee.object.name === 'Math') return true;
+    return false;
+  }
+  if (isIdentifier(node)) {
+    if (seen.has(node.name)) return false;
+    seen.add(node.name);
+    const init = getVarInitInScope(node.name, node, parentMap);
+    return init ? isNumericOrConstant(init, parentMap, seen) : false;
+  }
+  return false;
+}
+
+/** string built dynamically from at least one non-numeric value */
+function isDynamicWhereString(node: TSESTree.Node, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  if (node.type === 'TemplateLiteral') {
+    return (node as TSESTree.TemplateLiteral).expressions.some((e) => !isNumericOrConstant(e, parentMap));
+  }
+  if (node.type === 'BinaryExpression' && (node as TSESTree.BinaryExpression).operator === '+') {
+    const b = node as TSESTree.BinaryExpression;
+    const parts = [b.left, b.right];
+    return parts.some((part) => {
+      if (part.type === 'Literal') return false;
+      if (part.type === 'BinaryExpression' || part.type === 'TemplateLiteral') return isDynamicWhereString(part, parentMap);
+      return !isNumericOrConstant(part, parentMap);
+    });
+  }
+  return false;
+}
+
 function checkNodeForNoSQLInjection(
   node: TSESTree.Node,
   taintResult: TaintResult,
@@ -217,6 +260,7 @@ const rule: Rule = {
     const findings: Finding[] = [];
     const taintResult = buildContextualTaintMap(ast, filePath);
     const parentMap = buildParentMap(ast);
+    const reportedCallRanges: Array<[number, number]> = [];
 
     walk(ast, {
       CallExpression(rawNode) {
@@ -239,6 +283,7 @@ const rule: Rule = {
               explain += ' (CRITICAL: $where operator allows arbitrary code execution)';
             }
 
+            reportedCallRanges.push(node.range);
             findings.push({
               ruleId: 'security/nosql-injection',
               severity: 'error',
@@ -254,6 +299,32 @@ const rule: Rule = {
             break;
           }
         }
+      },
+    });
+
+    // $where executes JavaScript on the MongoDB server. A $where string that is built
+    // dynamically is injectable regardless of where the value comes from (DAO layers
+    // receive plain parameters, not req.*), unless every dynamic part is numeric.
+    walk(ast, {
+      Property(rawNode) {
+        const prop = rawNode as TSESTree.Property;
+        const keyName = isIdentifier(prop.key) ? prop.key.name : (prop.key.type === 'Literal' ? String(prop.key.value) : '');
+        if (keyName !== '$where') return;
+        if (!isDynamicWhereString(prop.value, parentMap)) return;
+        const [start, end] = prop.range;
+        if (reportedCallRanges.some(([s0, e0]) => start >= s0 && end <= e0)) return;
+        findings.push({
+          ruleId: 'security/nosql-injection',
+          severity: 'error',
+          message: 'NoSQL injection — $where built from a dynamic string (server-side JavaScript execution)',
+          explain: 'The $where operator evaluates a JavaScript string on the MongoDB server; interpolating non-numeric values lets an attacker inject code (e.g. 0\'; while(true){}\')',
+          confidence: 'MEDIUM',
+          file: filePath,
+          line: getLine(prop),
+          column: getColumn(prop),
+          snippet: extractSnippet(source, getLine(prop)),
+          fix: 'Avoid $where. Use regular query operators ({ userId: id, stocks: { $gt: n } }) and coerce inputs with parseInt()/Number() first',
+        });
       },
     });
 

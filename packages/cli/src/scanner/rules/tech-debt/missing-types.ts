@@ -23,6 +23,10 @@ function checkFunctionParams(
     parentNode?.type === 'Property' ||
     parentNode?.type === 'JSXExpressionContainer'
   ) return findings;
+  // Contextually typed: const h: Handler = function (request, reply) {...}
+  // and class fields with an explicit type. Parameter annotations would be redundant.
+  if (parentNode?.type === 'VariableDeclarator' && (parentNode.id as TSESTree.Identifier).typeAnnotation) return findings;
+  if (parentNode?.type === 'PropertyDefinition' && (parentNode as TSESTree.PropertyDefinition).typeAnnotation) return findings;
   for (const param of node.params) {
     if (param.type === 'RestElement') continue;
     if (param.type === 'AssignmentPattern') continue; // default params may omit types

@@ -310,16 +310,76 @@ function isResSendDynamic(node: TSESTree.CallExpression): boolean {
   return !isStaticString(arg);
 }
 
+/** string built from literal parts that look like HTML ("<section>" + x + "</section>") */
+function looksLikeHtmlString(node: TSESTree.Node): boolean {
+  const literalParts: string[] = [];
+  const collect = (n: TSESTree.Node) => {
+    if (n.type === 'Literal' && typeof n.value === 'string') literalParts.push(n.value);
+    else if (n.type === 'TemplateLiteral') { n.quasis.forEach((q) => literalParts.push(q.value.raw)); }
+    else if (n.type === 'BinaryExpression' && n.operator === '+') { collect(n.left); collect(n.right); }
+  };
+  collect(node);
+  return literalParts.some((p) => /<\/?[a-zA-Z!][^>]*>?/.test(p));
+}
+
+/** Koa: ctx.body = "<h1>" + userInput + "</h1>" */
+function checkKoaHtmlBody(node: TSESTree.AssignmentExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
+  const l = node.left;
+  if (!isMemberExpression(l) || !isIdentifier(l.object) || l.object.name !== 'ctx' || !isIdentifier(l.property) || l.property.name !== 'body') return null;
+  if (!looksLikeHtmlString(node.right) || !isUserInput(node.right, taintResult, parentMap)) return null;
+  if (isSafelyValidated(node.right, parentMap)) return null;
+  return {
+    ruleId: 'security/xss-vulnerabilities',
+    severity: 'error',
+    message: 'ctx.body set to HTML containing user input — XSS risk',
+    file: filePath,
+    line: getLine(node),
+    column: getColumn(node),
+    snippet: extractSnippet(source, getLine(node)),
+    fix: 'Escape user input before embedding it in HTML, or respond with JSON / a template engine that auto-escapes.',
+  };
+}
+
+const UNESCAPED_TEMPLATE_MARKER = /\|\s*safe\b|\{\{\{|<%-|autoescape\s+false|\bunescaped\b/;
+
+/** nunjucks.renderString('<div>{{ bio | safe }}</div>', { bio: userInput }) and similar unescaped placeholders */
+function checkUnescapedTemplate(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
+  if (!isMemberExpression(node.callee) || !isIdentifier(node.callee.property)) return null;
+  if (!['renderString', 'render', 'compile'].includes(node.callee.property.name)) return null;
+  const tpl = node.arguments[0];
+  if (!tpl) return null;
+  const text = tpl.type === 'Literal' && typeof tpl.value === 'string' ? tpl.value
+    : tpl.type === 'TemplateLiteral' ? tpl.quasis.map((q) => q.value.raw).join('') : '';
+  if (!UNESCAPED_TEMPLATE_MARKER.test(text)) return null;
+  const ctxArg = node.arguments[1];
+  if (!ctxArg) return null;
+  const tainted = ctxArg.type === 'ObjectExpression'
+    ? ctxArg.properties.some((p) => p.type === 'Property' ? isUserInput(p.value, taintResult, parentMap) : isUserInput(p.argument, taintResult, parentMap))
+    : isUserInput(ctxArg, taintResult, parentMap);
+  if (!tainted) return null;
+  return {
+    ruleId: 'security/xss-vulnerabilities',
+    severity: 'error',
+    message: 'user input rendered through an unescaped template placeholder (| safe / {{{ }}} / <%- %>) — XSS risk',
+    file: filePath,
+    line: getLine(node),
+    column: getColumn(node),
+    snippet: extractSnippet(source, getLine(node)),
+    fix: 'Remove the unescaped placeholder, or sanitize the value (e.g. DOMPurify / an HTML escaper) before rendering.',
+  };
+}
+
 function checkResSend(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
   if ((me.object as TSESTree.Identifier).name !== 'res') return null;
   const method = (me.property as TSESTree.Identifier).name;
-  if (method !== 'send' && method !== 'write') return null;
+  if (method !== 'send' && method !== 'write' && method !== 'end') return null;
   const arg = node.arguments[0];
+  // res.end() is also used for plain-text bodies: only an HTML-looking string counts
+  if (method === 'end' && !(arg && looksLikeHtmlString(arg))) return null;
   const isUserInputFlag = arg ? isUserInput(arg, taintResult, parentMap) : false;
-  console.log(`[checkResSend] file=${filePath}, arg=${astToString(arg)}, isUserInput=${isUserInputFlag}`);
   if (!arg || !isUserInputFlag) return null;
   if (isSafelyValidated(arg, parentMap)) return null;
   
@@ -396,6 +456,8 @@ const rule: Rule = {
       AssignmentExpression(rawNode) {
         const finding = checkInnerHTML(rawNode as TSESTree.AssignmentExpression, source, filePath, sanitizedVars, taintResult, parentMap);
         if (finding) findings.push(finding);
+        const koaBody = checkKoaHtmlBody(rawNode as TSESTree.AssignmentExpression, source, filePath, taintResult, parentMap);
+        if (koaBody) findings.push(koaBody);
       },
       CallExpression(rawNode) {
         const node = rawNode as TSESTree.CallExpression;
@@ -413,6 +475,9 @@ const rule: Rule = {
 
         const jqueryXss = checkJQueryHtmlAndAppend(node, source, filePath, sanitizedVars, taintResult, parentMap);
         if (jqueryXss) { findings.push(jqueryXss); return; }
+
+        const tplXss = checkUnescapedTemplate(node, source, filePath, taintResult, parentMap);
+        if (tplXss) { findings.push(tplXss); return; }
 
         const resSend = checkResSend(node, source, filePath, taintResult, parentMap);
         if (resSend) {
@@ -467,8 +532,11 @@ const rule: Rule = {
       }
     });
 
+    // Dynamic res.send()/res.write() is only an HTML-injection sink when the file actually
+    // serves HTML (res.setHeader('Content-Type', 'text/html') etc.). Tainted sends are
+    // already reported by checkResSend above.
     for (const node of dynamicSendNodes) {
-      if (!flaggedLines.has(getLine(node))) {
+      if (hasHtmlContentType && !flaggedLines.has(getLine(node))) {
         findings.push({
           ruleId: 'security/xss-vulnerabilities',
           severity: 'error',

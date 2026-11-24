@@ -2,7 +2,7 @@ import { VibescanConfig, Severity } from '../scanner/rules/types.js';
 import { DEFAULT_CONFIG } from './defaults.js';
 
 const VALID_SEVERITIES = new Set<string>(['error', 'warn', 'info', 'off']);
-const VALID_FORMATS = new Set<string>(['terminal', 'html', 'json']);
+const VALID_FORMATS = new Set<string>(['terminal', 'html', 'json', 'sarif']);
 
 export interface ValidationResult {
   valid: boolean;
@@ -46,7 +46,7 @@ function validateOutput(output: unknown): string[] {
   if (!output || typeof output !== 'object' || Array.isArray(output)) return [];
   const o = output as Record<string, unknown>;
   if (o.format !== undefined && !VALID_FORMATS.has(String(o.format))) {
-    return [`"output.format" must be terminal | html | json, got "${String(o.format)}"`];
+    return [`"output.format" must be terminal | html | json | sarif, got "${String(o.format)}"`];
   }
   return [];
 }

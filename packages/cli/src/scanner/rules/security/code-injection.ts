@@ -3,7 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral } from '../../../utils/ast-helpers.js';
-import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult, isDirectUserInputExpr, getCrossFileTaints } from '../../../utils/taint-tracker.js';
+import { buildContextualTaintMap, TaintResult, isUserControlledExpr, getCrossFileTaints } from '../../../utils/taint-tracker.js';
 import { buildParentMap } from '../../ast-walker.js';
 
 const VM_METHODS = new Set(['runInNewContext', 'runInThisContext', 'runInContext', 'compileFunction']);
@@ -13,7 +13,7 @@ const MATH_OBJ_NAMES = new Set(['mathjs', 'math', 'Math']);
 function argIsTainted(arg: TSESTree.Node, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
   if (isStringLiteral(arg)) return false;
   if (arg.type === 'Literal') return false;
-  return isNodeContextuallyTainted(arg, taintResult, parentMap) || isDirectUserInputExpr(arg);
+  return isUserControlledExpr(arg, taintResult, parentMap);
 }
 
 function checkVmRun(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {

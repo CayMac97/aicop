@@ -69,6 +69,7 @@ export function applyIgnoreComments(findings: Finding[], source: string): Findin
 }
 
 export function applyConfigSeverity(finding: Finding, config: VibescanConfig): Finding {
+  if (finding.fixedSeverity) return finding;
   const configured = config.rules[finding.ruleId];
   if (!configured || configured === 'off') return finding;
   const SEV_ORDER: Record<string, number> = { error: 0, warn: 1, info: 2 };

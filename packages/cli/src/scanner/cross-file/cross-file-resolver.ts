@@ -59,6 +59,8 @@ class CrossFileCache {
 
   public getExportInfo(importPath: string, currentFilePath: string, exportName: string): ExportInfo | null {
     const absolutePath = resolveLocalModule(importPath, currentFilePath);
+    // Node builtins and npm packages (fs, child_process, express ...) are not local files: nothing to resolve.
+    if (!absolutePath) return null;
     if (!this.parsedFiles.has(absolutePath)) {
       this.parseAndCacheFile(absolutePath);
     }

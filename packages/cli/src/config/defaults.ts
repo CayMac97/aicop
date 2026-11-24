@@ -71,6 +71,8 @@ export const DEFAULT_CONFIG: VibescanConfig = {
     "security/hardcoded-secrets": "warn",
     "security/eval-usage": "warn",
     "ai-smell/todo-stub-functions": "off",
+    "ai-smell/mixed-async-patterns": "off",
+    "tech-debt/missing-types": "off",
     "ai-smell/missing-null-checks": "off",
     "ai-smell/copy-paste-patterns": "off",
     "security/xss-vulnerabilities": "warn",

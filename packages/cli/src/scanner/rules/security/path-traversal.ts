@@ -3,7 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral } from '../../../utils/ast-helpers.js';
-import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult, getCrossFileTaints } from '../../../utils/taint-tracker.js';
+import { buildContextualTaintMap, isNodeContextuallyTainted, isUserControlledExpr, TaintResult, getCrossFileTaints } from '../../../utils/taint-tracker.js';
 import { buildParentMap } from '../../ast-walker.js';
 
 const FS_DANGER_METHODS = new Set([
@@ -32,7 +32,7 @@ function isDirectUserInput(node: TSESTree.Node): boolean {
 
 function isUserInputExpr(node: TSESTree.Node, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
   if (isNodeContextuallyTainted(node, taintResult, parentMap)) return true;
-  if (isDirectUserInput(node)) return true;
+  if (isDirectUserInput(node)) return isUserControlledExpr(node, taintResult, parentMap);
   if (node.type === 'BinaryExpression') {
     const be = node as TSESTree.BinaryExpression;
     if (be.operator !== '+') return false;
@@ -64,8 +64,96 @@ function isSuspiciousString(n: TSESTree.Node): boolean {
   return val.includes('/') || val.includes('\\') || val.includes('dir') || val.includes('path') || val.includes('file');
 }
 
+
+/**
+ * Early-exit containment guard that precedes the sink in the same function:
+ *   const p = path.resolve(base, input);
+ *   if (!p.startsWith(base)) return res.status(403).end();   // <- guard
+ *   fs.readFile(p, ...)
+ */
+function hasEarlyExitStartsWithGuard(node: TSESTree.Node, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  const containsStartsWith = (n: TSESTree.Node): boolean => {
+    let found = false;
+    walk(n, {
+      CallExpression(c) {
+        const call = c as TSESTree.CallExpression;
+        if (isMemberExpression(call.callee) && isIdentifier(call.callee.property) && call.callee.property.name === 'startsWith') found = true;
+      },
+    });
+    return found;
+  };
+  const exitsEarly = (n: TSESTree.Node): boolean => {
+    let exits = false;
+    walk(n, {
+      ReturnStatement() { exits = true; },
+      ThrowStatement() { exits = true; },
+    });
+    return exits;
+  };
+  let child: TSESTree.Node = node;
+  let cur: TSESTree.Node | undefined = parentMap.get(node);
+  while (cur) {
+    if (cur.type === 'BlockStatement' || cur.type === 'Program') {
+      const body = cur.body as TSESTree.Node[];
+      const idx = body.indexOf(child);
+      for (let i = 0; i < idx; i++) {
+        const stmt = body[i];
+        if (stmt.type === 'IfStatement' && containsStartsWith(stmt.test) && exitsEarly(stmt.consequent)) return true;
+      }
+    }
+    if (cur.type === 'FunctionDeclaration' || cur.type === 'FunctionExpression' || cur.type === 'ArrowFunctionExpression') break;
+    child = cur;
+    cur = parentMap.get(cur);
+  }
+  return false;
+}
+
+
+/**
+ * Containment guard that FOLLOWS the path construction in the same block:
+ *   const p = path.resolve(base, input);              // <- the flagged call
+ *   if (!p.startsWith(base)) return res.sendStatus(403);   // <- later guard
+ */
+function hasLaterContainmentGuard(node: TSESTree.Node, parentMap: Map<TSESTree.Node, TSESTree.Node>): boolean {
+  const containsStartsWith = (n: TSESTree.Node): boolean => {
+    let found = false;
+    walk(n, {
+      CallExpression(c) {
+        const call = c as TSESTree.CallExpression;
+        if (isMemberExpression(call.callee) && isIdentifier(call.callee.property) && call.callee.property.name === 'startsWith') found = true;
+      },
+    });
+    return found;
+  };
+  const exitsEarly = (n: TSESTree.Node): boolean => {
+    let exits = false;
+    walk(n, {
+      ReturnStatement() { exits = true; },
+      ThrowStatement() { exits = true; },
+    });
+    return exits;
+  };
+  let child: TSESTree.Node = node;
+  let cur: TSESTree.Node | undefined = parentMap.get(node);
+  while (cur) {
+    if (cur.type === 'BlockStatement' || cur.type === 'Program') {
+      const body = cur.body as TSESTree.Node[];
+      const idx = body.indexOf(child);
+      if (idx >= 0) {
+        for (let i = idx + 1; i < body.length; i++) {
+          const stmt = body[i];
+          if (stmt.type === 'IfStatement' && containsStartsWith(stmt.test) && exitsEarly(stmt.consequent)) return true;
+        }
+      }
+    }
+    if (cur.type === 'FunctionDeclaration' || cur.type === 'FunctionExpression' || cur.type === 'ArrowFunctionExpression') break;
+    child = cur;
+    cur = parentMap.get(cur);
+  }
+  return false;
+}
+
 function checkFsCall(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
-  console.log('[checkFsCall] invoked for call at line:', getLine(node));
   if (!isMemberExpression(node.callee)) return null;
   const me = node.callee as TSESTree.MemberExpression;
   let objName = '';
@@ -85,7 +173,6 @@ function checkFsCall(node: TSESTree.CallExpression, source: string, filePath: st
   if (!pathArg) return null;
   if (isStringLiteral(pathArg as TSESTree.Expression)) return null;
   const isUserInput = isUserInputExpr(pathArg, taintResult, parentMap);
-  console.log(`[checkFsCall] file=${filePath}, method=${methodName}, arg=${astToString(pathArg)}, isUserInput=${isUserInput}`);
   if (!isUserInput) return null;
   let current: TSESTree.Node | undefined = node;
   let hasGuard = false;
@@ -118,7 +205,7 @@ function checkFsCall(node: TSESTree.CallExpression, source: string, filePath: st
     current = parentMap.get(current);
   }
 
-  if (hasGuard) return null;
+  if (hasGuard || hasEarlyExitStartsWithGuard(node, parentMap)) return null;
 
   return {
     ruleId: 'security/path-traversal',
@@ -177,7 +264,7 @@ function checkSendFile(node: TSESTree.CallExpression, source: string, filePath: 
     current = parentMap.get(current);
   }
 
-  if (hasGuard) return null;
+  if (hasGuard || hasEarlyExitStartsWithGuard(node, parentMap)) return null;
 
   return {
     ruleId: 'security/path-traversal',
@@ -232,7 +319,7 @@ function checkPathJoin(node: TSESTree.CallExpression, source: string, filePath: 
     current = parentMap.get(current);
   }
 
-  if (hasGuard) return null;
+  if (hasGuard || hasEarlyExitStartsWithGuard(node, parentMap)) return null;
 
   return {
     ruleId: 'security/path-traversal',
@@ -261,6 +348,17 @@ function checkPathConcatBinary(node: TSESTree.BinaryExpression, source: string, 
   if (!leftHasUser && !rightHasUser) return null;
 
   if (!isSuspiciousString(left) && !isSuspiciousString(right)) return null;
+
+  // URL building ("https://host" + ...) is not a file path
+  const isUrlLiteral = (n: TSESTree.Node) => n.type === 'Literal' && typeof n.value === 'string' && n.value.includes('://');
+  if (isUrlLiteral(left) || isUrlLiteral(right)) return null;
+  // A concatenation that only ends up as an object property, array element, return value or JSX
+  // value is data, not a file system argument. Direct sinks are checked by checkFsCall with the real taint flow.
+  let ctx: TSESTree.Node | undefined = parentMap.get(node);
+  while (ctx && ((ctx.type === 'BinaryExpression' && ctx.operator === '+') || ctx.type === 'TemplateLiteral' || ctx.type === 'TSAsExpression')) {
+    ctx = parentMap.get(ctx);
+  }
+  if (ctx && ['Property', 'ArrayExpression', 'ReturnStatement', 'ArrowFunctionExpression', 'JSXExpressionContainer'].includes(ctx.type)) return null;
 
   return {
     ruleId: 'security/path-traversal',
@@ -317,7 +415,7 @@ const rule: Rule = {
             if (parent && (parent.type === 'FunctionDeclaration' || parent.type === 'FunctionExpression' || parent.type === 'ArrowFunctionExpression' || parent.type === 'BlockStatement')) break;
             current = parent;
           }
-          if (!isSafe) findings.push(pathF);
+          if (!isSafe && !hasLaterContainmentGuard(node, parentMap)) findings.push(pathF);
         }
       },
       BinaryExpression(rawNode) {

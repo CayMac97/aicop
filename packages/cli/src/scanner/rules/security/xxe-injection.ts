@@ -5,8 +5,10 @@ import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn, isIdentifier, isMemberExpression, isStringLiteral, unwrapNode } from '../../../utils/ast-helpers.js';
 import { buildContextualTaintMap, isNodeContextuallyTainted, TaintResult } from '../../../utils/taint-tracker.js';
 import { buildParentMap } from '../../ast-walker.js';
+import { collectModuleBindings, isBoundModuleCall, ModuleBindings } from '../../../utils/module-bindings.js';
 
-const XML_PARSE_METHODS = new Set(['parseXmlString', 'parseXml']);
+const XML_PARSE_METHODS = new Set(['parseXmlString', 'parseXml', 'parseXmlAsync', 'parseXmlStringAsync']);
+const LIBXML_MODULES = new Set(['libxmljs', 'libxmljs2']);
 const UNSAFE_XML_PACKAGES = new Set(['libxmljs', 'libxmljs2', 'xml2js', 'fast-xml-parser', 'xmldom']);
 const USER_INPUT_PROPS = new Set(['body', 'query', 'params', 'headers', 'cookies', 'files']);
 
@@ -38,7 +40,7 @@ function hasNoentTrue(opts: TSESTree.ObjectExpression, parentMap?: Map<TSESTree.
     }
     if (p.type !== 'Property') return false;
     const prop = p as TSESTree.Property;
-    if (!isIdentifier(prop.key) || (prop.key as TSESTree.Identifier).name !== 'noent') return false;
+    if (!isIdentifier(prop.key) || !['noent', 'replaceEntities'].includes((prop.key as TSESTree.Identifier).name)) return false;
     return prop.value.type === 'Literal' && (prop.value as TSESTree.Literal).value === true;
   });
 }
@@ -56,19 +58,21 @@ function isUserInput(rawNode: TSESTree.Node, taintResult: TaintResult, parentMap
   return false;
 }
 
-function checkLibXmlJsNoent(node: TSESTree.CallExpression, source: string, filePath: string, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
-  if (!isMemberExpression(node.callee)) return null;
-  const me = node.callee as TSESTree.MemberExpression;
-  if (!isIdentifier(me.property)) return null;
-  if (!XML_PARSE_METHODS.has((me.property as TSESTree.Identifier).name)) return null;
+function checkLibXmlJsNoent(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>, bindings: ModuleBindings): Finding | null {
+  // libxmljs.parseXmlString(...) and the destructured form: const { parseXmlString } = require('libxmljs2')
+  const isLibXmlCall = isBoundModuleCall(node.callee, bindings, XML_PARSE_METHODS)
+    || (isMemberExpression(node.callee) && isIdentifier(node.callee.property) && XML_PARSE_METHODS.has(node.callee.property.name));
+  if (!isLibXmlCall) return null;
   const firstArg = node.arguments[0];
   if (!firstArg || firstArg.type === 'Literal') return null;
   const optsArg = node.arguments[1];
   if (!optsArg || optsArg.type !== 'ObjectExpression') return null;
   if (!hasNoentTrue(optsArg as TSESTree.ObjectExpression, parentMap)) return null;
+  const userControlled = isUserInput(firstArg, taintResult, parentMap);
   return {
     ruleId: 'security/xxe-injection',
-    severity: 'error',
+    severity: userControlled ? 'error' : 'warn',
+    fixedSeverity: true,
     message: 'libxmljs XXE — noent:true with dynamic input enables XXE attacks',
     file: filePath,
     line: getLine(node),
@@ -124,7 +128,8 @@ function checkUnsafeXmlRequire(node: TSESTree.CallExpression, source: string, fi
   if (!UNSAFE_XML_PACKAGES.has(pkg)) return null;
   return {
     ruleId: 'security/xxe-injection',
-    severity: 'warn',
+    severity: 'info', // a dependency note, not a finding: the concrete parser calls are checked above
+    fixedSeverity: true,
     message: `"${pkg}" XML parser can be vulnerable to XXE if external entities are not disabled`,
     file: filePath,
     line: getLine(node),
@@ -147,12 +152,13 @@ const rule: Rule = {
     const findings: Finding[] = [];
     const taintResult = buildContextualTaintMap(ast, filePath);
     const parentMap = buildParentMap(ast);
+    const libxmlBindings = collectModuleBindings(ast, LIBXML_MODULES);
 
     walk(ast, {
       CallExpression(rawNode: TSESTree.Node) {
         const node = unwrapNode(rawNode) as TSESTree.CallExpression;
         if (node.type !== 'CallExpression') return;
-        const f1 = checkLibXmlJsNoent(node, source, filePath, parentMap);
+        const f1 = checkLibXmlJsNoent(node, source, filePath, taintResult, parentMap, libxmlBindings);
         if (f1) { findings.push(f1); return; }
         const f2 = checkXml2jsUserInput(node, source, filePath, taintResult, parentMap);
         if (f2) { findings.push(f2); return; }
