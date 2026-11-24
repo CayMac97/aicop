@@ -173,6 +173,28 @@ export function isDirectUserInputExpr(rawNode: TSESTree.Node): boolean {
   return false;
 }
 
+/**
+ * Recognises the two common escaping idioms built from chained replace() calls:
+ *   html:  .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#x27;")
+ *   sql identifier quoting:  .replace(/"/g, '""')
+ * The chain's outermost replace() is passed in; it is sanitising when the chain escapes < together with a quote.
+ */
+function escapesForSink(outer: TSESTree.CallExpression): boolean {
+  let lt = false, quote = false, sqlDouble = false;
+  let cur: TSESTree.Node = outer;
+  while (cur.type === 'CallExpression' && isMemberExpression(cur.callee) && isIdentifier(cur.callee.property)
+    && (cur.callee.property.name === 'replace' || cur.callee.property.name === 'replaceAll')) {
+    const pat = cur.arguments[0], rep = cur.arguments[1];
+    const patText = pat && pat.type === 'Literal' ? ((pat as TSESTree.Literal & { regex?: { pattern: string } }).regex?.pattern ?? String(pat.value)) : '';
+    const repText = rep && rep.type === 'Literal' && typeof rep.value === 'string' ? rep.value : '';
+    if (/^&(lt|#0*60|#x0*3c);$/i.test(repText)) lt = true;
+    if (/^&(quot|#0*34|#x0*22|#0*39|#x0*27|apos);$/i.test(repText)) quote = true;
+    if ((patText === '"' && repText === '""') || (patText === "'" && repText === "''")) sqlDouble = true;
+    cur = cur.callee.object;
+  }
+  return (lt && quote) || sqlDouble;
+}
+
 export function isTaintedExpr(rawNode: TSESTree.Node, tainted: Set<string>, sanitizedExpressions: Set<string>): boolean {
   const node = unwrapValueWrappers(rawNode);
   if (isDirectUserInputExpr(node)) return true;
@@ -250,6 +272,7 @@ export function isTaintedExpr(rawNode: TSESTree.Node, tainted: Set<string>, sani
             return call.arguments.some(arg => isTaintedExpr(arg, tainted, sanitizedExpressions));
           }
         }
+        if ((method === 'replace' || method === 'replaceAll') && escapesForSink(call)) return false;
         if (TAINT_PRESERVING_METHODS.has(method)) {
           return isTaintedExpr(me.object, tainted, sanitizedExpressions) || call.arguments.some(arg => isTaintedExpr(arg, tainted, sanitizedExpressions));
         }
@@ -624,22 +647,35 @@ export function isNodeContextuallyTainted(
   taintResult: TaintResult,
   parentMap: Map<TSESTree.Node, TSESTree.Node>
 ): boolean {
-  let tainted = isTaintedExpr(node, taintResult.globalTaints, taintResult.sanitizedExpressions);
+  // A tainted value that was checked against an allowlist before use is no longer attacker-controlled.
+  return isNodeRawTainted(node, taintResult, parentMap) && !isValidatedByGuard(node, parentMap);
+}
 
+/** Tainted by data flow alone, ignoring validation guards (use isNodeContextuallyTainted for findings). */
+export function isNodeRawTainted(
+  node: TSESTree.Node,
+  taintResult: TaintResult,
+  parentMap: Map<TSESTree.Node, TSESTree.Node>
+): boolean {
+  if (isTaintedExpr(node, taintResult.globalTaints, taintResult.sanitizedExpressions)) return true;
   let current: TSESTree.Node | undefined = parentMap.get(node);
-  while (!tainted && current) {
+  while (current) {
     if (current.type === 'FunctionDeclaration' || current.type === 'ArrowFunctionExpression' || current.type === 'FunctionExpression') {
       const localTaints = taintResult.localTaints.get(current);
-      if (localTaints) {
-        if (isTaintedExpr(node, localTaints, taintResult.sanitizedExpressions)) {
-          tainted = true;
-        }
-      }
+      if (localTaints && isTaintedExpr(node, localTaints, taintResult.sanitizedExpressions)) return true;
     }
     current = parentMap.get(current);
   }
-  // A tainted value that was checked against an allowlist before use is no longer attacker-controlled.
-  return tainted && !isValidatedByGuard(node, parentMap);
+  return false;
+}
+
+/** Tainted AND checked against an allowlist before use: provably neutralised, as opposed to merely unproven. */
+export function isNodeValidatedTaint(
+  node: TSESTree.Node,
+  taintResult: TaintResult,
+  parentMap: Map<TSESTree.Node, TSESTree.Node>
+): boolean {
+  return isNodeRawTainted(node, taintResult, parentMap) && isValidatedByGuard(node, parentMap);
 }
 
 /**

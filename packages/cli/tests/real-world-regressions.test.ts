@@ -21,6 +21,8 @@ import insecureSession from '../src/scanner/rules/security/insecure-session.js';
 import weakCrypto from '../src/scanner/rules/security/weak-crypto.js';
 import sqlInjectionRule from '../src/scanner/rules/security/sql-injection.js';
 import ssrfRisk from '../src/scanner/rules/security/ssrf-risk.js';
+import commandInjection from '../src/scanner/rules/security/command-injection.js';
+import evalUsage from '../src/scanner/rules/security/eval-usage.js';
 import unsafeShell from '../src/scanner/rules/security/unsafe-shell-execs.js';
 import missingTypes from '../src/scanner/rules/tech-debt/missing-types.js';
 import mixedAsync from '../src/scanner/rules/ai-smells/mixed-async-patterns.js';
@@ -556,5 +558,41 @@ describe('ssrf-risk: member-expression URL arguments (rule used to throw Referen
   it('flags axios.get(req.query.url) and does not crash', () => {
     const f = run(ssrfRisk, `app.get('/p', async (req, res) => { const r = await axios.get(req.query.url); res.send(r.data); });`);
     expect(f.length).toBeGreaterThan(0);
+  });
+});
+
+describe('command-injection: argument arrays without a shell', () => {
+  const cp = `const childProcess = require("child_process");\n`;
+  it('does not flag execFile("echo", [tainted]) (no shell)', () => {
+    expect(run(commandInjection, cp + `app.get('/a', (req, res) => { childProcess.execFileSync("echo", [req.query.x]); });`)).toHaveLength(0);
+  });
+  it('still flags spawn with shell:true or a shell binary', () => {
+    expect(run(commandInjection, cp + `app.get('/a', (req, res) => { childProcess.spawn("echo", [req.query.x], { shell: true }); });`).length).toBeGreaterThan(0);
+    expect(run(commandInjection, cp + `app.get('/a', (req, res) => { childProcess.spawn("sh", ["-c", req.query.x]); });`).length).toBeGreaterThan(0);
+  });
+  it('still flags a tainted command itself', () => {
+    expect(run(commandInjection, cp + `app.get('/a', (req, res) => { childProcess.exec("ls " + req.query.dir); });`).length).toBeGreaterThan(0);
+  });
+});
+
+describe('validated taint is neutralised (eval / shell)', () => {
+  it('eval of an allowlist-validated value is not reported, eval of raw input still is', () => {
+    const ok = `app.get('/a', (req, res) => { const d = String(req.query.m); if (!/^(asc|desc)$/.test(d)) { return res.sendStatus(400); } eval(d); });`;
+    expect(run(evalUsage, ok)).toHaveLength(0);
+    const bad = `app.get('/a', (req, res) => { eval(req.query.m); });`;
+    expect(run(evalUsage, bad).some((f) => f.severity === 'error')).toBe(true);
+  });
+});
+
+describe('taint: escaping idioms', () => {
+  it('html-escape replace chains and SQL identifier quoting sanitise', () => {
+    const html = `app.get('/a', (req, res) => { const e = String(req.query.q).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#x27;"); res.send("<p>" + e + "</p>"); });`;
+    expect(run(xss, html)).toHaveLength(0);
+    const sqlq = `app.get('/a', async (req, res) => { const col = '"' + String(req.query.c).replace(/"/g, '""') + '"'; await db.query("SELECT id FROM t ORDER BY " + col); });`;
+    expect(run(sqlInjectionRule, sqlq)).toHaveLength(0);
+  });
+  it('a partial escape (only <) does not sanitise', () => {
+    const partial = `app.get('/a', (req, res) => { const e = String(req.query.q).replace(/</g,"&lt;"); res.send("<p>" + e + "</p>"); });`;
+    expect(run(xss, partial).length).toBeGreaterThan(0);
   });
 });

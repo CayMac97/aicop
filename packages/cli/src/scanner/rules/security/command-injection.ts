@@ -9,6 +9,19 @@ import { buildParentMap } from '../../ast-walker.js';
 const EXEC_FUNCTIONS = new Set(['exec', 'spawn', 'execSync', 'spawnSync', 'execFile', 'execFileSync', 'sync']);
 const USER_INPUT_PROPS = new Set(['body', 'query', 'params', 'headers']);
 
+const SHELL_BINARIES = /^(?:.*[\\/])?(?:sh|bash|zsh|dash|ksh|fish|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh)$/i;
+
+/** spawn(cmd, args, { shell: true }) or spawn("sh", ["-c", ...]) */
+function runsThroughShell(node: TSESTree.CallExpression): boolean {
+  const first = node.arguments[0];
+  if (first && first.type === 'Literal' && typeof first.value === 'string' && SHELL_BINARIES.test(first.value)) return true;
+  return node.arguments.some((a) => a.type === 'ObjectExpression' && a.properties.some((p) => {
+    if (p.type === 'SpreadElement') return true; // options unknown: stay conservative
+    if (p.type !== 'Property' || !isIdentifier(p.key) || p.key.name !== 'shell') return false;
+    return !(p.value.type === 'Literal' && p.value.value === false);
+  }));
+}
+
 function isReqPropUserInput(node: TSESTree.MemberExpression): boolean {
   if (!isMemberExpression(node.object)) return false;
   const parent = node.object as TSESTree.MemberExpression;
@@ -140,7 +153,9 @@ function checkExecCall(node: TSESTree.CallExpression, source: string, filePath: 
     const hasTaintedElem = (secondArg as TSESTree.ArrayExpression).elements.some(elem => 
       elem && argContainsUserInput(elem, taintResult, parentMap)
     );
-    if (hasTaintedElem) {
+    // spawn/execFile with an argument array runs the program directly (no shell): tainted array elements are
+    // only command injection when a shell is involved (shell option, or the program itself is a shell).
+    if (hasTaintedElem && runsThroughShell(node)) {
        isVulnerable = true;
     }
   }

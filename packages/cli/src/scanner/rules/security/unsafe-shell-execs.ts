@@ -3,7 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { getLine, getColumn } from '../../../utils/ast-helpers.js';
-import { buildContextualTaintMap, isArgContextuallyTainted, isStaticSafeValue } from '../../../utils/taint-tracker.js';
+import { buildContextualTaintMap, isArgContextuallyTainted, isStaticSafeValue, isNodeValidatedTaint } from '../../../utils/taint-tracker.js';
 import { buildParentMap } from '../../ast-walker.js';
 
 
@@ -121,6 +121,7 @@ const rule: Rule = {
                  ? a.elements.every((e) => !e || e.type === 'SpreadElement' ? !e : isStaticSafeValue(e, parentMap))
                  : isStaticSafeValue(a, parentMap));
                if (allSafe) return;
+               if (cmdArgs.length > 0 && cmdArgs.every((a) => isStaticSafeValue(a, parentMap) || isNodeValidatedTaint(a, taintResult, parentMap))) return;
                const userControlled = cmdArgs.some((a) => isArgContextuallyTainted(a, taintResult, parentMap));
                findings.push({
                  ruleId: 'security/unsafe-shell-execs',

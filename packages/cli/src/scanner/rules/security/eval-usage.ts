@@ -3,7 +3,7 @@ import { Rule, Finding, ParsedAST } from '../types.js';
 import { walk } from '../../ast-walker.js';
 import { extractSnippet } from '../../../utils/file-utils.js';
 import { isStringLiteral, getLine, getColumn, isIdentifier, isMemberExpression } from '../../../utils/ast-helpers.js';
-import { buildContextualTaintMap, isDynamicExpr, isStaticSafeValue, TaintResult } from '../../../utils/taint-tracker.js';
+import { buildContextualTaintMap, isDynamicExpr, isStaticSafeValue, isNodeValidatedTaint, TaintResult } from '../../../utils/taint-tracker.js';
 import { buildParentMap } from '../../ast-walker.js';
 
 function checkEvalCall(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
@@ -14,6 +14,8 @@ function checkEvalCall(node: TSESTree.CallExpression, source: string, filePath: 
   if (arg && isStringLiteral(arg as TSESTree.Expression)) return null;
   // constants, numbers and booleans (parseFloat(x), cond ? "a" : "b") cannot carry a payload
   if (arg && isStaticSafeValue(arg, parentMap)) return null;
+  // user input that was checked against an allowlist before use is neutralised
+  if (arg && isNodeValidatedTaint(arg, taintResult, parentMap)) return null;
   const userControlled = !!arg && isDynamicExpr(arg as TSESTree.Expression, taintResult, parentMap);
   return {
     ruleId: 'security/eval-usage',
