@@ -16,6 +16,8 @@ import pathTraversal from '../src/scanner/rules/security/path-traversal.js';
 import xss from '../src/scanner/rules/security/xss-vulnerabilities.js';
 import regexDosRule from '../src/scanner/rules/security/regex-dos.js';
 import xxeRule from '../src/scanner/rules/security/xxe-injection.js';
+import openRedirect from '../src/scanner/rules/security/open-redirect.js';
+import insecureSession from '../src/scanner/rules/security/insecure-session.js';
 import unsafeShell from '../src/scanner/rules/security/unsafe-shell-execs.js';
 import missingTypes from '../src/scanner/rules/tech-debt/missing-types.js';
 import mixedAsync from '../src/scanner/rules/ai-smells/mixed-async-patterns.js';
@@ -416,5 +418,94 @@ describe('taint: ternary with allowlist test', () => {
     expect(run(pathTraversal, safe)).toHaveLength(0);
     const unsafe = `app.get('/a', (req, res) => { const e = req.query.flag ? req.query.ext : 'jpg'; fs.readFile('/img/a.' + e, cb); });`;
     expect(run(pathTraversal, unsafe).length).toBeGreaterThan(0);
+  });
+});
+
+describe('taint transport patterns', () => {
+  const cp = `const childProcess = require("child_process");\n`;
+  it('follows an expression-bodied helper: const trim = v => String(v).trim()', () => {
+    const code = cp + `async function h(req, res) { const input = req.cookies.t || ""; const trim = (v) => String(v).trim(); const data = trim(input); childProcess.execSync("echo " + data); }`;
+    expect(run(unsafeShell, code).some((f) => f.severity === 'error')).toBe(true);
+  });
+  it('follows a returned closure: capture(v) => () => v', () => {
+    const code = cp + `async function h(req, res) { const input = req.headers["user-agent"] || ""; const capture = (v) => () => String(v).trim(); const read = capture(input); const data = read(); childProcess.exec("echo " + data); }`;
+    expect(run(unsafeShell, code).some((f) => f.severity === 'error')).toBe(true);
+  });
+  it('follows an object getter and util.format', () => {
+    const g = cp + `async function h(req, res) { const input = req.headers.referer || ""; const p = { get value() { return input; } }; const data = p.value; childProcess.exec("echo " + data); }`;
+    expect(run(unsafeShell, g).some((f) => f.severity === 'error')).toBe(true);
+    const u = cp + `const nodeUtil = require("util");\nasync function h(req, res) { const data = nodeUtil.format("%s", req.query.x); childProcess.exec("echo " + data); }`;
+    expect(run(unsafeShell, u).some((f) => f.severity === 'error')).toBe(true);
+  });
+  it('does not treat a helper that ignores its argument as a taint carrier', () => {
+    const code = cp + `async function h(req, res) { const input = req.query.x || ""; const label = (v) => "const"; const data = label(input); childProcess.exec("echo " + data); }`;
+    expect(run(unsafeShell, code).some((f) => f.severity === 'error')).toBe(false);
+  });
+  it('does not attribute a callback return to the outer function', () => {
+    const code = cp + `async function h(req, res) { const input = req.query.x || ""; const f = (v) => { [1,2].map((n) => { return v; }); return "ok"; }; const data = f(input); childProcess.exec("echo " + data); }`;
+    expect(run(unsafeShell, code).some((f) => f.severity === 'error')).toBe(false);
+  });
+});
+
+describe('open-redirect: header and framework variants', () => {
+  it.each([
+    ['res.location()', `app.get('/r', (req, res) => { res.location(String(req.query.next)).sendStatus(303); });`],
+    ['status().set("Location")', `app.get('/r', (req, res) => { return res.status(302).set("Location", String(req.query.next)).end(); });`],
+    ['setHeader("Location")', `app.get('/r', (req, res) => { res.setHeader("Location", req.query.next); res.statusCode = 302; res.end(); });`],
+    ['writeHead(303, {Location})', `app.get('/r', (req, res) => { res.writeHead(303, { Location: req.query.next }).end(); });`],
+    ['koa ctx.redirect', `router.get('/r', async (ctx) => { ctx.redirect(ctx.query.next); });`],
+  ])('flags %s', (_n, code) => {
+    expect(run(openRedirect, code).length).toBeGreaterThan(0);
+  });
+
+  it('does not flag a fixed-origin prefix or an allowlisted target', () => {
+    expect(run(openRedirect, `app.get('/r', (req, res) => { res.redirect('/home?next=' + req.query.next); });`)).toHaveLength(0);
+    const guarded = `
+      const ALLOWED = new Set(['/a', '/b']);
+      app.get('/r', (req, res) => {
+        const next = String(req.query.next);
+        if (!ALLOWED.has(next)) { return res.sendStatus(400); }
+        res.status(302).set("Location", next).end();
+      });`;
+    expect(run(openRedirect, guarded)).toHaveLength(0);
+  });
+});
+
+describe('xss: res.end html, Koa ctx.body, unescaped template placeholders', () => {
+  it('flags res.end with an HTML string, but not a plain-text res.end', () => {
+    expect(run(xss, `app.get('/a', (req, res) => { res.end("<section>" + req.query.q + "</section>"); });`).length).toBeGreaterThan(0);
+    expect(run(xss, `app.get('/a', (req, res) => { res.end("ok " + req.query.q); });`)).toHaveLength(0);
+  });
+  it('flags Koa ctx.body HTML built from input, not from constants', () => {
+    expect(run(xss, `router.get('/a', async (ctx) => { ctx.body = "<h1>" + ctx.query.name + "</h1>"; });`).length).toBeGreaterThan(0);
+    expect(run(xss, `router.get('/a', async (ctx) => { ctx.body = "<h1>Hello</h1>"; });`)).toHaveLength(0);
+  });
+  it('flags `| safe` placeholders fed with input and ignores escaped ones', () => {
+    const bad = `app.get('/a', (req, res) => { res.send(nunjucks.renderString('<div>{{ bio | safe }}</div>', { bio: req.body.bio })); });`;
+    const ok = `app.get('/a', (req, res) => { res.send(nunjucks.renderString('<div>{{ bio }}</div>', { bio: req.body.bio })); });`;
+    expect(run(xss, bad).length).toBeGreaterThan(0);
+    expect(run(xss, ok)).toHaveLength(0);
+  });
+});
+
+describe('insecure-session: sensitive cookies without Secure', () => {
+  it.each([
+    ['res.cookie without secure', `app.get('/', (req, res) => { res.cookie("session", "x", { httpOnly: true, sameSite: "strict" }); });`],
+    ['res.cookie secure:false', `app.get('/', (req, res) => { res.cookie("auth_token", "x", { secure: false }); });`],
+    ['Set-Cookie header', `app.get('/', (req, res) => { res.setHeader("Set-Cookie", "session=" + encodeURIComponent(v) + "; Path=/; HttpOnly"); });`],
+    ['stringifySetCookie', `app.get('/', (req, res) => { res.append("Set-Cookie", stringifySetCookie({ name: "session", value: v, httpOnly: true })); });`],
+    ['koa ctx.cookies.set', `router.get('/', async (ctx) => { ctx.cookies.set("session", "x", { httpOnly: true }); });`],
+  ])('flags %s', (_n, code) => {
+    expect(run(insecureSession, code).length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ['secure:true', `app.get('/', (req, res) => { res.cookie("session", "x", { secure: true, httpOnly: true }); });`],
+    ['secure from config', `app.get('/', (req, res) => { res.cookie("session", "x", { secure: isProd }); });`],
+    ['Secure in header', `app.get('/', (req, res) => { res.setHeader("Set-Cookie", "session=" + v + "; Path=/; Secure; HttpOnly"); });`],
+    ['non-sensitive cookie', `app.get('/', (req, res) => { res.cookie("theme", "dark"); });`],
+    ['stringifySetCookie secure', `app.get('/', (req, res) => { res.append("Set-Cookie", stringifySetCookie({ name: "session", value: v, secure: true })); });`],
+  ])('does not flag %s', (_n, code) => {
+    expect(run(insecureSession, code)).toHaveLength(0);
   });
 });

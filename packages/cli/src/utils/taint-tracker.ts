@@ -190,6 +190,21 @@ export function isTaintedExpr(rawNode: TSESTree.Node, tainted: Set<string>, sani
   if (node.type === 'ArrayExpression') {
     return node.elements.some(e => e && e.type !== 'SpreadElement' && isTaintedExpr(e, tainted, sanitizedExpressions));
   }
+  if (node.type === 'ObjectExpression') {
+    // Only accessors are treated as carriers ({ get value() { return input; } }); plain data objects are
+    // judged by their consumer, otherwise every `{ a: input }` literal would become a taint source.
+    return node.properties.some((p) => {
+      if (p.type !== 'Property' || p.kind !== 'get' || p.value.type !== 'FunctionExpression') return false;
+      let carries = false;
+      walk(p.value.body, {
+        ReturnStatement(r) {
+          const ret = r as TSESTree.ReturnStatement;
+          if (ret.argument && isTaintedExpr(ret.argument, tainted, sanitizedExpressions)) carries = true;
+        },
+      });
+      return carries;
+    });
+  }
   if (node.type === 'BinaryExpression' && node.operator === '+') {
     return isTaintedExpr(node.left, tainted, sanitizedExpressions) || isTaintedExpr(node.right, tainted, sanitizedExpressions);
   }
@@ -211,6 +226,13 @@ export function isTaintedExpr(rawNode: TSESTree.Node, tainted: Set<string>, sani
   }
   if (node.type === 'CallExpression') {
     const call = node as TSESTree.CallExpression;
+    // calling a function value that was built from tainted data (const read = capture(input); read())
+    if (isIdentifier(call.callee) && tainted.has(call.callee.name)) return true;
+    // util.format('%s', input) / nodeUtil.format(...)
+    if (isMemberExpression(call.callee) && isIdentifier(call.callee.object) && /^(node)?util$/i.test(call.callee.object.name)
+      && isIdentifier(call.callee.property) && call.callee.property.name === 'format') {
+      return call.arguments.some((a) => a.type !== 'SpreadElement' && isTaintedExpr(a, tainted, sanitizedExpressions));
+    }
     if (isMemberExpression(call.callee)) {
       const me = call.callee as TSESTree.MemberExpression;
       if (isIdentifier(me.property)) {
@@ -854,25 +876,50 @@ function computeContextualTaintMap(ast: ParsedAST, _filePath: string): TaintResu
     }
 
     const taintsReturn = new Set<string>();
+    // Values a function can return: `return x`, an expression body (v => String(v).trim()),
+    // and, for factories, whatever the returned inner function returns (v => () => v.trim()).
+    const returnedExpressions = (fn: TSESTree.Node, depth = 0): TSESTree.Node[] => {
+      const out: TSESTree.Node[] = [];
+      const body = (fn as TSESTree.ArrowFunctionExpression).body;
+      if (!body) return out;
+      const consider = (e: TSESTree.Node | null | undefined) => {
+        if (!e) return;
+        if ((e.type === 'ArrowFunctionExpression' || e.type === 'FunctionExpression') && depth < 3) {
+          out.push(...returnedExpressions(e, depth + 1));
+        } else {
+          out.push(e);
+        }
+      };
+      if (body.type !== 'BlockStatement') {
+        consider(body);
+      } else {
+        walk(body, {
+          ReturnStatement(rNode) {
+            const ret = rNode as TSESTree.ReturnStatement;
+            // returns inside nested functions (callbacks) belong to those functions, not to `fn`
+            let owner: TSESTree.Node | undefined = parentMap.get(rNode);
+            while (owner && !isFunctionNode(owner)) owner = parentMap.get(owner);
+            if (owner === fn) consider(ret.argument);
+          },
+        });
+      }
+      return out;
+    };
     for (const [funcName, funcNode] of localFunctions.entries()) {
-      let returnsTaint = false;
-      // @ts-expect-error body exists
-      walk(funcNode.body, {
-        ReturnStatement(rNode) {
-          const ret = rNode as TSESTree.ReturnStatement;
-          if (ret.argument && isCurrentlyTainted(ret.argument, funcNode)) {
-            returnsTaint = true;
-          }
-        },
-        CallExpression(cNode) {
-          const call = cNode as TSESTree.CallExpression;
-          if (isIdentifier(call.callee) && (call.callee.name === 'resolve' || call.callee.name === 'next')) {
-            if (call.arguments[0] && isCurrentlyTainted(call.arguments[0], funcNode)) {
-              returnsTaint = true;
+      let returnsTaint = returnedExpressions(funcNode).some((e) => isCurrentlyTainted(e, funcNode));
+      if (!returnsTaint) {
+        // @ts-expect-error body exists
+        walk(funcNode.body, {
+          CallExpression(cNode) {
+            const call = cNode as TSESTree.CallExpression;
+            if (isIdentifier(call.callee) && (call.callee.name === 'resolve' || call.callee.name === 'next')) {
+              if (call.arguments[0] && isCurrentlyTainted(call.arguments[0], funcNode)) {
+                returnsTaint = true;
+              }
             }
           }
-        }
-      });
+        });
+      }
       if (returnsTaint) taintsReturn.add(funcName);
     }
 

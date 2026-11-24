@@ -143,6 +143,118 @@ function checkSessionOptions(node: TSESTree.CallExpression, source: string, file
   return findings;
 }
 
+const SENSITIVE_COOKIE_NAME = /(sess|\bsid\b|token|auth|jwt|login|csrf|xsrf|remember|secret|credential)/i;
+const COOKIE_ROOTS = new Set(['res', 'reply', 'response', 'ctx']);
+const SET_COOKIE_HEADER_METHODS = new Set(['set', 'setHeader', 'header', 'append']);
+
+function rootNameOf(node: TSESTree.Node): string | null {
+  let cur: TSESTree.Node = node;
+  for (;;) {
+    if (cur.type === 'CallExpression') cur = cur.callee;
+    else if (cur.type === 'MemberExpression') cur = cur.object;
+    else if (cur.type === 'ChainExpression' || cur.type === 'TSNonNullExpression' || cur.type === 'TSAsExpression') cur = cur.expression;
+    else break;
+  }
+  return cur.type === 'Identifier' ? cur.name : null;
+}
+
+function stringLiteralValue(n: TSESTree.Node | undefined): string | null {
+  return n && n.type === 'Literal' && typeof n.value === 'string' ? n.value : null;
+}
+
+/** Literal text pieces of "name=" + value + "; Path=/" style strings */
+function literalText(n: TSESTree.Node): string {
+  if (n.type === 'Literal' && typeof n.value === 'string') return n.value;
+  if (n.type === 'TemplateLiteral') return n.quasis.map((q) => q.value.raw).join('\u0000');
+  if (n.type === 'BinaryExpression' && n.operator === '+') return literalText(n.left) + '\u0000' + literalText(n.right);
+  return '';
+}
+
+/** 'missing' | 'false' when the options object provably leaves Secure off; 'ok' / 'unknown' otherwise */
+function secureState(opts: TSESTree.Node | undefined): 'missing' | 'false' | 'ok' | 'unknown' {
+  if (!opts) return 'missing';
+  if (opts.type !== 'ObjectExpression') return 'unknown';
+  if (opts.properties.some((p) => p.type === 'SpreadElement')) return 'unknown';
+  const prop = findProp(opts, 'secure');
+  if (!prop) return 'missing';
+  const v = prop.value;
+  if (v.type === 'Literal' && v.value === false) return 'false';
+  if (v.type === 'Literal' && v.value === true) return 'ok';
+  return 'unknown'; // secure: isProd / process.env... - cannot judge
+}
+
+function cookieFinding(node: TSESTree.Node, name: string, how: string, source: string, filePath: string): Finding {
+  return {
+    ruleId: 'security/insecure-session',
+    severity: 'warn',
+    message: `sensitive cookie "${name}" set without the Secure flag (${how}) — it is also sent over plain HTTP`,
+    file: filePath,
+    line: getLine(node),
+    column: getColumn(node),
+    snippet: extractSnippet(source, getLine(node)),
+    fix: 'Set { secure: true, httpOnly: true, sameSite: "lax" | "strict" } on session/auth cookies',
+  };
+}
+
+/** res.cookie(), ctx.cookies.set(), raw Set-Cookie headers and cookie.serialize()/stringifySetCookie() */
+function checkCookieSinks(ast: ParsedAST, source: string, filePath: string): Finding[] {
+  const findings: Finding[] = [];
+  walk(ast, {
+    CallExpression(rawNode) {
+      const node = rawNode as TSESTree.CallExpression;
+      const callee = node.callee;
+      const method = callee.type === 'MemberExpression' && isIdentifier(callee.property) ? callee.property.name
+        : isIdentifier(callee) ? callee.name : '';
+      if (!method) return;
+      const root = callee.type === 'MemberExpression' ? rootNameOf(callee.object) : null;
+
+      // res.cookie(name, value, opts)  /  ctx.cookies.set(name, value, opts)
+      const isResCookie = method === 'cookie' && root !== null && COOKIE_ROOTS.has(root);
+      const isCtxCookiesSet = method === 'set' && callee.type === 'MemberExpression' && callee.object.type === 'MemberExpression'
+        && isIdentifier(callee.object.property) && callee.object.property.name === 'cookies' && root === 'ctx';
+      if (isResCookie || isCtxCookiesSet) {
+        const name = stringLiteralValue(node.arguments[0]);
+        if (!name || !SENSITIVE_COOKIE_NAME.test(name)) return;
+        const st = secureState(node.arguments[2]);
+        if (st === 'missing' || st === 'false') findings.push(cookieFinding(node, name, isResCookie ? 'res.cookie' : 'ctx.cookies.set', source, filePath));
+        return;
+      }
+
+      // res.setHeader('Set-Cookie', 'session=...; HttpOnly')
+      if (SET_COOKIE_HEADER_METHODS.has(method) && root !== null && COOKIE_ROOTS.has(root)) {
+        const header = stringLiteralValue(node.arguments[0]);
+        const value = node.arguments[1];
+        if (header?.toLowerCase() !== 'set-cookie' || !value) return;
+        const text = literalText(value);
+        const m = /^\s*([^=;\s\u0000]+)=/.exec(text);
+        if (m && SENSITIVE_COOKIE_NAME.test(m[1]) && !/;\s*secure\b/i.test(text)) {
+          findings.push(cookieFinding(node, m[1], 'Set-Cookie header', source, filePath));
+          return;
+        }
+        // Set-Cookie value produced by the cookie library: stringifySetCookie({ name, value, ... })
+        if (value.type === 'CallExpression') {
+          const fn = value.callee.type === 'MemberExpression' && isIdentifier(value.callee.property) ? value.callee.property.name
+            : isIdentifier(value.callee) ? value.callee.name : '';
+          if (['stringifySetCookie', 'serialize', 'serializeCookie'].includes(fn)) {
+            const a0 = value.arguments[0];
+            let name = stringLiteralValue(a0);
+            let opts: TSESTree.Node | undefined = value.arguments[2];
+            if (!name && a0 && a0.type === 'ObjectExpression') {
+              name = stringLiteralValue(findProp(a0, 'name')?.value);
+              opts = a0; // stringifySetCookie({ name, value, secure, ... })
+            }
+            if (name && SENSITIVE_COOKIE_NAME.test(name)) {
+              const st = secureState(opts);
+              if (st === 'missing' || st === 'false') findings.push(cookieFinding(node, name, fn, source, filePath));
+            }
+          }
+        }
+      }
+    },
+  });
+  return findings;
+}
+
 const rule: Rule = {
   id: 'security/insecure-session',
   name: 'Insecure Session Configuration',
@@ -153,7 +265,7 @@ const rule: Rule = {
   fix: 'Use a strong random secret from process.env, set httpOnly:true and secure:true on cookies',
 
   check(ast: ParsedAST, source: string, filePath: string): Finding[] {
-    const findings: Finding[] = [];
+    const findings: Finding[] = checkCookieSinks(ast, source, filePath);
     const sessionVars = new Map<string, string>();
 
     walk(ast, {

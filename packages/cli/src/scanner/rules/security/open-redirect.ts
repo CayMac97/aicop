@@ -84,21 +84,68 @@ function hasRedirectValidation(node: TSESTree.Node, varName: string, parentMap: 
   return hasGuard;
 }
 
-function checkResRedirect(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
-  if (!isMemberExpression(node.callee)) return null;
-  const me = node.callee as TSESTree.MemberExpression;
-  if (!isIdentifier(me.object) || !isIdentifier(me.property)) return null;
-  const objName = (me.object as TSESTree.Identifier).name;
-  if (objName !== 'res' && objName !== 'reply') return null;
-  const method = (me.property as TSESTree.Identifier).name;
-  if (method !== 'redirect' && method !== 'location') return null;
+const REDIRECT_ROOTS = new Set(['res', 'reply', 'ctx', 'response']);
+const HEADER_SETTERS = new Set(['set', 'setHeader', 'header', 'append', 'writeHead', 'setHeaders']);
 
+/** root identifier of a chain such as res.status(302).set(...) or ctx.res.writeHead(...) */
+function rootIdentifierOf(node: TSESTree.Node): string | null {
+  let cur: TSESTree.Node = node;
+  for (;;) {
+    if (cur.type === 'CallExpression') cur = cur.callee;
+    else if (cur.type === 'MemberExpression') cur = cur.object;
+    else if (cur.type === 'ChainExpression' || cur.type === 'TSNonNullExpression' || cur.type === 'TSAsExpression') cur = cur.expression;
+    else break;
+  }
+  return cur.type === 'Identifier' ? cur.name : null;
+}
+
+/** The expression that ends up in the Location header (or redirect target) of a response call, if any. */
+function redirectTargetOf(node: TSESTree.CallExpression): { urlArg: TSESTree.Node; via: string } | null {
+  if (!isMemberExpression(node.callee) || !isIdentifier(node.callee.property)) return null;
+  const method = node.callee.property.name;
+  const root = rootIdentifierOf(node.callee.object);
+  if (!root || !REDIRECT_ROOTS.has(root)) return null;
   const args = node.arguments;
   if (args.length === 0) return null;
 
-  const urlArg = args.length >= 2 && isStatusCode(args[0]) ? args[1] : args[0];
+  if (method === 'redirect' || method === 'location') {
+    return { urlArg: args.length >= 2 && isStatusCode(args[0]) ? args[1] : args[0], via: `${root}.${method}()` };
+  }
+  if (HEADER_SETTERS.has(method)) {
+    const first = args[0];
+    if (first.type === 'Literal' && typeof first.value === 'string' && first.value.toLowerCase() === 'location' && args[1]) {
+      return { urlArg: args[1], via: `${method}("Location")` };
+    }
+    for (const a of args) {
+      if (a.type !== 'ObjectExpression') continue;
+      for (const p of a.properties) {
+        if (p.type !== 'Property') continue;
+        const key = isIdentifier(p.key) ? p.key.name : p.key.type === 'Literal' ? String(p.key.value) : '';
+        if (key.toLowerCase() === 'location') return { urlArg: p.value, via: `${method}({ Location })` };
+      }
+    }
+  }
+  return null;
+}
+
+/** "/home?next=" + x or "https://app.example.com/" + x can not leave the intended origin */
+function hasFixedOriginPrefix(node: TSESTree.Node): boolean {
+  let cur: TSESTree.Node = node;
+  while (cur.type === 'BinaryExpression' && cur.operator === '+') cur = cur.left;
+  const lit = cur.type === 'Literal' && typeof cur.value === 'string' ? cur.value
+    : cur.type === 'TemplateLiteral' ? (cur.quasis[0]?.value.raw ?? '') : '';
+  if (/^\/[^/\\]/.test(lit)) return true; // site-relative path with a non-slash second char
+  return /^https?:\/\/[^/]+\//.test(lit); // fixed scheme+host followed by a path
+}
+
+function checkResRedirect(node: TSESTree.CallExpression, source: string, filePath: string, taintResult: TaintResult, parentMap: Map<TSESTree.Node, TSESTree.Node>): Finding | null {
+  const target = redirectTargetOf(node);
+  if (!target) return null;
+  const urlArg = target.urlArg;
+  const method = target.via;
 
   if (isStaticUrl(urlArg)) return null;
+  if (hasFixedOriginPrefix(urlArg)) return null;
   if (urlArg.type === 'TemplateLiteral') {
     const tl = urlArg as TSESTree.TemplateLiteral;
     const firstRaw = tl.quasis[0]?.value.raw ?? '';
@@ -122,7 +169,7 @@ function checkResRedirect(node: TSESTree.CallExpression, source: string, filePat
   return {
     ruleId: 'security/open-redirect',
     severity: 'error',
-    message: `open redirect — user-controlled URL in res.${method}()`,
+    message: `open redirect — user-controlled URL in ${method}`,
     file: filePath,
     line: getLine(node),
     column: getColumn(node),
