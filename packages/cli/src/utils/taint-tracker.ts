@@ -475,10 +475,10 @@ function collectDerivations(scope: TSESTree.Node): Map<string, Set<string>> {
   return map;
 }
 
-function isAnchoredRegexLiteral(n: TSESTree.Node): boolean {
+function isAnchoredRegexLiteral(n: TSESTree.Node, requireEnd = true): boolean {
   if (n.type !== 'Literal') return false;
   const re = (n as TSESTree.Literal & { regex?: { pattern: string } }).regex;
-  return !!re && re.pattern.startsWith('^') && re.pattern.endsWith('$');
+  return !!re && re.pattern.startsWith('^') && (!requireEnd || re.pattern.endsWith('$'));
 }
 
 const VALIDATOR_NAME = /^(is|validate|check|verify|assert|ensure)[A-Z_]?/;
@@ -492,7 +492,7 @@ function testValidates(test: TSESTree.Node, closure: Set<string>): boolean {
     return false;
   };
   walk(test, {
-    CallExpression(n) {
+    CallExpression(n, parent) {
       if (found) return;
       const call = n as TSESTree.CallExpression;
       const arg0 = call.arguments[0];
@@ -500,7 +500,12 @@ function testValidates(test: TSESTree.Node, closure: Set<string>): boolean {
         const m = call.callee.property.name;
         const recv = call.callee.object;
         if ((m === 'has' || m === 'includes' || m === 'indexOf') && arg0 && touches(arg0) && !touches(recv)) { found = true; return; }
-        if (m === 'test' && arg0 && touches(arg0) && isAnchoredRegexLiteral(recv)) { found = true; return; }
+        if (m === 'test' && arg0 && touches(arg0)) {
+          // allowlist form `!re.test(x)` needs a fully anchored pattern; denylist form `re.test(x) -> reject`
+          // (e.g. private IP ranges after DNS resolution) is accepted with a start anchor
+          const negated = !!parent && parent.type === 'UnaryExpression' && parent.operator === '!';
+          if (isAnchoredRegexLiteral(recv, negated)) { found = true; return; }
+        }
         if (VALIDATOR_NAME.test(m) && call.arguments.some((a) => touches(a))) { found = true; return; }
       } else if (isIdentifier(call.callee)) {
         if (VALIDATOR_NAME.test(call.callee.name) && call.arguments.some((a) => touches(a))) { found = true; return; }

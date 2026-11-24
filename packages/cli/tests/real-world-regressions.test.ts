@@ -23,6 +23,7 @@ import sqlInjectionRule from '../src/scanner/rules/security/sql-injection.js';
 import ssrfRisk from '../src/scanner/rules/security/ssrf-risk.js';
 import commandInjection from '../src/scanner/rules/security/command-injection.js';
 import evalUsage from '../src/scanner/rules/security/eval-usage.js';
+import { isTestFile } from '../src/utils/file-utils.js';
 import unsafeShell from '../src/scanner/rules/security/unsafe-shell-execs.js';
 import missingTypes from '../src/scanner/rules/tech-debt/missing-types.js';
 import mixedAsync from '../src/scanner/rules/ai-smells/mixed-async-patterns.js';
@@ -638,5 +639,36 @@ describe('cross-file resolution must not throw for builtins and packages', () =>
     `;
     expect(() => run(unsafeShell, code, 'src/h.ts')).not.toThrow();
     expect(run(unsafeShell, code, 'src/h.ts').some((f) => f.severity === 'error')).toBe(true);
+  });
+});
+
+describe('isTestFile', () => {
+  it.each([
+    ['/p/src/test/a.ts', true], ['/p/src/tests/a.ts', true], ['/p/src/__tests__/a.ts', true],
+    ['/p/src/test-utils/a.ts', true], ['/p/src/tests-e2e/a.ts', true], ['/p/src/testing/a.ts', true],
+    ['/p/src/a.test.ts', true], ['/p/src/a.spec.js', true],
+    ['/p/src/testimonials/a.ts', false], ['/p/src/testcode/a.ts', false], ['/p/src/contest/a.ts', false], ['/p/src/latest/a.ts', false],
+  ])('%s -> %s', (file, expected) => {
+    expect(isTestFile(file)).toBe(expected);
+  });
+});
+
+describe('validation guard: denylist regex with early exit (private IP ranges)', () => {
+  it('start-anchored deny regex with early exit counts, but a prefix-only allow regex does not', () => {
+    const deny = `
+      app.get('/f', async (req, res) => {
+        const host = new URL(String(req.query.u)).hostname;
+        const addr = (await dns.promises.lookup(host)).address;
+        if (/^(10\\.|127\\.|192\\.168\\.)/.test(addr)) { return res.sendStatus(403); }
+        http.get(String(req.query.u));
+      });`;
+    expect(run(ssrfRisk, deny)).toHaveLength(0);
+    const weakAllow = `
+      app.get('/f', (req, res) => {
+        const u = String(req.query.u);
+        if (!/^https:\\/\\/api/.test(u)) { return res.sendStatus(403); }
+        http.get(u);
+      });`;
+    expect(run(ssrfRisk, weakAllow).length).toBeGreaterThan(0);
   });
 });

@@ -36,7 +36,8 @@ export function isTestFile(filePath: string): boolean {
     /\.(test|spec)\.(ts|tsx|js|jsx)$/i.test(normalizedPath) ||
     /\/__tests__\//i.test(normalizedPath) ||
     /\/tests?\//i.test(normalizedPath) ||
-    /\/test-?[a-zA-Z0-9_-]*\//i.test(normalizedPath)
+    // directories that are tests/test helpers: test/, tests/, testing/, test-utils/, tests-e2e/ ... but not testimonials/ or testcode/
+    /\/(?:tests?|testing|tests?-[a-zA-Z0-9_-]+)\//i.test(normalizedPath)
   );
 }
 
